@@ -202,16 +202,9 @@ export class OS {
       // Executable / File Icon
       const favicon = file.url ? getFavicon(file.url) : null;
       if (favicon && favicon.complete && favicon.naturalWidth > 1) {
-        // Draw white beveled container and render favicon inside pixelated
-        ctx.fillStyle = '#FFF';
-        ctx.fillRect(x + 4, y, 24, 24);
-        ctx.strokeStyle = '#000';
-        ctx.strokeRect(x + 4, y, 24, 24);
-
-        ctx.strokeStyle = '#808080';
-        ctx.beginPath(); ctx.moveTo(x + 5, y + 23); ctx.lineTo(x + 5, y + 1); ctx.lineTo(x + 27, y + 1); ctx.stroke();
-        
-        ctx.drawImage(favicon, x + 8, y + 4, 16, 16);
+        // Draw favicon directly at 24x24 pixels (preserving transparency and natural circular/square shape)
+        const fx = x + Math.floor((this.iconWidth - 24) / 2);
+        ctx.drawImage(favicon, fx, y, 24, 24);
       } else if (file.isExecutable || file.url || file.name.toLowerCase().endsWith('.html') || file.name.toLowerCase().endsWith('.exe')) {
         // Custom Retro 32x24 Executable Window Icon
         ctx.fillStyle = '#C0C0C0';

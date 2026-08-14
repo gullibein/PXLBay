@@ -10,7 +10,7 @@
         "path": "PXL_folder/PXLRogue",
         "isDirectory": true,
         "isApp": true,
-        "url": "system_folder/PXL_folder/PXLRogue/rogue8.html",
+        "url": "system_folder/PXL_folder/PXLRogue/index.html",
         "children": [
           {
             "name": "CLAUDE.md",
@@ -25,16 +25,16 @@
             "url": "system_folder/PXL_folder/PXLRogue/EDITING_THE_GRAPHICS.md"
           },
           {
+            "name": "index.html",
+            "path": "PXL_folder/PXLRogue/index.html",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/index.html"
+          },
+          {
             "name": "PXLRogue_splash.png",
             "path": "PXL_folder/PXLRogue/PXLRogue_splash.png",
             "isDirectory": false,
             "url": "system_folder/PXL_folder/PXLRogue/PXLRogue_splash.png"
-          },
-          {
-            "name": "rogue8.html",
-            "path": "PXL_folder/PXLRogue/rogue8.html",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/rogue8.html"
           },
           {
             "name": "spritesheet_map.csv",
