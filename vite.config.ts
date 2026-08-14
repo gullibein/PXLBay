@@ -27,7 +27,16 @@ const IGNORED_NAMES = new Set([
   'obj'
 ]);
 
-function scanDirectoryRecursive(baseDir: string, relativeDir: string = ''): RepoItem[] {
+function getScanConfig(): { targetDir: string; urlPrefix: string } {
+  // If system_folder exists inside the project, use it as the root of the OS
+  const systemFolder = path.resolve(process.cwd(), 'system_folder');
+  if (fs.existsSync(systemFolder)) {
+    return { targetDir: systemFolder, urlPrefix: 'system_folder' };
+  }
+  return { targetDir: process.cwd(), urlPrefix: '' };
+}
+
+function scanDirectoryRecursive(baseDir: string, relativeDir: string = '', urlPrefix: string = ''): RepoItem[] {
   const currentDir = path.resolve(baseDir, relativeDir);
   if (!fs.existsSync(currentDir)) return [];
 
@@ -40,11 +49,12 @@ function scanDirectoryRecursive(baseDir: string, relativeDir: string = ''): Repo
 
       const itemRelPath = relativeDir ? `${relativeDir}/${dirent.name}` : dirent.name;
       const fullPath = path.resolve(currentDir, dirent.name);
+      const itemUrl = urlPrefix ? `${urlPrefix}/${itemRelPath}` : itemRelPath;
 
       if (dirent.isDirectory()) {
-        const children = scanDirectoryRecursive(baseDir, itemRelPath);
+        const children = scanDirectoryRecursive(baseDir, itemRelPath, urlPrefix);
         
-        // Check if directory is an app (contains index.html, rogue8.html, or any .html)
+        // Check if directory is an app (contains index.html or any .html)
         let isApp = false;
         let appUrl: string | undefined;
 
@@ -53,7 +63,7 @@ function scanDirectoryRecursive(baseDir: string, relativeDir: string = ''): Repo
 
         if (mainHtml) {
           isApp = true;
-          appUrl = mainHtml.url || mainHtml.path;
+          appUrl = mainHtml.url || `${itemUrl}/${mainHtml.name}`;
         } else if (fs.existsSync(path.join(fullPath, 'package.json'))) {
           isApp = true;
         }
@@ -67,13 +77,11 @@ function scanDirectoryRecursive(baseDir: string, relativeDir: string = ''): Repo
           children
         });
       } else {
-        const ext = path.extname(dirent.name).toLowerCase();
-        // Ignore certain heavy binary formats from root scan if needed, or keep all files
         items.push({
           name: dirent.name,
           path: itemRelPath,
           isDirectory: false,
-          url: itemRelPath
+          url: itemUrl
         });
       }
     }
@@ -90,21 +98,9 @@ function scanDirectoryRecursive(baseDir: string, relativeDir: string = ''): Repo
   }
 }
 
-function getScanTargetDir(): string {
-  // If parent folder has other folders (e.g. PXLRogue, AsciiBotz, etc.), scan parent
-  const parentDir = path.resolve(process.cwd(), '..');
-  try {
-    const parentEntries = fs.readdirSync(parentDir);
-    if (parentEntries.some(e => e === 'PXLRogue' || e === 'AsciiBotz' || e === 'Codebotz')) {
-      return parentDir;
-    }
-  } catch {}
-  return process.cwd();
-}
-
 function generateTreeJson(): RepoItem[] {
-  const targetDir = getScanTargetDir();
-  return scanDirectoryRecursive(targetDir);
+  const { targetDir, urlPrefix } = getScanConfig();
+  return scanDirectoryRecursive(targetDir, '', urlPrefix);
 }
 
 export default defineConfig({
@@ -124,10 +120,8 @@ export default defineConfig({
           fs.mkdirSync(publicDir, { recursive: true });
         }
         const outputPath = path.join(publicDir, 'repo-tree.json');
-        if (tree.length > 0 || !fs.existsSync(outputPath)) {
-          fs.writeFileSync(outputPath, JSON.stringify(tree, null, 2), 'utf-8');
-          console.log(`[repo-tree-scanner] Generated ${outputPath} (${tree.length} root items)`);
-        }
+        fs.writeFileSync(outputPath, JSON.stringify(tree, null, 2), 'utf-8');
+        console.log(`[repo-tree-scanner] Generated ${outputPath} (${tree.length} root items from system_folder)`);
       },
       configureServer(server) {
         // Serve /repo-tree.json dynamically in dev mode
@@ -145,18 +139,17 @@ export default defineConfig({
           res.end(JSON.stringify(tree));
         });
 
-        // Serve files from the target directory if requested
+        // Serve files from workspace if requested
         server.middlewares.use((req, res, next) => {
           if (!req.url || req.url === '/' || req.url.startsWith('/src') || req.url.startsWith('/@') || req.url.startsWith('/node_modules') || req.url.startsWith('/public') || req.url.startsWith('/fon')) {
             return next();
           }
 
           const decodedUrl = decodeURIComponent(req.url.split('?')[0]);
-          const targetBase = getScanTargetDir();
           const cleanPath = decodedUrl.replace(/^\/+/, '');
-          const candidatePath = path.resolve(targetBase, cleanPath);
+          const candidatePath = path.resolve(process.cwd(), cleanPath);
 
-          if (candidatePath.startsWith(targetBase) && fs.existsSync(candidatePath)) {
+          if (candidatePath.startsWith(process.cwd()) && fs.existsSync(candidatePath)) {
             const stat = fs.statSync(candidatePath);
             if (stat.isDirectory()) {
               const indexPath = path.join(candidatePath, 'index.html');

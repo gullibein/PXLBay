@@ -33,32 +33,40 @@ function buildTreeFromGitHub(treeItems: GitHubTreeItem[]): RepoItem[] {
   // Filter out unwanted paths
   const ignoredPrefixes = ['.git', '.github', 'node_modules', 'dist', '.gemini', '.vscode', '.idea', '.claude'];
 
+  // Check if system_folder exists in tree
+  const hasSystemFolder = treeItems.some(i => i.path.startsWith('system_folder/') || i.path === 'system_folder');
+
   const filtered = treeItems.filter(item => {
+    if (hasSystemFolder) {
+      return item.path.startsWith('system_folder/') && item.path !== 'system_folder';
+    }
     const parts = item.path.split('/');
     return !parts.some(p => ignoredPrefixes.includes(p) || (p.startsWith('.') && p !== '.'));
   });
 
   // First pass: create all directories and files in map
   for (const item of filtered) {
-    const parts = item.path.split('/');
+    const rawPath = hasSystemFolder ? item.path.replace(/^system_folder\//, '') : item.path;
+    const parts = rawPath.split('/');
     const name = parts[parts.length - 1];
     const isDirectory = item.type === 'tree';
 
     const repoItem: RepoItem = {
       name,
-      path: item.path,
+      path: rawPath,
       isDirectory,
       url: !isDirectory ? item.path : undefined,
       children: isDirectory ? [] : undefined
     };
 
-    map.set(item.path, repoItem);
+    map.set(rawPath, repoItem);
   }
 
   // Second pass: attach children to parents
   for (const item of filtered) {
-    const repoItem = map.get(item.path)!;
-    const parts = item.path.split('/');
+    const rawPath = hasSystemFolder ? item.path.replace(/^system_folder\//, '') : item.path;
+    const repoItem = map.get(rawPath)!;
+    const parts = rawPath.split('/');
 
     if (parts.length === 1) {
       // Root level item

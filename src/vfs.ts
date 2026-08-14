@@ -18,7 +18,6 @@ export class VFS {
 
   constructor() {
     this.nodes.set('root', { id: 'root', name: '/', isDirectory: true, parentId: null });
-    this.nodes.set('sys', { id: 'sys', name: 'System Folder', isDirectory: true, parentId: 'root' });
     this.nodes.set('bin', { id: 'bin', name: 'Recycle Bin', isDirectory: true, parentId: 'root', isRecycleBin: true });
   }
 
@@ -55,12 +54,10 @@ export class VFS {
         result.push(node);
       }
     }
-    // Sort to ensure Recycle Bin and System Folder are first on desktop, then folders, then files
+    // Sort to ensure Recycle Bin is first on desktop, then folders, then files
     return result.sort((a, b) => {
       if (a.isRecycleBin) return -1;
       if (b.isRecycleBin) return 1;
-      if (a.id === 'sys') return -1;
-      if (b.id === 'sys') return 1;
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
       return a.name.localeCompare(b.name);
@@ -99,7 +96,7 @@ export class VFS {
     if (!node) return;
 
     // Prevent deleting special system folders
-    if (id === 'root' || id === 'sys' || id === 'bin') return;
+    if (id === 'root' || id === 'bin') return;
 
     if (node.parentId === 'bin') {
       // Permanent delete
@@ -125,7 +122,7 @@ export class VFS {
     const node = this.nodes.get(id);
     if (!node) return;
     // Prevent renaming special folders
-    if (id === 'root' || id === 'sys' || id === 'bin') return;
+    if (id === 'root' || id === 'bin') return;
     
     const uniqueName = this.getUniqueName(node.parentId, newName, node.isDirectory, id);
     node.name = uniqueName;
@@ -174,7 +171,7 @@ export class VFS {
   public moveNode(id: string, newParentId: string) {
     const node = this.nodes.get(id);
     if (!node) return;
-    if (id === 'root' || id === 'sys' || id === 'bin') return;
+    if (id === 'root' || id === 'bin') return;
     
     const newName = this.getUniqueName(newParentId, node.name, node.isDirectory, id);
     node.parentId = newParentId;
