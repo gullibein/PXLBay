@@ -45,7 +45,14 @@ window.addEventListener('mousedown', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  os.handleKeyDown(e.key);
+  os.handleKeyDown(e.key, e.ctrlKey || e.metaKey, e.shiftKey, e.altKey);
+});
+
+window.addEventListener('paste', (e) => {
+  const text = e.clipboardData?.getData('text');
+  if (text) {
+    os.handlePaste(text);
+  }
 });
 
 window.addEventListener('mouseup', () => {

@@ -69,6 +69,10 @@ export class OS {
     userEditedName: boolean;
     nameCursorPos: number;
     urlCursorPos: number;
+    nameSelStart: number | null;
+    nameSelEnd: number | null;
+    urlSelStart: number | null;
+    urlSelEnd: number | null;
     rect: { x: number; y: number; w: number; h: number };
     urlInputRect: { x: number; y: number; w: number; h: number };
     nameInputRect: { x: number; y: number; w: number; h: number };
@@ -372,7 +376,12 @@ export class OS {
     ctx.strokeStyle = '#FFF';
     ctx.beginPath(); ctx.moveTo(urlInputRect.x + urlInputRect.w, urlInputRect.y); ctx.lineTo(urlInputRect.x + urlInputRect.w, urlInputRect.y + urlInputRect.h); ctx.lineTo(urlInputRect.x, urlInputRect.y + urlInputRect.h); ctx.stroke();
 
-    // Draw URL Text & Cursor
+    // Draw URL Text, Selection & Cursor
+    const { urlSelStart, urlSelEnd, nameSelStart, nameSelEnd } = this.addFileModal;
+    const isUrlSelected = activeField === 'url' && urlSelStart !== null && urlSelEnd !== null && urlSelStart !== urlSelEnd;
+    const urlSMin = isUrlSelected ? Math.min(urlSelStart!, urlSelEnd!) : 0;
+    const urlSMax = isUrlSelected ? Math.max(urlSelStart!, urlSelEnd!) : 0;
+
     let visibleUrl = url;
     let urlOffset = 0;
     const maxUrlWidth = urlInputRect.w - 10;
@@ -380,12 +389,35 @@ export class OS {
       urlOffset++;
       visibleUrl = url.substring(urlOffset);
     }
-    this.font.drawText(ctx, visibleUrl, urlInputRect.x + 4, urlInputRect.y + 4, '#000');
-    if (activeField === 'url') {
-      const textBefore = url.substring(urlOffset, urlCursorPos);
-      const cursorX = urlInputRect.x + 4 + this.font.measureText(textBefore);
-      ctx.fillStyle = '#000';
-      ctx.fillRect(cursorX, urlInputRect.y + 3, 1, 10);
+
+    if (isUrlSelected) {
+      const beforeSel = url.substring(urlOffset, Math.max(urlOffset, urlSMin));
+      const selText = url.substring(Math.max(urlOffset, urlSMin), Math.max(urlOffset, urlSMax));
+      const afterSel = url.substring(Math.max(urlOffset, urlSMax));
+
+      let currX = urlInputRect.x + 4;
+      if (beforeSel) {
+        this.font.drawText(ctx, beforeSel, currX, urlInputRect.y + 4, '#000');
+        currX += this.font.measureText(beforeSel);
+      }
+      if (selText) {
+        const selW = this.font.measureText(selText);
+        ctx.fillStyle = '#0000A8';
+        ctx.fillRect(currX - 1, urlInputRect.y + 2, selW + 2, 12);
+        this.font.drawText(ctx, selText, currX, urlInputRect.y + 4, '#FFF');
+        currX += selW;
+      }
+      if (afterSel) {
+        this.font.drawText(ctx, afterSel, currX, urlInputRect.y + 4, '#000');
+      }
+    } else {
+      this.font.drawText(ctx, visibleUrl, urlInputRect.x + 4, urlInputRect.y + 4, '#000');
+      if (activeField === 'url') {
+        const textBefore = url.substring(urlOffset, urlCursorPos);
+        const cursorX = urlInputRect.x + 4 + this.font.measureText(textBefore);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(cursorX, urlInputRect.y + 3, 1, 10);
+      }
     }
 
     // Label: Name (Second field)
@@ -399,13 +431,39 @@ export class OS {
     ctx.strokeStyle = '#FFF';
     ctx.beginPath(); ctx.moveTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.stroke();
 
-    // Draw Name Text & Cursor
-    this.font.drawText(ctx, name, nameInputRect.x + 4, nameInputRect.y + 4, '#000');
-    if (activeField === 'name') {
-      const textBefore = name.substring(0, nameCursorPos);
-      const cursorX = nameInputRect.x + 4 + this.font.measureText(textBefore);
-      ctx.fillStyle = '#000';
-      ctx.fillRect(cursorX, nameInputRect.y + 3, 1, 10);
+    // Draw Name Text, Selection & Cursor
+    const isNameSelected = activeField === 'name' && nameSelStart !== null && nameSelEnd !== null && nameSelStart !== nameSelEnd;
+    const nameSMin = isNameSelected ? Math.min(nameSelStart!, nameSelEnd!) : 0;
+    const nameSMax = isNameSelected ? Math.max(nameSelStart!, nameSelEnd!) : 0;
+
+    if (isNameSelected) {
+      const beforeSel = name.substring(0, nameSMin);
+      const selText = name.substring(nameSMin, nameSMax);
+      const afterSel = name.substring(nameSMax);
+
+      let currX = nameInputRect.x + 4;
+      if (beforeSel) {
+        this.font.drawText(ctx, beforeSel, currX, nameInputRect.y + 4, '#000');
+        currX += this.font.measureText(beforeSel);
+      }
+      if (selText) {
+        const selW = this.font.measureText(selText);
+        ctx.fillStyle = '#0000A8';
+        ctx.fillRect(currX - 1, nameInputRect.y + 2, selW + 2, 12);
+        this.font.drawText(ctx, selText, currX, nameInputRect.y + 4, '#FFF');
+        currX += selW;
+      }
+      if (afterSel) {
+        this.font.drawText(ctx, afterSel, currX, nameInputRect.y + 4, '#000');
+      }
+    } else {
+      this.font.drawText(ctx, name, nameInputRect.x + 4, nameInputRect.y + 4, '#000');
+      if (activeField === 'name') {
+        const textBefore = name.substring(0, nameCursorPos);
+        const cursorX = nameInputRect.x + 4 + this.font.measureText(textBefore);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(cursorX, nameInputRect.y + 3, 1, 10);
+      }
     }
 
     // Buttons (OK & Cancel)
@@ -553,9 +611,17 @@ export class OS {
           }
           this.addFileModal.activeField = 'name';
           this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+          this.addFileModal.nameSelStart = null;
+          this.addFileModal.nameSelEnd = null;
+          this.addFileModal.urlSelStart = null;
+          this.addFileModal.urlSelEnd = null;
         } else if (x >= urlInputRect.x && x <= urlInputRect.x + urlInputRect.w && y >= urlInputRect.y && y <= urlInputRect.y + urlInputRect.h) {
           this.addFileModal.activeField = 'url';
           this.addFileModal.urlCursorPos = this.addFileModal.url.length;
+          this.addFileModal.urlSelStart = null;
+          this.addFileModal.urlSelEnd = null;
+          this.addFileModal.nameSelStart = null;
+          this.addFileModal.nameSelEnd = null;
         }
       }
       return;
@@ -934,6 +1000,10 @@ export class OS {
           userEditedName: false,
           nameCursorPos: 0,
           urlCursorPos: 0,
+          nameSelStart: null,
+          nameSelEnd: null,
+          urlSelStart: null,
+          urlSelEnd: null,
           rect: { x: mx, y: my, w, h },
           urlInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
           nameInputRect: { x: mx + 12, y: my + 60, w: w - 24, h: 16 },
@@ -1055,7 +1125,64 @@ export class OS {
     this.renameText = '';
   }
 
-  handleKeyDown(key: string) {
+  handlePaste(pastedText: string) {
+    if (!pastedText) return;
+    const cleanText = pastedText.replace(/[\r\n]+/g, ' ').trim();
+
+    if (this.addFileModal) {
+      const isUrl = this.addFileModal.activeField === 'url';
+      const text = isUrl ? this.addFileModal.url : this.addFileModal.name;
+      let cursorPos = isUrl ? this.addFileModal.urlCursorPos : this.addFileModal.nameCursorPos;
+      const selStart = isUrl ? this.addFileModal.urlSelStart : this.addFileModal.nameSelStart;
+      const selEnd = isUrl ? this.addFileModal.urlSelEnd : this.addFileModal.nameSelEnd;
+
+      let start = cursorPos;
+      let end = cursorPos;
+      if (selStart !== null && selEnd !== null && selStart !== selEnd) {
+        start = Math.min(selStart, selEnd);
+        end = Math.max(selStart, selEnd);
+      }
+
+      const maxLen = isUrl ? 255 : 30;
+      const availableSpace = maxLen - (text.length - (end - start));
+      const insertText = cleanText.substring(0, Math.max(0, availableSpace));
+
+      const newText = text.slice(0, start) + insertText + text.slice(end);
+      cursorPos = start + insertText.length;
+
+      if (isUrl) {
+        this.addFileModal.url = newText;
+        this.addFileModal.urlCursorPos = cursorPos;
+        this.addFileModal.urlSelStart = null;
+        this.addFileModal.urlSelEnd = null;
+        this.onModalUrlChanged();
+      } else {
+        this.addFileModal.name = newText;
+        this.addFileModal.nameCursorPos = cursorPos;
+        this.addFileModal.nameSelStart = null;
+        this.addFileModal.nameSelEnd = null;
+        this.addFileModal.userEditedName = true;
+      }
+      return;
+    }
+
+    if (this.renamingId) {
+      if (this.isRenameSelected) {
+        this.renameText = cleanText.substring(0, 24);
+        this.renameCursorPos = this.renameText.length;
+        this.isRenameSelected = false;
+      } else {
+        const text = this.renameText;
+        const cursorPos = this.renameCursorPos;
+        const availableSpace = 24 - text.length;
+        const insertText = cleanText.substring(0, Math.max(0, availableSpace));
+        this.renameText = text.slice(0, cursorPos) + insertText + text.slice(cursorPos);
+        this.renameCursorPos = cursorPos + insertText.length;
+      }
+    }
+  }
+
+  handleKeyDown(key: string, ctrl: boolean = false, shift: boolean = false, alt: boolean = false) {
     if (this.addFileModal) {
       if (key === 'Escape') {
         this.addFileModal = null;
@@ -1070,19 +1197,137 @@ export class OS {
           this.resolveModalTitleNow();
         }
         this.addFileModal.activeField = this.addFileModal.activeField === 'url' ? 'name' : 'url';
+        this.addFileModal.urlSelStart = null;
+        this.addFileModal.urlSelEnd = null;
+        this.addFileModal.nameSelStart = null;
+        this.addFileModal.nameSelEnd = null;
         return;
       }
 
       const isUrl = this.addFileModal.activeField === 'url';
       const text = isUrl ? this.addFileModal.url : this.addFileModal.name;
       let cursorPos = isUrl ? this.addFileModal.urlCursorPos : this.addFileModal.nameCursorPos;
+      let selStart = isUrl ? this.addFileModal.urlSelStart : this.addFileModal.nameSelStart;
+      let selEnd = isUrl ? this.addFileModal.urlSelEnd : this.addFileModal.nameSelEnd;
 
+      const hasSelection = selStart !== null && selEnd !== null && selStart !== selEnd;
+      const sMin = hasSelection ? Math.min(selStart!, selEnd!) : cursorPos;
+      const sMax = hasSelection ? Math.max(selStart!, selEnd!) : cursorPos;
+
+      // Handle Ctrl Shortcuts
+      if (ctrl) {
+        const k = key.toLowerCase();
+        if (k === 'a') {
+          // Select All
+          selStart = 0;
+          selEnd = text.length;
+          cursorPos = text.length;
+          if (isUrl) {
+            this.addFileModal.urlSelStart = selStart;
+            this.addFileModal.urlSelEnd = selEnd;
+            this.addFileModal.urlCursorPos = cursorPos;
+          } else {
+            this.addFileModal.nameSelStart = selStart;
+            this.addFileModal.nameSelEnd = selEnd;
+            this.addFileModal.nameCursorPos = cursorPos;
+          }
+          return;
+        } else if (k === 'c') {
+          // Copy
+          const copyText = hasSelection ? text.substring(sMin, sMax) : text;
+          if (copyText && navigator.clipboard) {
+            navigator.clipboard.writeText(copyText).catch(() => {});
+          }
+          return;
+        } else if (k === 'x') {
+          // Cut
+          const copyText = hasSelection ? text.substring(sMin, sMax) : text;
+          if (copyText && navigator.clipboard) {
+            navigator.clipboard.writeText(copyText).catch(() => {});
+          }
+          const newText = text.slice(0, sMin) + text.slice(sMax);
+          cursorPos = sMin;
+          if (isUrl) {
+            this.addFileModal.url = newText;
+            this.addFileModal.urlCursorPos = cursorPos;
+            this.addFileModal.urlSelStart = null;
+            this.addFileModal.urlSelEnd = null;
+            this.onModalUrlChanged();
+          } else {
+            this.addFileModal.name = newText;
+            this.addFileModal.nameCursorPos = cursorPos;
+            this.addFileModal.nameSelStart = null;
+            this.addFileModal.nameSelEnd = null;
+            this.addFileModal.userEditedName = true;
+          }
+          return;
+        } else if (k === 'v') {
+          // Paste
+          if (navigator.clipboard && navigator.clipboard.readText) {
+            navigator.clipboard.readText().then(clipText => {
+              this.handlePaste(clipText);
+            }).catch(() => {});
+          }
+          return;
+        }
+        return;
+      }
+
+      // Cursor movement with Shift (Selection)
       if (key === 'ArrowLeft') {
-        cursorPos = Math.max(0, cursorPos - 1);
+        if (shift) {
+          if (selStart === null) selStart = cursorPos;
+          cursorPos = Math.max(0, cursorPos - 1);
+          selEnd = cursorPos;
+        } else {
+          cursorPos = hasSelection ? sMin : Math.max(0, cursorPos - 1);
+          selStart = null;
+          selEnd = null;
+        }
       } else if (key === 'ArrowRight') {
-        cursorPos = Math.min(text.length, cursorPos + 1);
+        if (shift) {
+          if (selStart === null) selStart = cursorPos;
+          cursorPos = Math.min(text.length, cursorPos + 1);
+          selEnd = cursorPos;
+        } else {
+          cursorPos = hasSelection ? sMax : Math.min(text.length, cursorPos + 1);
+          selStart = null;
+          selEnd = null;
+        }
+      } else if (key === 'Home') {
+        if (shift) {
+          if (selStart === null) selStart = cursorPos;
+          cursorPos = 0;
+          selEnd = cursorPos;
+        } else {
+          cursorPos = 0;
+          selStart = null;
+          selEnd = null;
+        }
+      } else if (key === 'End') {
+        if (shift) {
+          if (selStart === null) selStart = cursorPos;
+          cursorPos = text.length;
+          selEnd = cursorPos;
+        } else {
+          cursorPos = text.length;
+          selStart = null;
+          selEnd = null;
+        }
       } else if (key === 'Backspace') {
-        if (cursorPos > 0) {
+        if (hasSelection) {
+          const newText = text.slice(0, sMin) + text.slice(sMax);
+          cursorPos = sMin;
+          selStart = null;
+          selEnd = null;
+          if (isUrl) {
+            this.addFileModal.url = newText;
+            this.onModalUrlChanged();
+          } else {
+            this.addFileModal.name = newText;
+            this.addFileModal.userEditedName = true;
+          }
+        } else if (cursorPos > 0) {
           const newText = text.slice(0, cursorPos - 1) + text.slice(cursorPos);
           cursorPos--;
           if (isUrl) {
@@ -1094,7 +1339,19 @@ export class OS {
           }
         }
       } else if (key === 'Delete') {
-        if (cursorPos < text.length) {
+        if (hasSelection) {
+          const newText = text.slice(0, sMin) + text.slice(sMax);
+          cursorPos = sMin;
+          selStart = null;
+          selEnd = null;
+          if (isUrl) {
+            this.addFileModal.url = newText;
+            this.onModalUrlChanged();
+          } else {
+            this.addFileModal.name = newText;
+            this.addFileModal.userEditedName = true;
+          }
+        } else if (cursorPos < text.length) {
           const newText = text.slice(0, cursorPos) + text.slice(cursorPos + 1);
           if (isUrl) {
             this.addFileModal.url = newText;
@@ -1104,11 +1361,14 @@ export class OS {
             this.addFileModal.userEditedName = true;
           }
         }
-      } else if (key.length === 1) {
+      } else if (key.length === 1 && !alt) {
         const maxLen = isUrl ? 255 : 30;
-        if (text.length < maxLen) {
-          const newText = text.slice(0, cursorPos) + key + text.slice(cursorPos);
-          cursorPos++;
+        const textWithoutSel = text.slice(0, sMin) + text.slice(sMax);
+        if (textWithoutSel.length < maxLen) {
+          const newText = text.slice(0, sMin) + key + text.slice(sMax);
+          cursorPos = sMin + 1;
+          selStart = null;
+          selEnd = null;
           if (isUrl) {
             this.addFileModal.url = newText;
             this.onModalUrlChanged();
@@ -1119,12 +1379,48 @@ export class OS {
         }
       }
 
-      if (isUrl) this.addFileModal.urlCursorPos = cursorPos;
-      else this.addFileModal.nameCursorPos = cursorPos;
+      if (isUrl) {
+        this.addFileModal.urlCursorPos = cursorPos;
+        this.addFileModal.urlSelStart = selStart;
+        this.addFileModal.urlSelEnd = selEnd;
+      } else {
+        this.addFileModal.nameCursorPos = cursorPos;
+        this.addFileModal.nameSelStart = selStart;
+        this.addFileModal.nameSelEnd = selEnd;
+      }
       return;
     }
 
     if (this.renamingId) {
+      if (ctrl) {
+        const k = key.toLowerCase();
+        if (k === 'a') {
+          this.isRenameSelected = true;
+          return;
+        } else if (k === 'c') {
+          if (this.renameText && navigator.clipboard) {
+            navigator.clipboard.writeText(this.renameText).catch(() => {});
+          }
+          return;
+        } else if (k === 'x') {
+          if (this.renameText && navigator.clipboard) {
+            navigator.clipboard.writeText(this.renameText).catch(() => {});
+          }
+          this.renameText = '';
+          this.renameCursorPos = 0;
+          this.isRenameSelected = false;
+          return;
+        } else if (k === 'v') {
+          if (navigator.clipboard && navigator.clipboard.readText) {
+            navigator.clipboard.readText().then(clipText => {
+              this.handlePaste(clipText);
+            }).catch(() => {});
+          }
+          return;
+        }
+        return;
+      }
+
       if (key === 'Enter') {
         this.commitRename();
       } else if (key === 'Escape') {
@@ -1152,7 +1448,7 @@ export class OS {
         } else if (this.renameCursorPos < this.renameText.length) {
           this.renameText = this.renameText.slice(0, this.renameCursorPos) + this.renameText.slice(this.renameCursorPos + 1);
         }
-      } else if (key.length === 1) { 
+      } else if (key.length === 1 && !alt) { 
         if (this.isRenameSelected) {
           this.renameText = key;
           this.renameCursorPos = 1;
@@ -1163,6 +1459,28 @@ export class OS {
         }
       }
     } else {
+      if (ctrl) {
+        const k = key.toLowerCase();
+        if (k === 'c' && this.selectedIds.size > 0) {
+          this.clipboard = { ids: new Set(this.selectedIds), type: 'copy' };
+          return;
+        } else if (k === 'x' && this.selectedIds.size > 0) {
+          this.clipboard = { ids: new Set(this.selectedIds), type: 'cut' };
+          return;
+        } else if (k === 'v' && this.clipboard) {
+          this.clipboard.ids.forEach(id => {
+            this.vfs.copyNode(id, this.currentFolderId);
+          });
+          this.refreshFiles();
+          return;
+        } else if (k === 'a') {
+          this.selectedIds.clear();
+          for (const f of this.currentFiles) {
+            this.selectedIds.add(f.id);
+          }
+          return;
+        }
+      }
       if (key === 'Delete' && this.selectedIds.size > 0) {
         this.showDeleteConfirm();
       }
