@@ -4,6 +4,112 @@
     "path": "PXL_folder",
     "isDirectory": true,
     "isApp": false,
-    "children": []
+    "children": [
+      {
+        "name": "PXLRogue",
+        "path": "PXL_folder/PXLRogue",
+        "isDirectory": true,
+        "isApp": true,
+        "url": "system_folder/PXL_folder/PXLRogue/playtest.html",
+        "children": [
+          {
+            "name": "CLAUDE.md",
+            "path": "PXL_folder/PXLRogue/CLAUDE.md",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/CLAUDE.md"
+          },
+          {
+            "name": "EDITING_THE_GRAPHICS.md",
+            "path": "PXL_folder/PXLRogue/EDITING_THE_GRAPHICS.md",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/EDITING_THE_GRAPHICS.md"
+          },
+          {
+            "name": "Everyday_Slight.ttf",
+            "path": "PXL_folder/PXLRogue/Everyday_Slight.ttf",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/Everyday_Slight.ttf"
+          },
+          {
+            "name": "font_new_ingame.png",
+            "path": "PXL_folder/PXLRogue/font_new_ingame.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/font_new_ingame.png"
+          },
+          {
+            "name": "playtest.html",
+            "path": "PXL_folder/PXLRogue/playtest.html",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/playtest.html"
+          },
+          {
+            "name": "PXLRogue_splash.png",
+            "path": "PXL_folder/PXLRogue/PXLRogue_splash.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/PXLRogue_splash.png"
+          },
+          {
+            "name": "rogue8_spritesheet_generated.png",
+            "path": "PXL_folder/PXLRogue/rogue8_spritesheet_generated.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/rogue8_spritesheet_generated.png"
+          },
+          {
+            "name": "rogue8_spritesheet_ol.png",
+            "path": "PXL_folder/PXLRogue/rogue8_spritesheet_ol.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/rogue8_spritesheet_ol.png"
+          },
+          {
+            "name": "rogue8_spritesheet_x4.png",
+            "path": "PXL_folder/PXLRogue/rogue8_spritesheet_x4.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/rogue8_spritesheet_x4.png"
+          },
+          {
+            "name": "rogue8_spritesheet(1).png",
+            "path": "PXL_folder/PXLRogue/rogue8_spritesheet(1).png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/rogue8_spritesheet(1).png"
+          },
+          {
+            "name": "rogue8.html",
+            "path": "PXL_folder/PXLRogue/rogue8.html",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/rogue8.html"
+          },
+          {
+            "name": "spritesheet_grid.png",
+            "path": "PXL_folder/PXLRogue/spritesheet_grid.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/spritesheet_grid.png"
+          },
+          {
+            "name": "spritesheet_map.csv",
+            "path": "PXL_folder/PXLRogue/spritesheet_map.csv",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/spritesheet_map.csv"
+          },
+          {
+            "name": "spritesheet_named.png",
+            "path": "PXL_folder/PXLRogue/spritesheet_named.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/spritesheet_named.png"
+          },
+          {
+            "name": "spritesheet_old.png",
+            "path": "PXL_folder/PXLRogue/spritesheet_old.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/spritesheet_old.png"
+          },
+          {
+            "name": "spritesheet.png",
+            "path": "PXL_folder/PXLRogue/spritesheet.png",
+            "isDirectory": false,
+            "url": "system_folder/PXL_folder/PXLRogue/spritesheet.png"
+          }
+        ]
+      }
+    ]
   }
 ]

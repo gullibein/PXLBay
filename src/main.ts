@@ -52,6 +52,18 @@ window.addEventListener('mouseup', () => {
   os.handleMouseUp();
 });
 
+window.addEventListener('blur', () => {
+  os.handleMouseUp();
+});
+
+window.addEventListener('focus', () => {
+  os.handleMouseUp();
+});
+
+document.addEventListener('mouseleave', () => {
+  os.handleMouseUp();
+});
+
 window.addEventListener('wheel', (e) => {
   const delta = Math.sign(e.deltaY) * 20; 
   os.handleScroll(-delta, mouseX, mouseY);

@@ -946,6 +946,7 @@ export class OS {
         break;
       case 'Launch App':
         if (file?.url) {
+          this.handleMouseUp();
           const normalized = normalizeUrl(file.url);
           const baseUrl = import.meta.env.BASE_URL || './';
           const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
@@ -1274,7 +1275,9 @@ export class OS {
   }
   handleMouseUp() {
     this.draggingId = null;
+    this.draggingSelected = false;
     this.selectionBox = null;
+    this.dragInitialPositions.clear();
   }
 
   private executeFile(file: VFSNode) {
@@ -1291,6 +1294,7 @@ export class OS {
       this.scrollY = this.scrollHistory.get(this.currentFolderId) || 0;
       this.clampScroll();
     } else if (file.url) {
+      this.handleMouseUp();
       const normalized = normalizeUrl(file.url);
       const baseUrl = import.meta.env.BASE_URL || './';
       const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
