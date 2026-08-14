@@ -36,7 +36,9 @@ jobs:
         run: npm install
 
       - name: Build project
-        run: npm run build
+        run: |
+          npm run build
+          if [ -d "system_folder" ]; then cp -r system_folder dist/system_folder; fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
