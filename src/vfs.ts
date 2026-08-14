@@ -6,6 +6,7 @@ export interface VFSNode {
   isDirectory: boolean;
   parentId: string | null;
   isApp?: boolean;
+  isExecutable?: boolean;
   isRecycleBin?: boolean;
   url?: string;
   path?: string;
@@ -28,6 +29,7 @@ export class VFS {
     for (const item of items) {
       // Use item path or parentId/name as unique node ID
       const id = item.path || (parentId === 'root' ? item.name : `${parentId}/${item.name}`);
+      const isHtml = item.name.toLowerCase().endsWith('.html');
       
       const node: VFSNode = {
         id,
@@ -35,6 +37,7 @@ export class VFS {
         isDirectory: item.isDirectory,
         parentId: parentId,
         isApp: item.isApp,
+        isExecutable: !item.isDirectory && (isHtml || !!item.url),
         url: item.url,
         path: item.path
       };
@@ -45,6 +48,21 @@ export class VFS {
         this.loadTree(item.children, id);
       }
     }
+  }
+
+  public createFile(parentId: string, name: string, url: string, isExecutable: boolean = true): VFSNode {
+    const uniqueName = this.getUniqueName(parentId, name, false);
+    const id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+    const node: VFSNode = {
+      id,
+      name: uniqueName,
+      isDirectory: false,
+      parentId,
+      url,
+      isExecutable
+    };
+    this.nodes.set(id, node);
+    return node;
   }
 
   public getChildren(parentId: string): VFSNode[] {

@@ -2,6 +2,7 @@ import { FontRenderer } from './font';
 import fontUrl from '../public/Bm437_EverexME_7x8.FON?url';
 import { VFS, type VFSNode } from './vfs';
 import { fetchRepositoryTree } from './scanner';
+import { getFavicon } from './favicon';
 
 export class OS {
   private vfs = new VFS();
@@ -59,6 +60,19 @@ export class OS {
     rect: { x: number, y: number, w: number, h: number },
     confirmBtnRect: { x: number, y: number, w: number, h: number },
     cancelBtnRect: { x: number, y: number, w: number, h: number }
+  } | null = null;
+
+  private addFileModal: {
+    name: string;
+    url: string;
+    activeField: 'name' | 'url';
+    nameCursorPos: number;
+    urlCursorPos: number;
+    rect: { x: number; y: number; w: number; h: number };
+    nameInputRect: { x: number; y: number; w: number; h: number };
+    urlInputRect: { x: number; y: number; w: number; h: number };
+    okBtnRect: { x: number; y: number; w: number; h: number };
+    cancelBtnRect: { x: number; y: number; w: number; h: number };
   } | null = null;
 
   constructor() {
@@ -184,15 +198,64 @@ export class OS {
         ctx.fillRect(x + Math.floor(this.iconWidth / 2) - 4, y + 10, 8, 8);
       }
     } else {
-      // Simple File icon
-      ctx.fillStyle = '#FFF';
-      ctx.strokeStyle = '#000';
-      ctx.fillRect(x, y, this.iconWidth, this.iconHeight);
-      ctx.strokeRect(x, y, this.iconWidth, this.iconHeight);
-      
-      // Single detail line
-      ctx.fillStyle = '#000';
-      ctx.fillRect(x + 4, y + 6, this.iconWidth - 8, 1);
+      // Executable / File Icon
+      const favicon = file.url ? getFavicon(file.url) : null;
+      if (favicon && favicon.complete && favicon.naturalWidth > 1) {
+        // Draw white beveled container and render favicon inside pixelated
+        ctx.fillStyle = '#FFF';
+        ctx.fillRect(x + 4, y, 24, 24);
+        ctx.strokeStyle = '#000';
+        ctx.strokeRect(x + 4, y, 24, 24);
+
+        ctx.strokeStyle = '#808080';
+        ctx.beginPath(); ctx.moveTo(x + 5, y + 23); ctx.lineTo(x + 5, y + 1); ctx.lineTo(x + 27, y + 1); ctx.stroke();
+        
+        ctx.drawImage(favicon, x + 8, y + 4, 16, 16);
+      } else if (file.isExecutable || file.url || file.name.toLowerCase().endsWith('.html') || file.name.toLowerCase().endsWith('.exe')) {
+        // Custom Retro 32x24 Executable Window Icon
+        ctx.fillStyle = '#C0C0C0';
+        ctx.fillRect(x, y, this.iconWidth, this.iconHeight);
+        ctx.strokeStyle = '#000';
+        ctx.strokeRect(x, y, this.iconWidth, this.iconHeight);
+
+        // 3D Bevel highlight
+        ctx.strokeStyle = '#FFF';
+        ctx.beginPath();
+        ctx.moveTo(x + 1, y + this.iconHeight - 1);
+        ctx.lineTo(x + 1, y + 1);
+        ctx.lineTo(x + this.iconWidth - 1, y + 1);
+        ctx.stroke();
+
+        // Title bar (Dark Blue)
+        ctx.fillStyle = '#0000A8';
+        ctx.fillRect(x + 3, y + 3, this.iconWidth - 6, 4);
+
+        // Mini Title button (yellow square)
+        ctx.fillStyle = '#FFD700';
+        ctx.fillRect(x + this.iconWidth - 7, y + 4, 2, 2);
+
+        // Window Inner Canvas
+        ctx.fillStyle = '#FFF';
+        ctx.fillRect(x + 3, y + 8, this.iconWidth - 6, this.iconHeight - 11);
+
+        // Mini Application Glyph: Retro program blocks
+        ctx.fillStyle = '#008080';
+        ctx.fillRect(x + 6, y + 10, 6, 6);
+        ctx.fillStyle = '#FF5555';
+        ctx.fillRect(x + 14, y + 10, 11, 3);
+        ctx.fillStyle = '#0000A8';
+        ctx.fillRect(x + 14, y + 14, 8, 2);
+      } else {
+        // Simple Text/Data File icon
+        ctx.fillStyle = '#FFF';
+        ctx.strokeStyle = '#000';
+        ctx.fillRect(x, y, this.iconWidth, this.iconHeight);
+        ctx.strokeRect(x, y, this.iconWidth, this.iconHeight);
+        
+        // Single detail line
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x + 4, y + 6, this.iconWidth - 8, 1);
+      }
     }
 
     const isRenaming = this.renamingId === file.id;
@@ -279,6 +342,91 @@ export class OS {
       ctx.strokeStyle = '#000';
       ctx.beginPath(); ctx.moveTo(bx + bw, by); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx, by + bh); ctx.stroke();
       this.font.drawText(ctx, btn.label, bx + (bw - this.font.measureText(btn.label))/2, by + 6);
+    });
+  }
+
+  private drawAddFileModal(ctx: CanvasRenderingContext2D) {
+    if (!this.addFileModal) return;
+    const { rect, nameInputRect, urlInputRect, okBtnRect, cancelBtnRect, name, url, activeField, nameCursorPos, urlCursorPos } = this.addFileModal;
+    const { x, y, w, h } = rect;
+
+    // Dim background
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    // Modal Window Box
+    ctx.fillStyle = '#C0C0C0';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#FFF';
+    ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
+    ctx.strokeStyle = '#000';
+    ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.stroke();
+
+    // Title bar
+    ctx.fillStyle = '#0000A8';
+    ctx.fillRect(x + 2, y + 2, w - 4, 14);
+    this.font.drawText(ctx, 'Add Executable File', x + 6, y + 4, '#FFF');
+
+    // Label: File Name
+    this.font.drawText(ctx, 'Name:', x + 12, y + 20, '#000');
+
+    // Input Box: File Name
+    ctx.fillStyle = '#FFF';
+    ctx.fillRect(nameInputRect.x, nameInputRect.y, nameInputRect.w, nameInputRect.h);
+    ctx.strokeStyle = '#808080';
+    ctx.beginPath(); ctx.moveTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.stroke();
+    ctx.strokeStyle = '#FFF';
+    ctx.beginPath(); ctx.moveTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.stroke();
+
+    // Draw Name Text & Cursor
+    this.font.drawText(ctx, name, nameInputRect.x + 4, nameInputRect.y + 4, '#000');
+    if (activeField === 'name') {
+      const textBefore = name.substring(0, nameCursorPos);
+      const cursorX = nameInputRect.x + 4 + this.font.measureText(textBefore);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(cursorX, nameInputRect.y + 3, 1, 10);
+    }
+
+    // Label: URL / Link
+    this.font.drawText(ctx, 'URL / Link:', x + 12, y + 50, '#000');
+
+    // Input Box: URL
+    ctx.fillStyle = '#FFF';
+    ctx.fillRect(urlInputRect.x, urlInputRect.y, urlInputRect.w, urlInputRect.h);
+    ctx.strokeStyle = '#808080';
+    ctx.beginPath(); ctx.moveTo(urlInputRect.x, urlInputRect.y + urlInputRect.h); ctx.lineTo(urlInputRect.x, urlInputRect.y); ctx.lineTo(urlInputRect.x + urlInputRect.w, urlInputRect.y); ctx.stroke();
+    ctx.strokeStyle = '#FFF';
+    ctx.beginPath(); ctx.moveTo(urlInputRect.x + urlInputRect.w, urlInputRect.y); ctx.lineTo(urlInputRect.x + urlInputRect.w, urlInputRect.y + urlInputRect.h); ctx.lineTo(urlInputRect.x, urlInputRect.y + urlInputRect.h); ctx.stroke();
+
+    // Draw URL Text & Cursor
+    let visibleUrl = url;
+    let urlOffset = 0;
+    const maxUrlWidth = urlInputRect.w - 10;
+    while (this.font.measureText(visibleUrl) > maxUrlWidth && urlOffset < urlCursorPos) {
+      urlOffset++;
+      visibleUrl = url.substring(urlOffset);
+    }
+    this.font.drawText(ctx, visibleUrl, urlInputRect.x + 4, urlInputRect.y + 4, '#000');
+    if (activeField === 'url') {
+      const textBefore = url.substring(urlOffset, urlCursorPos);
+      const cursorX = urlInputRect.x + 4 + this.font.measureText(textBefore);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(cursorX, urlInputRect.y + 3, 1, 10);
+    }
+
+    // Buttons (OK & Cancel)
+    [
+      { rect: okBtnRect, label: 'OK' },
+      { rect: cancelBtnRect, label: 'Cancel' }
+    ].forEach(btn => {
+      const { x: bx, y: by, w: bw, h: bh } = btn.rect;
+      ctx.fillStyle = '#C0C0C0';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#FFF';
+      ctx.beginPath(); ctx.moveTo(bx, by + bh); ctx.lineTo(bx, by); ctx.lineTo(bx + bw, by); ctx.stroke();
+      ctx.strokeStyle = '#000';
+      ctx.beginPath(); ctx.moveTo(bx + bw, by); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx, by + bh); ctx.stroke();
+      this.font.drawText(ctx, btn.label, bx + (bw - this.font.measureText(btn.label)) / 2, by + 6);
     });
   }
 
@@ -394,9 +542,28 @@ export class OS {
 
     this.drawContextMenu(ctx);
     this.drawModal(ctx);
+    this.drawAddFileModal(ctx);
   }
 
   handleMouseDown(x: number, y: number, button: number, shift: boolean = false, ctrl: boolean = false) {
+    if (this.addFileModal) {
+      if (button === 0) {
+        const { okBtnRect, cancelBtnRect, nameInputRect, urlInputRect } = this.addFileModal;
+        if (x >= okBtnRect.x && x <= okBtnRect.x + okBtnRect.w && y >= okBtnRect.y && y <= okBtnRect.y + okBtnRect.h) {
+          this.submitAddFile();
+        } else if (x >= cancelBtnRect.x && x <= cancelBtnRect.x + cancelBtnRect.w && y >= cancelBtnRect.y && y <= cancelBtnRect.y + cancelBtnRect.h) {
+          this.addFileModal = null;
+        } else if (x >= nameInputRect.x && x <= nameInputRect.x + nameInputRect.w && y >= nameInputRect.y && y <= nameInputRect.y + nameInputRect.h) {
+          this.addFileModal.activeField = 'name';
+          this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+        } else if (x >= urlInputRect.x && x <= urlInputRect.x + urlInputRect.w && y >= urlInputRect.y && y <= urlInputRect.y + urlInputRect.h) {
+          this.addFileModal.activeField = 'url';
+          this.addFileModal.urlCursorPos = this.addFileModal.url.length;
+        }
+      }
+      return;
+    }
+
     if (this.modal) {
       if (button === 0) {
         const { confirmBtnRect, cancelBtnRect } = this.modal;
@@ -641,7 +808,7 @@ export class OS {
         if (isBin) options.push('Empty Bin');
         this.contextMenu = { x, y, options, type: 'item', hoveredIndex: -1, hoveredSubIndex: -1 };
       } else {
-        const options = ['New Folder', 'Paste', 'Tidy', 'Zoom'];
+        const options = ['New Folder', 'Add file', 'Paste', 'Tidy', 'Zoom'];
         if (this.currentFolderId === 'bin') options.push('Empty Bin');
         this.contextMenu = { x, y, options, type: 'desktop', hoveredIndex: -1, hoveredSubIndex: -1 };
       }
@@ -695,6 +862,20 @@ export class OS {
     this.contextMenu = null;
   }
 
+  private submitAddFile() {
+    if (!this.addFileModal) return;
+    const name = this.addFileModal.name.trim() || 'Untitled';
+    const url = this.addFileModal.url.trim();
+    if (url) {
+      const newNode = this.vfs.createFile(this.currentFolderId, name, url, true);
+      this.refreshFiles();
+      this.selectedIds.clear();
+      this.selectedIds.add(newNode.id);
+      this.lastSelectedId = newNode.id;
+    }
+    this.addFileModal = null;
+  }
+
   private executeContextMenuOption(option: string) {
     const file = this.lastSelectedId ? this.vfs.getNode(this.lastSelectedId) : null;
 
@@ -706,6 +887,24 @@ export class OS {
         this.selectedIds.add(newNode.id);
         this.lastSelectedId = newNode.id;
         this.startRename(newNode.id, newNode.name);
+        break;
+      case 'Add file':
+        const w = 240;
+        const h = 125;
+        const mx = Math.floor((this.width - w) / 2);
+        const my = Math.floor((this.height - h) / 2);
+        this.addFileModal = {
+          name: 'New Link',
+          url: 'https://',
+          activeField: 'name',
+          nameCursorPos: 8,
+          urlCursorPos: 8,
+          rect: { x: mx, y: my, w, h },
+          nameInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
+          urlInputRect: { x: mx + 12, y: my + 64, w: w - 24, h: 16 },
+          okBtnRect: { x: mx + 30, y: my + 94, w: 80, h: 20 },
+          cancelBtnRect: { x: mx + 130, y: my + 94, w: 80, h: 20 }
+        };
         break;
       case 'Open':
         if (file) this.executeFile(file);
@@ -818,6 +1017,56 @@ export class OS {
   }
 
   handleKeyDown(key: string) {
+    if (this.addFileModal) {
+      if (key === 'Escape') {
+        this.addFileModal = null;
+        return;
+      }
+      if (key === 'Enter') {
+        this.submitAddFile();
+        return;
+      }
+      if (key === 'Tab') {
+        this.addFileModal.activeField = this.addFileModal.activeField === 'name' ? 'url' : 'name';
+        return;
+      }
+
+      const isName = this.addFileModal.activeField === 'name';
+      const text = isName ? this.addFileModal.name : this.addFileModal.url;
+      let cursorPos = isName ? this.addFileModal.nameCursorPos : this.addFileModal.urlCursorPos;
+
+      if (key === 'ArrowLeft') {
+        cursorPos = Math.max(0, cursorPos - 1);
+      } else if (key === 'ArrowRight') {
+        cursorPos = Math.min(text.length, cursorPos + 1);
+      } else if (key === 'Backspace') {
+        if (cursorPos > 0) {
+          const newText = text.slice(0, cursorPos - 1) + text.slice(cursorPos);
+          cursorPos--;
+          if (isName) this.addFileModal.name = newText;
+          else this.addFileModal.url = newText;
+        }
+      } else if (key === 'Delete') {
+        if (cursorPos < text.length) {
+          const newText = text.slice(0, cursorPos) + text.slice(cursorPos + 1);
+          if (isName) this.addFileModal.name = newText;
+          else this.addFileModal.url = newText;
+        }
+      } else if (key.length === 1) {
+        const maxLen = isName ? 30 : 255;
+        if (text.length < maxLen) {
+          const newText = text.slice(0, cursorPos) + key + text.slice(cursorPos);
+          cursorPos++;
+          if (isName) this.addFileModal.name = newText;
+          else this.addFileModal.url = newText;
+        }
+      }
+
+      if (isName) this.addFileModal.nameCursorPos = cursorPos;
+      else this.addFileModal.urlCursorPos = cursorPos;
+      return;
+    }
+
     if (this.renamingId) {
       if (key === 'Enter') {
         this.commitRename();
