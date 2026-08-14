@@ -66,6 +66,8 @@ export class OS {
   private textSelectAnchor: number = 0;
   private modalUrlLastClickTime: number = 0;
   private modalNameLastClickTime: number = 0;
+  private lastPasteTime: number = 0;
+  private lastPastedText: string = '';
 
   private draggingId: string | null = null;
   private draggingSelected: boolean = false;
@@ -1252,6 +1254,14 @@ export class OS {
   handlePaste(pastedText: string) {
     if (!pastedText) return;
     const cleanText = pastedText.replace(/[\r\n]+/g, ' ').trim();
+    if (!cleanText) return;
+
+    const now = performance.now();
+    if (now - this.lastPasteTime < 150 && cleanText === this.lastPastedText) {
+      return;
+    }
+    this.lastPasteTime = now;
+    this.lastPastedText = cleanText;
 
     if (this.addFileModal) {
       const isUrl = this.addFileModal.activeField === 'url';
@@ -1391,12 +1401,7 @@ export class OS {
           }
           return;
         } else if (k === 'v') {
-          // Paste
-          if (navigator.clipboard && navigator.clipboard.readText) {
-            navigator.clipboard.readText().then(clipText => {
-              this.handlePaste(clipText);
-            }).catch(() => {});
-          }
+          // Paste event is handled by window 'paste' listener
           return;
         }
         return;
@@ -1557,11 +1562,7 @@ export class OS {
           this.isRenameSelected = false;
           return;
         } else if (k === 'v') {
-          if (navigator.clipboard && navigator.clipboard.readText) {
-            navigator.clipboard.readText().then(clipText => {
-              this.handlePaste(clipText);
-            }).catch(() => {});
-          }
+          // Paste event is handled by window 'paste' listener
           return;
         }
         return;
