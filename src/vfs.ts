@@ -10,6 +10,7 @@ export interface VFSNode {
   isRecycleBin?: boolean;
   isUserCreated?: boolean;
   url?: string;
+  iconUrl?: string;
   path?: string;
   x?: number;
   y?: number;
@@ -30,7 +31,7 @@ export class VFS {
     for (const item of items) {
       // Use item path or parentId/name as unique node ID
       const id = item.path || (parentId === 'root' ? item.name : `${parentId}/${item.name}`);
-      const isHtml = item.name.toLowerCase().endsWith('.html');
+      const isHtml = item.name.toLowerCase().endsWith('.html') || (item.url && item.url.toLowerCase().endsWith('.html'));
       
       const node: VFSNode = {
         id,
@@ -41,6 +42,7 @@ export class VFS {
         isExecutable: !item.isDirectory && (isHtml || !!item.url),
         isUserCreated: false,
         url: item.url,
+        iconUrl: item.iconUrl,
         path: item.path
       };
 

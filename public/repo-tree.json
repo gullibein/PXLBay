@@ -3,52 +3,14 @@
     "name": "PXL_folder",
     "path": "PXL_folder",
     "isDirectory": true,
-    "isApp": false,
     "children": [
       {
-        "name": "PXLRogue",
+        "name": "Rogue-8",
         "path": "PXL_folder/PXLRogue",
-        "isDirectory": true,
+        "isDirectory": false,
         "isApp": true,
-        "url": "system_folder/PXL_folder/PXLRogue/index.html",
-        "children": [
-          {
-            "name": "CLAUDE.md",
-            "path": "PXL_folder/PXLRogue/CLAUDE.md",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/CLAUDE.md"
-          },
-          {
-            "name": "EDITING_THE_GRAPHICS.md",
-            "path": "PXL_folder/PXLRogue/EDITING_THE_GRAPHICS.md",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/EDITING_THE_GRAPHICS.md"
-          },
-          {
-            "name": "index.html",
-            "path": "PXL_folder/PXLRogue/index.html",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/index.html"
-          },
-          {
-            "name": "PXLRogue_splash.png",
-            "path": "PXL_folder/PXLRogue/PXLRogue_splash.png",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/PXLRogue_splash.png"
-          },
-          {
-            "name": "spritesheet_map.csv",
-            "path": "PXL_folder/PXLRogue/spritesheet_map.csv",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/spritesheet_map.csv"
-          },
-          {
-            "name": "spritesheet.png",
-            "path": "PXL_folder/PXLRogue/spritesheet.png",
-            "isDirectory": false,
-            "url": "system_folder/PXL_folder/PXLRogue/spritesheet.png"
-          }
-        ]
+        "iconUrl": "system_folder/PXL_folder/PXLRogue/favicon.ico",
+        "url": "system_folder/PXL_folder/PXLRogue/index.html"
       }
     ]
   }

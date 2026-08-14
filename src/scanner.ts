@@ -4,6 +4,7 @@ export interface RepoItem {
   isDirectory: boolean;
   isApp?: boolean;
   url?: string;
+  iconUrl?: string;
   children?: RepoItem[];
 }
 
@@ -83,14 +84,21 @@ function buildTreeFromGitHub(treeItems: GitHubTreeItem[]): RepoItem[] {
     }
   }
 
-  // Third pass: identify apps (directories containing index.html or *.html)
-  for (const repoItem of map.values()) {
+  // Third pass: identify apps (directories containing index.html) and treat them as website files
+  for (const repoItem of Array.from(map.values())) {
     if (repoItem.isDirectory && repoItem.children) {
-      const htmlFiles = repoItem.children.filter(c => !c.isDirectory && c.name.toLowerCase().endsWith('.html'));
-      const mainHtml = htmlFiles.find(c => c.name.toLowerCase() === 'index.html') || htmlFiles[0];
-      if (mainHtml) {
+      const indexHtml = repoItem.children.find(c => !c.isDirectory && c.name.toLowerCase() === 'index.html');
+      if (indexHtml) {
+        repoItem.isDirectory = false;
         repoItem.isApp = true;
-        repoItem.url = mainHtml.url || mainHtml.path;
+        repoItem.url = indexHtml.url || `${repoItem.path}/index.html`;
+
+        const iconFile = repoItem.children.find(c => !c.isDirectory && (c.name.toLowerCase() === 'favicon.ico' || c.name.toLowerCase() === 'favicon.png' || c.name.toLowerCase() === 'icon.png'));
+        if (iconFile) {
+          repoItem.iconUrl = iconFile.url || iconFile.path;
+        }
+
+        repoItem.children = undefined;
       }
     }
   }

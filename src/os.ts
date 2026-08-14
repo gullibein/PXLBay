@@ -231,7 +231,7 @@ export class OS {
       }
     } else {
       // Executable / File Icon
-      const favicon = file.url ? getFavicon(file.url) : null;
+      const favicon = file.url ? getFavicon(file.url, file.iconUrl) : null;
       if (favicon && favicon.complete && favicon.naturalWidth > 1) {
         // Draw favicon directly at 24x24 pixels (preserving transparency and natural circular/square shape)
         const fx = x + Math.floor((this.iconWidth - 24) / 2);

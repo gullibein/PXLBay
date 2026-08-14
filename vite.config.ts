@@ -8,6 +8,7 @@ interface RepoItem {
   isDirectory: boolean;
   isApp?: boolean;
   url?: string;
+  iconUrl?: string;
   children?: RepoItem[];
 }
 
@@ -52,30 +53,47 @@ function scanDirectoryRecursive(baseDir: string, relativeDir: string = '', urlPr
       const itemUrl = urlPrefix ? `${urlPrefix}/${itemRelPath}` : itemRelPath;
 
       if (dirent.isDirectory()) {
-        const children = scanDirectoryRecursive(baseDir, itemRelPath, urlPrefix);
-        
-        // Check if directory is an app (contains index.html or any .html)
-        let isApp = false;
-        let appUrl: string | undefined;
+        const indexPath = path.join(fullPath, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          // Folder contains index.html! Treat as website executable file
+          let websiteName = dirent.name;
+          let iconUrl: string | undefined;
 
-        const htmlFiles = children.filter(c => !c.isDirectory && c.name.toLowerCase().endsWith('.html'));
-        const mainHtml = htmlFiles.find(c => c.name.toLowerCase() === 'index.html') || htmlFiles[0];
+          try {
+            const content = fs.readFileSync(indexPath, 'utf-8');
+            const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
+            if (titleMatch && titleMatch[1].trim()) {
+              websiteName = titleMatch[1].trim();
+            }
 
-        if (mainHtml) {
-          isApp = true;
-          appUrl = mainHtml.url || `${itemUrl}/${mainHtml.name}`;
-        } else if (fs.existsSync(path.join(fullPath, 'package.json'))) {
-          isApp = true;
+            const iconCandidates = ['favicon.ico', 'favicon.png', 'icon.png', 'apple-touch-icon.png', 'favicon.svg'];
+            for (const cand of iconCandidates) {
+              if (fs.existsSync(path.join(fullPath, cand))) {
+                iconUrl = urlPrefix ? `${urlPrefix}/${itemRelPath}/${cand}` : `${itemRelPath}/${cand}`;
+                break;
+              }
+            }
+          } catch (e) {
+            console.warn('Error reading index.html in', fullPath, e);
+          }
+
+          items.push({
+            name: websiteName,
+            path: itemRelPath,
+            isDirectory: false,
+            isApp: true,
+            iconUrl,
+            url: urlPrefix ? `${urlPrefix}/${itemRelPath}/index.html` : `${itemRelPath}/index.html`
+          });
+        } else {
+          const children = scanDirectoryRecursive(baseDir, itemRelPath, urlPrefix);
+          items.push({
+            name: dirent.name,
+            path: itemRelPath,
+            isDirectory: true,
+            children
+          });
         }
-
-        items.push({
-          name: dirent.name,
-          path: itemRelPath,
-          isDirectory: true,
-          isApp,
-          url: appUrl,
-          children
-        });
       } else {
         items.push({
           name: dirent.name,

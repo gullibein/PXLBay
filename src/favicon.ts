@@ -42,10 +42,10 @@ export function extractDomain(url: string): string | null {
   return null;
 }
 
-export function getFavicon(rawUrl: string | undefined): HTMLImageElement | null {
-  if (!rawUrl) return null;
+export function getFavicon(rawUrl: string | undefined, rawIconUrl?: string | undefined): HTMLImageElement | null {
+  if (!rawUrl && !rawIconUrl) return null;
 
-  const url = normalizeUrl(rawUrl);
+  const url = normalizeUrl(rawUrl || rawIconUrl || '');
   if (!url) return null;
 
   if (faviconCache.has(url)) {
@@ -101,24 +101,53 @@ export function getFavicon(rawUrl: string | undefined): HTMLImageElement | null 
     // Local / relative path
     const baseUrl = import.meta.env.BASE_URL || './';
     const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    const localFaviconSrc = `${cleanBase}favicon.ico`;
 
-    const img = new Image();
-    img.onload = () => {
-      if (img.naturalWidth > 1 && img.naturalHeight > 1) {
-        faviconCache.set(url, img);
-      } else {
+    const sources: string[] = [];
+    if (rawIconUrl) {
+      const cleanIcon = rawIconUrl.startsWith('/') || rawIconUrl.startsWith('./') ? rawIconUrl : `${cleanBase}${rawIconUrl.replace(/^\/+/, '')}`;
+      sources.push(cleanIcon);
+    }
+
+    // Extract directory from url (e.g. "system_folder/PXL_folder/PXLRogue/index.html" -> "system_folder/PXL_folder/PXLRogue")
+    const dirMatch = url.match(/^(.*?)(?:\/[^/]+\.html)?$/i);
+    const dirPath = dirMatch && dirMatch[1] ? dirMatch[1].replace(/^\/+/, '') : '';
+    if (dirPath) {
+      sources.push(`${cleanBase}${dirPath}/favicon.ico`);
+      sources.push(`${cleanBase}${dirPath}/favicon.png`);
+      sources.push(`${cleanBase}${dirPath}/icon.png`);
+      sources.push(`${cleanBase}${dirPath}/apple-touch-icon.png`);
+    }
+    sources.push(`${cleanBase}favicon.ico`);
+
+    let currentSourceIdx = 0;
+
+    const tryNextLocalSource = () => {
+      if (currentSourceIdx >= sources.length) {
         faviconCache.set(url, null);
+        pendingUrls.delete(url);
+        return;
       }
-      pendingUrls.delete(url);
+
+      const src = sources[currentSourceIdx++];
+      const img = new Image();
+
+      img.onload = () => {
+        if (img.naturalWidth > 1 && img.naturalHeight > 1) {
+          faviconCache.set(url, img);
+          pendingUrls.delete(url);
+        } else {
+          tryNextLocalSource();
+        }
+      };
+
+      img.onerror = () => {
+        tryNextLocalSource();
+      };
+
+      img.src = src;
     };
 
-    img.onerror = () => {
-      faviconCache.set(url, null);
-      pendingUrls.delete(url);
-    };
-
-    img.src = localFaviconSrc;
+    tryNextLocalSource();
   }
 
   return null;
