@@ -56,6 +56,7 @@ export class OS {
   
   private renamingId: string | null = null;
   private renameText: string = '';
+  private renameOriginalName: string = '';
   private renameCursorPos: number = 0;
   private isRenameSelected: boolean = false;
   private renameSelStart: number | null = null;
@@ -1301,17 +1302,12 @@ export class OS {
   }
 
   private startRename(id: string, currentName: string) {
-    if (id === 'root' || id === 'sys' || id === 'bin' || id === '..') {
-      this.showCannotEditAlert();
-      return;
-    }
-    const node = this.vfs.getNode(id);
-    if (!node || !node.isUserCreated) {
-      this.showCannotEditAlert();
+    if (id === 'root' || id === 'bin' || id === '..') {
       return;
     }
     this.renamingId = id;
     this.renameText = currentName;
+    this.renameOriginalName = currentName;
     this.renameCursorPos = currentName.length;
     this.isRenameSelected = true;
     this.renameSelStart = 0;
@@ -1320,12 +1316,21 @@ export class OS {
   }
 
   private commitRename() {
-    if (this.renamingId && this.renameText.trim().length > 0) {
-      this.vfs.renameNode(this.renamingId, this.renameText.trim());
-      this.refreshFiles();
+    if (this.renamingId) {
+      const trimmed = this.renameText.trim();
+      const node = this.vfs.getNode(this.renamingId);
+      const isSystemOrProtected = !node || !node.isUserCreated || this.renamingId === 'root' || this.renamingId === 'bin' || this.renamingId === '..' || this.renamingId === 'sys';
+
+      if (isSystemOrProtected && trimmed !== this.renameOriginalName) {
+        this.showCannotEditAlert();
+      } else if (trimmed.length > 0 && !isSystemOrProtected && trimmed !== this.renameOriginalName) {
+        this.vfs.renameNode(this.renamingId, trimmed);
+        this.refreshFiles();
+      }
     }
     this.renamingId = null;
     this.renameText = '';
+    this.renameOriginalName = '';
     this.renameSelStart = null;
     this.renameSelEnd = null;
     this.isRenameSelected = false;
@@ -1825,7 +1830,7 @@ export class OS {
           this.renameSelStart = this.textSelectAnchor;
           this.renameSelEnd = charIdx;
           this.renameCursorPos = charIdx;
-          this.isRenameSelected = (charIdx !== this.textSelectAnchor);
+          this.isRenameSelected = (Math.min(this.textSelectAnchor, charIdx) === 0 && Math.max(this.textSelectAnchor, charIdx) >= this.renameText.length && this.renameText.length > 0);
           return;
         }
       }
