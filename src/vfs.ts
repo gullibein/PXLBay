@@ -8,6 +8,7 @@ export interface VFSNode {
   isApp?: boolean;
   isExecutable?: boolean;
   isRecycleBin?: boolean;
+  isUserCreated?: boolean;
   url?: string;
   path?: string;
   x?: number;
@@ -18,8 +19,8 @@ export class VFS {
   private nodes: Map<string, VFSNode> = new Map();
 
   constructor() {
-    this.nodes.set('root', { id: 'root', name: '/', isDirectory: true, parentId: null });
-    this.nodes.set('bin', { id: 'bin', name: 'Recycle Bin', isDirectory: true, parentId: 'root', isRecycleBin: true });
+    this.nodes.set('root', { id: 'root', name: '/', isDirectory: true, parentId: null, isUserCreated: false });
+    this.nodes.set('bin', { id: 'bin', name: 'Recycle Bin', isDirectory: true, parentId: 'root', isRecycleBin: true, isUserCreated: false });
   }
 
   /**
@@ -38,6 +39,7 @@ export class VFS {
         parentId: parentId,
         isApp: item.isApp,
         isExecutable: !item.isDirectory && (isHtml || !!item.url),
+        isUserCreated: false,
         url: item.url,
         path: item.path
       };
@@ -59,7 +61,8 @@ export class VFS {
       isDirectory: false,
       parentId,
       url,
-      isExecutable
+      isExecutable,
+      isUserCreated: true
     };
     this.nodes.set(id, node);
     return node;
@@ -104,7 +107,7 @@ export class VFS {
   public createFolder(parentId: string, name: string): VFSNode {
     const uniqueName = this.getUniqueName(parentId, name, true);
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-    const node: VFSNode = { id, name: uniqueName, isDirectory: true, parentId };
+    const node: VFSNode = { id, name: uniqueName, isDirectory: true, parentId, isUserCreated: true };
     this.nodes.set(id, node);
     return node;
   }
@@ -170,6 +173,7 @@ export class VFS {
       id: newId,
       parentId: targetParentId,
       name: newName,
+      isUserCreated: true,
       x: source.x !== undefined ? source.x + 10 : undefined,
       y: source.y !== undefined ? source.y + 10 : undefined
     };

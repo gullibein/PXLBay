@@ -81,9 +81,10 @@ export class OS {
   private modal: {
     message: string,
     onConfirm: () => void,
+    isAlert?: boolean,
     rect: { x: number, y: number, w: number, h: number },
     confirmBtnRect: { x: number, y: number, w: number, h: number },
-    cancelBtnRect: { x: number, y: number, w: number, h: number }
+    cancelBtnRect?: { x: number, y: number, w: number, h: number }
   } | null = null;
 
   private addFileModal: {
@@ -102,6 +103,7 @@ export class OS {
     nameInputRect: { x: number; y: number; w: number; h: number };
     okBtnRect: { x: number; y: number; w: number; h: number };
     cancelBtnRect: { x: number; y: number; w: number; h: number };
+    editingFileId?: string;
   } | null = null;
 
   constructor() {
@@ -396,13 +398,19 @@ export class OS {
     ctx.strokeStyle = '#000';
     ctx.beginPath(); ctx.moveTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.stroke();
 
-    this.font.drawText(ctx, this.modal.message, x + 10, y + 15);
+    const msgWidth = this.font.measureText(this.modal.message);
+    const msgX = this.modal.isAlert ? Math.floor(x + (w - msgWidth) / 2) : x + 10;
+    this.font.drawText(ctx, this.modal.message, msgX, y + 16);
 
     // Buttons
-    [
-      { rect: this.modal.confirmBtnRect, label: 'OK' },
-      { rect: this.modal.cancelBtnRect, label: 'Cancel' }
-    ].forEach(btn => {
+    const buttons = this.modal.isAlert 
+      ? [{ rect: this.modal.confirmBtnRect, label: 'OK' }]
+      : [
+          { rect: this.modal.confirmBtnRect, label: 'OK' },
+          { rect: this.modal.cancelBtnRect!, label: 'Cancel' }
+        ];
+
+    buttons.forEach(btn => {
       const { x: bx, y: by, w: bw, h: bh } = btn.rect;
       ctx.fillStyle = '#C0C0C0';
       ctx.fillRect(bx, by, bw, bh);
@@ -416,7 +424,7 @@ export class OS {
 
   private drawAddFileModal(ctx: CanvasRenderingContext2D) {
     if (!this.addFileModal) return;
-    const { rect, nameInputRect, urlInputRect, okBtnRect, cancelBtnRect, name, url, activeField, nameCursorPos, urlCursorPos } = this.addFileModal;
+    const { rect, nameInputRect, urlInputRect, okBtnRect, cancelBtnRect, name, url, activeField, nameCursorPos, urlCursorPos, editingFileId } = this.addFileModal;
     const { x, y, w, h } = rect;
 
     // Dim background
@@ -434,7 +442,8 @@ export class OS {
     // Title bar
     ctx.fillStyle = '#0000A8';
     ctx.fillRect(x + 2, y + 2, w - 4, 14);
-    this.font.drawText(ctx, 'Add file', x + 6, y + 4, '#FFF');
+    const titleText = editingFileId ? 'Edit file' : 'Add file';
+    this.font.drawText(ctx, titleText, x + 6, y + 4, '#FFF');
 
     // Label: Link (First field)
     this.font.drawText(ctx, 'Link:', x + 12, y + 20, '#000');
@@ -743,11 +752,11 @@ export class OS {
 
     if (this.modal) {
       if (button === 0) {
-        const { confirmBtnRect, cancelBtnRect } = this.modal;
+        const { confirmBtnRect, cancelBtnRect, isAlert } = this.modal;
         if (x >= confirmBtnRect.x && x <= confirmBtnRect.x + confirmBtnRect.w && y >= confirmBtnRect.y && y <= confirmBtnRect.y + confirmBtnRect.h) {
           this.modal.onConfirm();
           this.modal = null;
-        } else if (x >= cancelBtnRect.x && x <= cancelBtnRect.x + cancelBtnRect.w && y >= cancelBtnRect.y && y <= cancelBtnRect.y + cancelBtnRect.h) {
+        } else if (!isAlert && cancelBtnRect && x >= cancelBtnRect.x && x <= cancelBtnRect.x + cancelBtnRect.w && y >= cancelBtnRect.y && y <= cancelBtnRect.y + cancelBtnRect.h) {
           this.modal = null;
         }
       }
@@ -873,19 +882,19 @@ export class OS {
       // Icon Hitbox
       const onIcon = x >= iconX && x <= iconX + this.iconWidth && cy >= iconY && cy <= iconY + this.iconHeight;
       
-      // Name Hitbox
+      // Name Hitbox (strictly around text lines)
       const lines = this.formatNameLines(file.name);
       const centerX = iconX + this.iconWidth / 2;
-      const nameTop = iconY + this.iconHeight;
-      const nameBottom = iconY + this.cellHeight;
+      const nameTop = iconY + this.iconHeight + 4;
+      const nameBottom = nameTop + lines.length * 12 + 2;
       
       let maxTextWidth = 0;
       lines.forEach(line => {
         maxTextWidth = Math.max(maxTextWidth, this.font.measureText(line));
       });
       
-      const onName = x >= centerX - Math.max(20, maxTextWidth / 2 + 4) && 
-                     x <= centerX + Math.max(20, maxTextWidth / 2 + 4) && 
+      const onName = x >= centerX - (maxTextWidth / 2 + 3) && 
+                     x <= centerX + (maxTextWidth / 2 + 3) && 
                      cy >= nameTop && cy <= nameBottom;
 
       if (onIcon || onName) {
@@ -898,6 +907,9 @@ export class OS {
     if (button === 0) { // Left Click
       if (clickedIndex !== -1) {
         const file = this.currentFiles[clickedIndex];
+        const wasAlreadySelected = this.selectedIds.has(file.id) && this.selectedIds.size === 1;
+        const now = performance.now();
+        const isDoubleClick = (now - this.lastClickTime < 500) && (this.lastSelectedId === file.id);
 
         if (shift && this.lastSelectedId) {
           const fromIdx = this.currentFiles.findIndex(f => f.id === this.lastSelectedId);
@@ -908,19 +920,28 @@ export class OS {
           for (let i = start; i <= end; i++) {
             if (this.currentFiles[i].id !== '..') this.selectedIds.add(this.currentFiles[i].id);
           }
+          this.lastSelectedId = file.id;
         } else if (ctrl) {
           if (this.selectedIds.has(file.id)) {
             this.selectedIds.delete(file.id);
           } else {
             this.selectedIds.add(file.id);
           }
+          this.lastSelectedId = file.id;
         } else {
-          if (!this.selectedIds.has(file.id)) {
-            this.selectedIds.clear();
-            this.selectedIds.add(file.id);
+          if (isDoubleClick) {
+            this.executeFile(file);
+          } else if (wasAlreadySelected && lastClickedOnName) {
+            // Clicking on name of already selected file/folder enters rename mode
+            this.startRename(file.id, file.name);
+          } else {
+            if (!this.selectedIds.has(file.id)) {
+              this.selectedIds.clear();
+              this.selectedIds.add(file.id);
+            }
+            this.lastSelectedId = file.id;
           }
         }
-        this.lastSelectedId = file.id;
 
         // Dragging setup
         let iconX, iconY;
@@ -957,14 +978,6 @@ export class OS {
           });
         }
 
-        // Double click
-        const now = performance.now();
-        if (now - this.lastClickTime < 500) {
-          this.executeFile(file);
-        } else if (lastClickedOnName && !ctrl && !shift) {
-          // Check for rename after delay or handled in mouseup/elsewhere?
-          // We'll keep the current rename-on-second-click logic if possible.
-        }
         this.lastClickTime = now;
       } else {
         // Clicked on empty space
@@ -986,6 +999,9 @@ export class OS {
         const options = ['Open'];
         if (file.isApp && file.url) {
           options.push('Launch App');
+        }
+        if (!file.isDirectory && file.isUserCreated) {
+          options.push('Edit file');
         }
         options.push('Copy', 'Paste', 'Rename', 'Delete');
         if (isBin) options.push('Empty Bin');
@@ -1051,11 +1067,24 @@ export class OS {
     if (rawUrl) {
       const url = normalizeUrl(rawUrl);
       const name = this.addFileModal.name.trim() || 'Untitled';
-      const newNode = this.vfs.createFile(this.currentFolderId, name, url, true);
-      this.refreshFiles();
-      this.selectedIds.clear();
-      this.selectedIds.add(newNode.id);
-      this.lastSelectedId = newNode.id;
+      if (this.addFileModal.editingFileId) {
+        const node = this.vfs.getNode(this.addFileModal.editingFileId);
+        if (node) {
+          const oldUrl = node.url;
+          node.name = name;
+          node.url = url;
+          if (oldUrl !== url) {
+            getFavicon(url);
+          }
+          this.refreshFiles();
+        }
+      } else {
+        const newNode = this.vfs.createFile(this.currentFolderId, name, url, true);
+        this.refreshFiles();
+        this.selectedIds.clear();
+        this.selectedIds.add(newNode.id);
+        this.lastSelectedId = newNode.id;
+      }
     }
     this.addFileModal = null;
   }
@@ -1130,6 +1159,32 @@ export class OS {
           okBtnRect: { x: mx + 30, y: my + 94, w: 80, h: 20 },
           cancelBtnRect: { x: mx + 130, y: my + 94, w: 80, h: 20 }
         };
+        break;
+      case 'Edit file':
+        if (file && !file.isDirectory) {
+          const w = 240;
+          const h = 125;
+          const mx = Math.floor((this.width - w) / 2);
+          const my = Math.floor((this.height - h) / 2);
+          this.addFileModal = {
+            name: file.name,
+            url: file.url || '',
+            activeField: 'url',
+            userEditedName: true,
+            nameCursorPos: file.name.length,
+            urlCursorPos: (file.url || '').length,
+            nameSelStart: null,
+            nameSelEnd: null,
+            urlSelStart: null,
+            urlSelEnd: null,
+            rect: { x: mx, y: my, w, h },
+            urlInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
+            nameInputRect: { x: mx + 12, y: my + 60, w: w - 24, h: 16 },
+            okBtnRect: { x: mx + 30, y: my + 94, w: 80, h: 20 },
+            cancelBtnRect: { x: mx + 130, y: my + 94, w: 80, h: 20 },
+            editingFileId: file.id
+          };
+        }
         break;
       case 'Open':
         if (file) this.executeFile(file);
@@ -1228,8 +1283,33 @@ export class OS {
     };
   }
 
+  private showCannotEditAlert() {
+    const w = 220;
+    const h = 75;
+    const x = Math.floor((this.width - w) / 2);
+    const y = Math.floor((this.height - h) / 2);
+
+    this.modal = {
+      message: 'You cannot edit this file',
+      onConfirm: () => {
+        this.modal = null;
+      },
+      isAlert: true,
+      rect: { x, y, w, h },
+      confirmBtnRect: { x: x + 75, y: y + 42, w: 70, h: 20 }
+    };
+  }
+
   private startRename(id: string, currentName: string) {
-    if (id === 'root' || id === 'sys' || id === 'bin' || id === '..') return;
+    if (id === 'root' || id === 'sys' || id === 'bin' || id === '..') {
+      this.showCannotEditAlert();
+      return;
+    }
+    const node = this.vfs.getNode(id);
+    if (!node || !node.isUserCreated) {
+      this.showCannotEditAlert();
+      return;
+    }
     this.renamingId = id;
     this.renameText = currentName;
     this.renameCursorPos = currentName.length;
@@ -1322,6 +1402,19 @@ export class OS {
   }
 
   handleKeyDown(key: string, ctrl: boolean = false, shift: boolean = false, alt: boolean = false) {
+    if (this.modal) {
+      if (key === 'Enter') {
+        this.modal.onConfirm();
+        this.modal = null;
+        return;
+      }
+      if (key === 'Escape') {
+        this.modal = null;
+        return;
+      }
+      return;
+    }
+
     if (this.addFileModal) {
       if (key === 'Escape') {
         this.addFileModal = null;
