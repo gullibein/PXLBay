@@ -124,8 +124,10 @@ export default defineConfig({
           fs.mkdirSync(publicDir, { recursive: true });
         }
         const outputPath = path.join(publicDir, 'repo-tree.json');
-        fs.writeFileSync(outputPath, JSON.stringify(tree, null, 2), 'utf-8');
-        console.log(`[repo-tree-scanner] Generated ${outputPath} (${tree.length} root items)`);
+        if (tree.length > 0 || !fs.existsSync(outputPath)) {
+          fs.writeFileSync(outputPath, JSON.stringify(tree, null, 2), 'utf-8');
+          console.log(`[repo-tree-scanner] Generated ${outputPath} (${tree.length} root items)`);
+        }
       },
       configureServer(server) {
         // Serve /repo-tree.json dynamically in dev mode

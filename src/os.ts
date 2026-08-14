@@ -1,5 +1,5 @@
 import { FontRenderer } from './font';
-import fontUrl from '../public/fon - bm/Bm437_EverexME_7x8.FON?url';
+import fontUrl from '../public/Bm437_EverexME_7x8.FON?url';
 import { VFS, type VFSNode } from './vfs';
 import { fetchRepositoryTree } from './scanner';
 

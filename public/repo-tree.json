@@ -10620,18 +10620,6 @@
         "path": "PXLRogue/spritesheet.png",
         "isDirectory": false,
         "url": "PXLRogue/spritesheet.png"
-      },
-      {
-        "name": "test_splash_press_any_key.png",
-        "path": "PXLRogue/test_splash_press_any_key.png",
-        "isDirectory": false,
-        "url": "PXLRogue/test_splash_press_any_key.png"
-      },
-      {
-        "name": "test_title_menu.png",
-        "path": "PXLRogue/test_title_menu.png",
-        "isDirectory": false,
-        "url": "PXLRogue/test_title_menu.png"
       }
     ]
   },
