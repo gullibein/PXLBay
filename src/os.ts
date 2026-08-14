@@ -2,7 +2,7 @@ import { FontRenderer } from './font';
 import fontUrl from '../public/Bm437_EverexME_7x8.FON?url';
 import { VFS, type VFSNode } from './vfs';
 import { fetchRepositoryTree } from './scanner';
-import { getFavicon, normalizeUrl } from './favicon';
+import { getFavicon, normalizeUrl, getCleanDomainName, fetchPageTitle } from './favicon';
 
 export class OS {
   private vfs = new VFS();
@@ -65,12 +65,13 @@ export class OS {
   private addFileModal: {
     name: string;
     url: string;
-    activeField: 'name' | 'url';
+    activeField: 'url' | 'name';
+    userEditedName: boolean;
     nameCursorPos: number;
     urlCursorPos: number;
     rect: { x: number; y: number; w: number; h: number };
-    nameInputRect: { x: number; y: number; w: number; h: number };
     urlInputRect: { x: number; y: number; w: number; h: number };
+    nameInputRect: { x: number; y: number; w: number; h: number };
     okBtnRect: { x: number; y: number; w: number; h: number };
     cancelBtnRect: { x: number; y: number; w: number; h: number };
   } | null = null;
@@ -365,30 +366,10 @@ export class OS {
     // Title bar
     ctx.fillStyle = '#0000A8';
     ctx.fillRect(x + 2, y + 2, w - 4, 14);
-    this.font.drawText(ctx, 'Add Executable File', x + 6, y + 4, '#FFF');
+    this.font.drawText(ctx, 'Add file', x + 6, y + 4, '#FFF');
 
-    // Label: File Name
-    this.font.drawText(ctx, 'Name:', x + 12, y + 20, '#000');
-
-    // Input Box: File Name
-    ctx.fillStyle = '#FFF';
-    ctx.fillRect(nameInputRect.x, nameInputRect.y, nameInputRect.w, nameInputRect.h);
-    ctx.strokeStyle = '#808080';
-    ctx.beginPath(); ctx.moveTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.stroke();
-    ctx.strokeStyle = '#FFF';
-    ctx.beginPath(); ctx.moveTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.stroke();
-
-    // Draw Name Text & Cursor
-    this.font.drawText(ctx, name, nameInputRect.x + 4, nameInputRect.y + 4, '#000');
-    if (activeField === 'name') {
-      const textBefore = name.substring(0, nameCursorPos);
-      const cursorX = nameInputRect.x + 4 + this.font.measureText(textBefore);
-      ctx.fillStyle = '#000';
-      ctx.fillRect(cursorX, nameInputRect.y + 3, 1, 10);
-    }
-
-    // Label: URL / Link
-    this.font.drawText(ctx, 'URL / Link:', x + 12, y + 50, '#000');
+    // Label: Link (First field)
+    this.font.drawText(ctx, 'Link:', x + 12, y + 20, '#000');
 
     // Input Box: URL
     ctx.fillStyle = '#FFF';
@@ -412,6 +393,26 @@ export class OS {
       const cursorX = urlInputRect.x + 4 + this.font.measureText(textBefore);
       ctx.fillStyle = '#000';
       ctx.fillRect(cursorX, urlInputRect.y + 3, 1, 10);
+    }
+
+    // Label: Name (Second field)
+    this.font.drawText(ctx, 'Name:', x + 12, y + 50, '#000');
+
+    // Input Box: File Name
+    ctx.fillStyle = '#FFF';
+    ctx.fillRect(nameInputRect.x, nameInputRect.y, nameInputRect.w, nameInputRect.h);
+    ctx.strokeStyle = '#808080';
+    ctx.beginPath(); ctx.moveTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.stroke();
+    ctx.strokeStyle = '#FFF';
+    ctx.beginPath(); ctx.moveTo(nameInputRect.x + nameInputRect.w, nameInputRect.y); ctx.lineTo(nameInputRect.x + nameInputRect.w, nameInputRect.y + nameInputRect.h); ctx.lineTo(nameInputRect.x, nameInputRect.y + nameInputRect.h); ctx.stroke();
+
+    // Draw Name Text & Cursor
+    this.font.drawText(ctx, name, nameInputRect.x + 4, nameInputRect.y + 4, '#000');
+    if (activeField === 'name') {
+      const textBefore = name.substring(0, nameCursorPos);
+      const cursorX = nameInputRect.x + 4 + this.font.measureText(textBefore);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(cursorX, nameInputRect.y + 3, 1, 10);
     }
 
     // Buttons (OK & Cancel)
@@ -864,10 +865,10 @@ export class OS {
 
   private submitAddFile() {
     if (!this.addFileModal) return;
-    const name = this.addFileModal.name.trim() || 'Untitled';
     const rawUrl = this.addFileModal.url.trim();
     if (rawUrl) {
       const url = normalizeUrl(rawUrl);
+      const name = this.addFileModal.name.trim() || getCleanDomainName(rawUrl) || 'Untitled';
       const newNode = this.vfs.createFile(this.currentFolderId, name, url, true);
       this.refreshFiles();
       this.selectedIds.clear();
@@ -875,6 +876,30 @@ export class OS {
       this.lastSelectedId = newNode.id;
     }
     this.addFileModal = null;
+  }
+
+  private onModalUrlChanged() {
+    if (!this.addFileModal || this.addFileModal.userEditedName) return;
+    const url = this.addFileModal.url.trim();
+    if (!url) {
+      this.addFileModal.name = '';
+      this.addFileModal.nameCursorPos = 0;
+      return;
+    }
+
+    const cleanName = getCleanDomainName(url);
+    if (cleanName && !this.addFileModal.userEditedName) {
+      this.addFileModal.name = cleanName;
+      this.addFileModal.nameCursorPos = cleanName.length;
+    }
+
+    const targetUrl = url;
+    fetchPageTitle(targetUrl).then(title => {
+      if (title && this.addFileModal && !this.addFileModal.userEditedName && this.addFileModal.url.trim() === targetUrl) {
+        this.addFileModal.name = title.substring(0, 30);
+        this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+      }
+    });
   }
 
   private executeContextMenuOption(option: string) {
@@ -895,14 +920,15 @@ export class OS {
         const mx = Math.floor((this.width - w) / 2);
         const my = Math.floor((this.height - h) / 2);
         this.addFileModal = {
-          name: 'New Link',
-          url: 'https://',
-          activeField: 'name',
-          nameCursorPos: 8,
-          urlCursorPos: 8,
+          name: '',
+          url: '',
+          activeField: 'url',
+          userEditedName: false,
+          nameCursorPos: 0,
+          urlCursorPos: 0,
           rect: { x: mx, y: my, w, h },
-          nameInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
-          urlInputRect: { x: mx + 12, y: my + 64, w: w - 24, h: 16 },
+          urlInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
+          nameInputRect: { x: mx + 12, y: my + 60, w: w - 24, h: 16 },
           okBtnRect: { x: mx + 30, y: my + 94, w: 80, h: 20 },
           cancelBtnRect: { x: mx + 130, y: my + 94, w: 80, h: 20 }
         };
@@ -1031,13 +1057,13 @@ export class OS {
         return;
       }
       if (key === 'Tab') {
-        this.addFileModal.activeField = this.addFileModal.activeField === 'name' ? 'url' : 'name';
+        this.addFileModal.activeField = this.addFileModal.activeField === 'url' ? 'name' : 'url';
         return;
       }
 
-      const isName = this.addFileModal.activeField === 'name';
-      const text = isName ? this.addFileModal.name : this.addFileModal.url;
-      let cursorPos = isName ? this.addFileModal.nameCursorPos : this.addFileModal.urlCursorPos;
+      const isUrl = this.addFileModal.activeField === 'url';
+      const text = isUrl ? this.addFileModal.url : this.addFileModal.name;
+      let cursorPos = isUrl ? this.addFileModal.urlCursorPos : this.addFileModal.nameCursorPos;
 
       if (key === 'ArrowLeft') {
         cursorPos = Math.max(0, cursorPos - 1);
@@ -1047,27 +1073,42 @@ export class OS {
         if (cursorPos > 0) {
           const newText = text.slice(0, cursorPos - 1) + text.slice(cursorPos);
           cursorPos--;
-          if (isName) this.addFileModal.name = newText;
-          else this.addFileModal.url = newText;
+          if (isUrl) {
+            this.addFileModal.url = newText;
+            this.onModalUrlChanged();
+          } else {
+            this.addFileModal.name = newText;
+            this.addFileModal.userEditedName = true;
+          }
         }
       } else if (key === 'Delete') {
         if (cursorPos < text.length) {
           const newText = text.slice(0, cursorPos) + text.slice(cursorPos + 1);
-          if (isName) this.addFileModal.name = newText;
-          else this.addFileModal.url = newText;
+          if (isUrl) {
+            this.addFileModal.url = newText;
+            this.onModalUrlChanged();
+          } else {
+            this.addFileModal.name = newText;
+            this.addFileModal.userEditedName = true;
+          }
         }
       } else if (key.length === 1) {
-        const maxLen = isName ? 30 : 255;
+        const maxLen = isUrl ? 255 : 30;
         if (text.length < maxLen) {
           const newText = text.slice(0, cursorPos) + key + text.slice(cursorPos);
           cursorPos++;
-          if (isName) this.addFileModal.name = newText;
-          else this.addFileModal.url = newText;
+          if (isUrl) {
+            this.addFileModal.url = newText;
+            this.onModalUrlChanged();
+          } else {
+            this.addFileModal.name = newText;
+            this.addFileModal.userEditedName = true;
+          }
         }
       }
 
-      if (isName) this.addFileModal.nameCursorPos = cursorPos;
-      else this.addFileModal.urlCursorPos = cursorPos;
+      if (isUrl) this.addFileModal.urlCursorPos = cursorPos;
+      else this.addFileModal.nameCursorPos = cursorPos;
       return;
     }
 

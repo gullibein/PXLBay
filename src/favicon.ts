@@ -123,3 +123,79 @@ export function getFavicon(rawUrl: string | undefined): HTMLImageElement | null 
 
   return null;
 }
+
+export function getCleanDomainName(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+
+  const domain = extractDomain(trimmed);
+  if (!domain) {
+    // If it's a file path e.g. "system_folder/PXLRogue/rogue8.html"
+    const match = trimmed.match(/([^/\\#?]+)(?:\.html|\.htm)?(?:[#?].*)?$/i);
+    if (match && match[1]) {
+      return match[1].replace(/[-_.]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+    return '';
+  }
+
+  // Known clean brand names for common sites
+  const knownBrands: Record<string, string> = {
+    'google.com': 'Google',
+    'github.com': 'GitHub',
+    'youtube.com': 'YouTube',
+    'reddit.com': 'Reddit',
+    'wikipedia.org': 'Wikipedia',
+    'twitter.com': 'Twitter',
+    'x.com': 'X',
+    'instagram.com': 'Instagram',
+    'facebook.com': 'Facebook',
+    'linkedin.com': 'LinkedIn',
+    'amazon.com': 'Amazon',
+    'netflix.com': 'Netflix',
+    'twitch.tv': 'Twitch',
+    'discord.com': 'Discord',
+    'duckduckgo.com': 'DuckDuckGo',
+    'yahoo.com': 'Yahoo',
+    'bing.com': 'Bing'
+  };
+
+  const domainKey = domain.toLowerCase();
+  if (knownBrands[domainKey]) {
+    return knownBrands[domainKey];
+  }
+
+  // Extract main domain part before TLD (e.g. "my-awesome-site" from "my-awesome-site.co.uk")
+  const parts = domain.split('.');
+  let mainName = parts[0];
+  if (parts.length > 2 && parts[0] === 'www') {
+    mainName = parts[1];
+  }
+  return mainName.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
+  const url = normalizeUrl(rawUrl);
+  if (!url) return null;
+
+  try {
+    const res = await fetch(url, { method: 'GET' });
+    if (res.ok) {
+      const html = await res.text();
+      const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (match && match[1]) {
+        const decoded = match[1]
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .trim();
+        if (decoded) return decoded;
+      }
+    }
+  } catch {
+    // Ignore CORS / network errors
+  }
+  return null;
+}
+
