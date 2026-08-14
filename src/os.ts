@@ -2,7 +2,7 @@ import { FontRenderer } from './font';
 import fontUrl from '../public/Bm437_EverexME_7x8.FON?url';
 import { VFS, type VFSNode } from './vfs';
 import { fetchRepositoryTree } from './scanner';
-import { getFavicon } from './favicon';
+import { getFavicon, normalizeUrl } from './favicon';
 
 export class OS {
   private vfs = new VFS();
@@ -865,8 +865,9 @@ export class OS {
   private submitAddFile() {
     if (!this.addFileModal) return;
     const name = this.addFileModal.name.trim() || 'Untitled';
-    const url = this.addFileModal.url.trim();
-    if (url) {
+    const rawUrl = this.addFileModal.url.trim();
+    if (rawUrl) {
+      const url = normalizeUrl(rawUrl);
       const newNode = this.vfs.createFile(this.currentFolderId, name, url, true);
       this.refreshFiles();
       this.selectedIds.clear();
@@ -911,9 +912,12 @@ export class OS {
         break;
       case 'Launch App':
         if (file?.url) {
+          const normalized = normalizeUrl(file.url);
           const baseUrl = import.meta.env.BASE_URL || './';
           const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-          const targetUrl = file.url.startsWith('http') ? file.url : `${cleanBase}${file.url.replace(/^\/+/, '')}`;
+          const targetUrl = normalized.startsWith('http://') || normalized.startsWith('https://') 
+            ? normalized 
+            : `${cleanBase}${normalized.replace(/^\/+/, '')}`;
           window.open(targetUrl, '_blank');
         }
         break;
@@ -1238,9 +1242,12 @@ export class OS {
       this.scrollY = this.scrollHistory.get(this.currentFolderId) || 0;
       this.clampScroll();
     } else if (file.url) {
+      const normalized = normalizeUrl(file.url);
       const baseUrl = import.meta.env.BASE_URL || './';
       const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-      const targetUrl = file.url.startsWith('http') ? file.url : `${cleanBase}${file.url.replace(/^\/+/, '')}`;
+      const targetUrl = normalized.startsWith('http://') || normalized.startsWith('https://') 
+        ? normalized 
+        : `${cleanBase}${normalized.replace(/^\/+/, '')}`;
       window.open(targetUrl, '_blank');
     }
   }
