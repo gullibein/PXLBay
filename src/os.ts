@@ -4,6 +4,21 @@ import { VFS, type VFSNode } from './vfs';
 import { fetchRepositoryTree } from './scanner';
 import { getFavicon, normalizeUrl, fetchPageTitle } from './favicon';
 
+function getCharIndexAtX(font: FontRenderer, text: string, relativeX: number): number {
+  if (relativeX <= 0) return 0;
+  let closestIndex = 0;
+  let closestDist = Math.abs(relativeX);
+  for (let i = 1; i <= text.length; i++) {
+    const w = font.measureText(text.substring(0, i));
+    const dist = Math.abs(relativeX - w);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestIndex = i;
+    }
+  }
+  return closestIndex;
+}
+
 export class OS {
   private vfs = new VFS();
   private currentFiles: VFSNode[] = [];
@@ -43,7 +58,14 @@ export class OS {
   private renameText: string = '';
   private renameCursorPos: number = 0;
   private isRenameSelected: boolean = false;
+  private renameSelStart: number | null = null;
+  private renameSelEnd: number | null = null;
   private renameLastClickTime: number = 0;
+
+  private textSelectTarget: 'modal-url' | 'modal-name' | 'rename' | null = null;
+  private textSelectAnchor: number = 0;
+  private modalUrlLastClickTime: number = 0;
+  private modalNameLastClickTime: number = 0;
 
   private draggingId: string | null = null;
   private draggingSelected: boolean = false;
@@ -261,6 +283,10 @@ export class OS {
     const lines = this.formatNameLines(nameToDraw);
     const centerX = x + this.iconWidth / 2;
 
+    const hasRenameSel = isRenaming && (this.isRenameSelected || (this.renameSelStart !== null && this.renameSelEnd !== null && this.renameSelStart !== this.renameSelEnd));
+    const rSMin = isRenaming ? (this.isRenameSelected ? 0 : (this.renameSelStart !== null && this.renameSelEnd !== null ? Math.min(this.renameSelStart, this.renameSelEnd) : 0)) : 0;
+    const rSMax = isRenaming ? (this.isRenameSelected ? this.renameText.length : (this.renameSelStart !== null && this.renameSelEnd !== null ? Math.max(this.renameSelStart, this.renameSelEnd) : 0)) : 0;
+
     if (isRenaming) {
         let maxLineWidth = 0;
         lines.forEach(line => {
@@ -274,10 +300,26 @@ export class OS {
         ctx.strokeStyle = '#000';
         ctx.strokeRect(centerX - halfBoxWidth, y + this.iconHeight + 4, boxWidth, lines.length * 12 + 4);
 
-        if (this.isRenameSelected) {
-          // Draw blue highlight for "selected all"
+        if (this.isRenameSelected || (hasRenameSel && rSMin === 0 && rSMax >= this.renameText.length)) {
           ctx.fillStyle = '#0000A8';
           ctx.fillRect(centerX - halfBoxWidth + 2, y + this.iconHeight + 6, boxWidth - 4, lines.length * 12);
+        } else if (hasRenameSel) {
+          lines.forEach((line, i) => {
+            const lineStartIdx = i === 0 ? 0 : 14;
+            const lineEndIdx = lineStartIdx + line.length;
+            const lineSelStart = Math.max(lineStartIdx, rSMin);
+            const lineSelEnd = Math.min(lineEndIdx, rSMax);
+            if (lineSelStart < lineSelEnd) {
+              const textBefore = line.substring(0, lineSelStart - lineStartIdx);
+              const selText = line.substring(lineSelStart - lineStartIdx, lineSelEnd - lineStartIdx);
+              const textWidth = this.font.measureText(line);
+              const textX = Math.floor(centerX - textWidth / 2);
+              const selX = textX + this.font.measureText(textBefore);
+              const selW = this.font.measureText(selText);
+              ctx.fillStyle = '#0000A8';
+              ctx.fillRect(selX - 1, y + this.iconHeight + 5 + (i * 12), selW + 2, 12);
+            }
+          });
         } else {
           // Draw cursor
           const cursorLineIdx = this.renameCursorPos <= 14 ? 0 : 1;
@@ -301,8 +343,35 @@ export class OS {
         ctx.fillStyle = '#0000A8';
         ctx.fillRect(textX - 2, y + this.iconHeight + 4 + (i * 12), textWidth + 4, 12);
         textColor = '#FFF';
-      } else if (isRenaming && this.isRenameSelected) {
-        textColor = '#FFF';
+      } else if (isRenaming) {
+        if (this.isRenameSelected || (hasRenameSel && rSMin === 0 && rSMax >= this.renameText.length)) {
+          textColor = '#FFF';
+          this.font.drawText(ctx, line, textX, y + this.iconHeight + 6 + (i * 12), textColor);
+          return;
+        } else if (hasRenameSel) {
+          const lineStartIdx = i === 0 ? 0 : 14;
+          const lineEndIdx = lineStartIdx + line.length;
+          const lineSelStart = Math.max(lineStartIdx, rSMin);
+          const lineSelEnd = Math.min(lineEndIdx, rSMax);
+          if (lineSelStart < lineSelEnd) {
+            const before = line.substring(0, lineSelStart - lineStartIdx);
+            const sel = line.substring(lineSelStart - lineStartIdx, lineSelEnd - lineStartIdx);
+            const after = line.substring(lineSelEnd - lineStartIdx);
+            let curX = textX;
+            if (before) {
+              this.font.drawText(ctx, before, curX, y + this.iconHeight + 6 + (i * 12), '#000');
+              curX += this.font.measureText(before);
+            }
+            if (sel) {
+              this.font.drawText(ctx, sel, curX, y + this.iconHeight + 6 + (i * 12), '#FFF');
+              curX += this.font.measureText(sel);
+            }
+            if (after) {
+              this.font.drawText(ctx, after, curX, y + this.iconHeight + 6 + (i * 12), '#000');
+            }
+            return;
+          }
+        }
       }
       
       this.font.drawText(ctx, line, textX, y + this.iconHeight + 6 + (i * 12), textColor);
@@ -605,23 +674,66 @@ export class OS {
           this.submitAddFile();
         } else if (x >= cancelBtnRect.x && x <= cancelBtnRect.x + cancelBtnRect.w && y >= cancelBtnRect.y && y <= cancelBtnRect.y + cancelBtnRect.h) {
           this.addFileModal = null;
+        } else if (x >= urlInputRect.x && x <= urlInputRect.x + urlInputRect.w && y >= urlInputRect.y && y <= urlInputRect.y + urlInputRect.h) {
+          const now = performance.now();
+          this.addFileModal.activeField = 'url';
+          
+          let visibleUrl = this.addFileModal.url;
+          let urlOffset = 0;
+          const maxUrlWidth = urlInputRect.w - 10;
+          while (this.font.measureText(visibleUrl) > maxUrlWidth && urlOffset < this.addFileModal.urlCursorPos) {
+            urlOffset++;
+            visibleUrl = this.addFileModal.url.substring(urlOffset);
+          }
+
+          const clickOffset = x - (urlInputRect.x + 4);
+          const charIdxInVisible = getCharIndexAtX(this.font, visibleUrl, clickOffset);
+          const globalCharIdx = Math.min(this.addFileModal.url.length, urlOffset + charIdxInVisible);
+
+          if (now - this.modalUrlLastClickTime < 350) {
+            // Double click: Select All
+            this.addFileModal.urlSelStart = 0;
+            this.addFileModal.urlSelEnd = this.addFileModal.url.length;
+            this.addFileModal.urlCursorPos = this.addFileModal.url.length;
+            this.textSelectTarget = null;
+          } else {
+            // Single click: Start drag selection
+            this.addFileModal.urlCursorPos = globalCharIdx;
+            this.addFileModal.urlSelStart = globalCharIdx;
+            this.addFileModal.urlSelEnd = globalCharIdx;
+            this.textSelectTarget = 'modal-url';
+            this.textSelectAnchor = globalCharIdx;
+          }
+          this.modalUrlLastClickTime = now;
+          this.addFileModal.nameSelStart = null;
+          this.addFileModal.nameSelEnd = null;
         } else if (x >= nameInputRect.x && x <= nameInputRect.x + nameInputRect.w && y >= nameInputRect.y && y <= nameInputRect.y + nameInputRect.h) {
           if (this.addFileModal.activeField === 'url') {
             this.resolveModalTitleNow();
           }
+          const now = performance.now();
           this.addFileModal.activeField = 'name';
-          this.addFileModal.nameCursorPos = this.addFileModal.name.length;
-          this.addFileModal.nameSelStart = null;
-          this.addFileModal.nameSelEnd = null;
+
+          const clickOffset = x - (nameInputRect.x + 4);
+          const charIdx = Math.min(this.addFileModal.name.length, getCharIndexAtX(this.font, this.addFileModal.name, clickOffset));
+
+          if (now - this.modalNameLastClickTime < 350) {
+            // Double click: Select All
+            this.addFileModal.nameSelStart = 0;
+            this.addFileModal.nameSelEnd = this.addFileModal.name.length;
+            this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+            this.textSelectTarget = null;
+          } else {
+            // Single click: Start drag selection
+            this.addFileModal.nameCursorPos = charIdx;
+            this.addFileModal.nameSelStart = charIdx;
+            this.addFileModal.nameSelEnd = charIdx;
+            this.textSelectTarget = 'modal-name';
+            this.textSelectAnchor = charIdx;
+          }
+          this.modalNameLastClickTime = now;
           this.addFileModal.urlSelStart = null;
           this.addFileModal.urlSelEnd = null;
-        } else if (x >= urlInputRect.x && x <= urlInputRect.x + urlInputRect.w && y >= urlInputRect.y && y <= urlInputRect.y + urlInputRect.h) {
-          this.addFileModal.activeField = 'url';
-          this.addFileModal.urlCursorPos = this.addFileModal.url.length;
-          this.addFileModal.urlSelStart = null;
-          this.addFileModal.urlSelEnd = null;
-          this.addFileModal.nameSelStart = null;
-          this.addFileModal.nameSelEnd = null;
         }
       }
       return;
@@ -682,22 +794,28 @@ export class OS {
           
           if (x >= bx && x <= bx + bw && cy >= by && cy <= by + bh) {
             const now = performance.now();
-            if (now - this.renameLastClickTime < 500) {
+            const lineIdx = (cy >= by + 12 && lines.length > 1) ? 1 : 0;
+            const textWidth = this.font.measureText(lines[lineIdx]);
+            const textX = Math.floor(centerX - textWidth / 2);
+            const clickOffset = x - textX;
+            const charIdxInLine = getCharIndexAtX(this.font, lines[lineIdx], clickOffset);
+            const charIdx = lineIdx === 0 ? Math.min(this.renameText.length, Math.min(14, charIdxInLine)) : Math.min(this.renameText.length, 14 + charIdxInLine);
+
+            if (now - this.renameLastClickTime < 350) {
+              // Double click: Select all text
               this.isRenameSelected = true;
+              this.renameSelStart = 0;
+              this.renameSelEnd = this.renameText.length;
+              this.renameCursorPos = this.renameText.length;
+              this.textSelectTarget = null;
             } else {
+              // Single click: Start drag selection
               this.isRenameSelected = false;
-              // Calculate cursor position
-              const lineIdx = (cy >= by + 12) ? 1 : 0;
-              const textWidth = this.font.measureText(lines[lineIdx]);
-              const textX = Math.floor(centerX - textWidth / 2);
-              const clickOffset = x - textX;
-              const charIdxInLine = Math.max(0, Math.round(clickOffset / 7));
-              
-              if (lineIdx === 0) {
-                this.renameCursorPos = Math.min(this.renameText.length, Math.min(14, charIdxInLine));
-              } else {
-                this.renameCursorPos = Math.min(this.renameText.length, 14 + charIdxInLine);
-              }
+              this.renameCursorPos = charIdx;
+              this.renameSelStart = charIdx;
+              this.renameSelEnd = charIdx;
+              this.textSelectTarget = 'rename';
+              this.textSelectAnchor = charIdx;
             }
             this.renameLastClickTime = now;
             insideRenameBox = true;
@@ -1114,6 +1232,9 @@ export class OS {
     this.renameText = currentName;
     this.renameCursorPos = currentName.length;
     this.isRenameSelected = true;
+    this.renameSelStart = 0;
+    this.renameSelEnd = currentName.length;
+    this.renameLastClickTime = performance.now();
   }
 
   private commitRename() {
@@ -1123,6 +1244,9 @@ export class OS {
     }
     this.renamingId = null;
     this.renameText = '';
+    this.renameSelStart = null;
+    this.renameSelEnd = null;
+    this.isRenameSelected = false;
   }
 
   handlePaste(pastedText: string) {
@@ -1167,18 +1291,23 @@ export class OS {
     }
 
     if (this.renamingId) {
-      if (this.isRenameSelected) {
-        this.renameText = cleanText.substring(0, 24);
-        this.renameCursorPos = this.renameText.length;
-        this.isRenameSelected = false;
-      } else {
-        const text = this.renameText;
-        const cursorPos = this.renameCursorPos;
-        const availableSpace = 24 - text.length;
-        const insertText = cleanText.substring(0, Math.max(0, availableSpace));
-        this.renameText = text.slice(0, cursorPos) + insertText + text.slice(cursorPos);
-        this.renameCursorPos = cursorPos + insertText.length;
+      let selStart = this.renameSelStart;
+      let selEnd = this.renameSelEnd;
+      if (this.isRenameSelected && (selStart === null || selEnd === null)) {
+        selStart = 0;
+        selEnd = this.renameText.length;
       }
+      const hasSelection = (selStart !== null && selEnd !== null && selStart !== selEnd) || this.isRenameSelected;
+      const sMin = hasSelection ? (selStart !== null && selEnd !== null ? Math.min(selStart, selEnd) : 0) : this.renameCursorPos;
+      const sMax = hasSelection ? (selStart !== null && selEnd !== null ? Math.max(selStart, selEnd) : this.renameText.length) : this.renameCursorPos;
+
+      const availableSpace = 24 - (this.renameText.length - (sMax - sMin));
+      const insertText = cleanText.substring(0, Math.max(0, availableSpace));
+      this.renameText = this.renameText.slice(0, sMin) + insertText + this.renameText.slice(sMax);
+      this.renameCursorPos = sMin + insertText.length;
+      this.renameSelStart = null;
+      this.renameSelEnd = null;
+      this.isRenameSelected = false;
     }
   }
 
@@ -1392,22 +1521,39 @@ export class OS {
     }
 
     if (this.renamingId) {
+      let selStart = this.renameSelStart;
+      let selEnd = this.renameSelEnd;
+      if (this.isRenameSelected && (selStart === null || selEnd === null)) {
+        selStart = 0;
+        selEnd = this.renameText.length;
+      }
+      const hasSelection = (selStart !== null && selEnd !== null && selStart !== selEnd) || this.isRenameSelected;
+      const sMin = hasSelection ? (selStart !== null && selEnd !== null ? Math.min(selStart, selEnd) : 0) : this.renameCursorPos;
+      const sMax = hasSelection ? (selStart !== null && selEnd !== null ? Math.max(selStart, selEnd) : this.renameText.length) : this.renameCursorPos;
+
       if (ctrl) {
         const k = key.toLowerCase();
         if (k === 'a') {
           this.isRenameSelected = true;
+          this.renameSelStart = 0;
+          this.renameSelEnd = this.renameText.length;
+          this.renameCursorPos = this.renameText.length;
           return;
         } else if (k === 'c') {
-          if (this.renameText && navigator.clipboard) {
-            navigator.clipboard.writeText(this.renameText).catch(() => {});
+          const copyText = hasSelection ? this.renameText.substring(sMin, sMax) : this.renameText;
+          if (copyText && navigator.clipboard) {
+            navigator.clipboard.writeText(copyText).catch(() => {});
           }
           return;
         } else if (k === 'x') {
-          if (this.renameText && navigator.clipboard) {
-            navigator.clipboard.writeText(this.renameText).catch(() => {});
+          const copyText = hasSelection ? this.renameText.substring(sMin, sMax) : this.renameText;
+          if (copyText && navigator.clipboard) {
+            navigator.clipboard.writeText(copyText).catch(() => {});
           }
-          this.renameText = '';
-          this.renameCursorPos = 0;
+          this.renameText = this.renameText.slice(0, sMin) + this.renameText.slice(sMax);
+          this.renameCursorPos = sMin;
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
           this.isRenameSelected = false;
           return;
         } else if (k === 'v') {
@@ -1426,36 +1572,82 @@ export class OS {
       } else if (key === 'Escape') {
         this.renamingId = null;
       } else if (key === 'ArrowLeft') {
-        this.isRenameSelected = false;
-        this.renameCursorPos = Math.max(0, this.renameCursorPos - 1);
+        if (shift) {
+          if (this.renameSelStart === null) this.renameSelStart = this.renameCursorPos;
+          this.renameCursorPos = Math.max(0, this.renameCursorPos - 1);
+          this.renameSelEnd = this.renameCursorPos;
+          this.isRenameSelected = (this.renameSelStart !== this.renameSelEnd);
+        } else {
+          this.renameCursorPos = hasSelection ? sMin : Math.max(0, this.renameCursorPos - 1);
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
+          this.isRenameSelected = false;
+        }
       } else if (key === 'ArrowRight') {
-        this.isRenameSelected = false;
-        this.renameCursorPos = Math.min(this.renameText.length, this.renameCursorPos + 1);
-      } else if (key === 'Backspace') {
-        if (this.isRenameSelected) {
-          this.renameText = '';
+        if (shift) {
+          if (this.renameSelStart === null) this.renameSelStart = this.renameCursorPos;
+          this.renameCursorPos = Math.min(this.renameText.length, this.renameCursorPos + 1);
+          this.renameSelEnd = this.renameCursorPos;
+          this.isRenameSelected = (this.renameSelStart !== this.renameSelEnd);
+        } else {
+          this.renameCursorPos = hasSelection ? sMax : Math.min(this.renameText.length, this.renameCursorPos + 1);
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
+          this.isRenameSelected = false;
+        }
+      } else if (key === 'Home') {
+        if (shift) {
+          if (this.renameSelStart === null) this.renameSelStart = this.renameCursorPos;
           this.renameCursorPos = 0;
+          this.renameSelEnd = this.renameCursorPos;
+          this.isRenameSelected = (this.renameSelStart !== this.renameSelEnd);
+        } else {
+          this.renameCursorPos = 0;
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
+          this.isRenameSelected = false;
+        }
+      } else if (key === 'End') {
+        if (shift) {
+          if (this.renameSelStart === null) this.renameSelStart = this.renameCursorPos;
+          this.renameCursorPos = this.renameText.length;
+          this.renameSelEnd = this.renameCursorPos;
+          this.isRenameSelected = (this.renameSelStart !== this.renameSelEnd);
+        } else {
+          this.renameCursorPos = this.renameText.length;
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
+          this.isRenameSelected = false;
+        }
+      } else if (key === 'Backspace') {
+        if (hasSelection) {
+          this.renameText = this.renameText.slice(0, sMin) + this.renameText.slice(sMax);
+          this.renameCursorPos = sMin;
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
           this.isRenameSelected = false;
         } else if (this.renameCursorPos > 0) {
           this.renameText = this.renameText.slice(0, this.renameCursorPos - 1) + this.renameText.slice(this.renameCursorPos);
           this.renameCursorPos--;
         }
       } else if (key === 'Delete') {
-        if (this.isRenameSelected) {
-          this.renameText = '';
-          this.renameCursorPos = 0;
+        if (hasSelection) {
+          this.renameText = this.renameText.slice(0, sMin) + this.renameText.slice(sMax);
+          this.renameCursorPos = sMin;
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
           this.isRenameSelected = false;
         } else if (this.renameCursorPos < this.renameText.length) {
           this.renameText = this.renameText.slice(0, this.renameCursorPos) + this.renameText.slice(this.renameCursorPos + 1);
         }
       } else if (key.length === 1 && !alt) { 
-        if (this.isRenameSelected) {
-          this.renameText = key;
-          this.renameCursorPos = 1;
+        const textWithoutSel = this.renameText.slice(0, sMin) + this.renameText.slice(sMax);
+        if (textWithoutSel.length < 24) {
+          this.renameText = this.renameText.slice(0, sMin) + key + this.renameText.slice(sMax);
+          this.renameCursorPos = sMin + 1;
+          this.renameSelStart = null;
+          this.renameSelEnd = null;
           this.isRenameSelected = false;
-        } else if (this.renameText.length < 24) {
-          this.renameText = this.renameText.slice(0, this.renameCursorPos) + key + this.renameText.slice(this.renameCursorPos);
-          this.renameCursorPos++;
         }
       }
     } else {
@@ -1489,6 +1681,61 @@ export class OS {
 
   handleMouseMove(x: number, y: number) {
     const cy = y - this.scrollY;
+
+    if (this.textSelectTarget && this.addFileModal) {
+      if (this.textSelectTarget === 'modal-url') {
+        const { urlInputRect, url } = this.addFileModal;
+        let visibleUrl = url;
+        let urlOffset = 0;
+        const maxUrlWidth = urlInputRect.w - 10;
+        while (this.font.measureText(visibleUrl) > maxUrlWidth && urlOffset < this.addFileModal.urlCursorPos) {
+          urlOffset++;
+          visibleUrl = url.substring(urlOffset);
+        }
+        const clickOffset = x - (urlInputRect.x + 4);
+        const charIdx = Math.min(url.length, urlOffset + getCharIndexAtX(this.font, visibleUrl, clickOffset));
+        this.addFileModal.urlSelStart = this.textSelectAnchor;
+        this.addFileModal.urlSelEnd = charIdx;
+        this.addFileModal.urlCursorPos = charIdx;
+        return;
+      } else if (this.textSelectTarget === 'modal-name') {
+        const { nameInputRect, name } = this.addFileModal;
+        const clickOffset = x - (nameInputRect.x + 4);
+        const charIdx = Math.min(name.length, getCharIndexAtX(this.font, name, clickOffset));
+        this.addFileModal.nameSelStart = this.textSelectAnchor;
+        this.addFileModal.nameSelEnd = charIdx;
+        this.addFileModal.nameCursorPos = charIdx;
+        return;
+      }
+    }
+
+    if (this.textSelectTarget === 'rename' && this.renamingId) {
+      const cols = Math.floor(this.width / this.cellWidth);
+      const gridOffsetX = Math.floor((this.width - (cols * this.cellWidth)) / 2);
+      for (let i = 0; i < this.currentFiles.length; i++) {
+        const file = this.currentFiles[i];
+        if (file.id === this.renamingId) {
+          const col = i % cols;
+          const row = Math.floor(i / cols);
+          const iconX = file.x !== undefined ? file.x : gridOffsetX + col * this.cellWidth + (this.cellWidth - this.iconWidth) / 2;
+          const iconY = file.y !== undefined ? file.y : this.marginY + row * this.cellHeight;
+          const centerX = iconX + this.iconWidth / 2;
+          const lines = this.formatNameLines(this.renameText);
+          const by = iconY + this.iconHeight + 4;
+          const lineIdx = (cy >= by + 12 && lines.length > 1) ? 1 : 0;
+          const textWidth = this.font.measureText(lines[lineIdx]);
+          const textX = Math.floor(centerX - textWidth / 2);
+          const clickOffset = x - textX;
+          const charIdxInLine = getCharIndexAtX(this.font, lines[lineIdx], clickOffset);
+          const charIdx = lineIdx === 0 ? Math.min(this.renameText.length, Math.min(14, charIdxInLine)) : Math.min(this.renameText.length, 14 + charIdxInLine);
+          this.renameSelStart = this.textSelectAnchor;
+          this.renameSelEnd = charIdx;
+          this.renameCursorPos = charIdx;
+          this.isRenameSelected = (charIdx !== this.textSelectAnchor);
+          return;
+        }
+      }
+    }
 
     if (this.selectionBox) {
       this.selectionBox.x2 = x;
@@ -1594,11 +1841,31 @@ export class OS {
       this.contextMenu.hoveredSubIndex = -1;
     }
   }
+
   handleMouseUp() {
     this.draggingId = null;
     this.draggingSelected = false;
     this.selectionBox = null;
     this.dragInitialPositions.clear();
+
+    if (this.textSelectTarget) {
+      if (this.addFileModal) {
+        if (this.addFileModal.urlSelStart === this.addFileModal.urlSelEnd) {
+          this.addFileModal.urlSelStart = null;
+          this.addFileModal.urlSelEnd = null;
+        }
+        if (this.addFileModal.nameSelStart === this.addFileModal.nameSelEnd) {
+          this.addFileModal.nameSelStart = null;
+          this.addFileModal.nameSelEnd = null;
+        }
+      }
+      if (this.renameSelStart === this.renameSelEnd) {
+        this.renameSelStart = null;
+        this.renameSelEnd = null;
+        this.isRenameSelected = false;
+      }
+      this.textSelectTarget = null;
+    }
   }
 
   private executeFile(file: VFSNode) {
