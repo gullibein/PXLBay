@@ -184,6 +184,58 @@ function decodeHtmlEntities(str: string): string {
     .trim();
 }
 
+export function cleanPageTitle(rawTitle: string | null | undefined, rawUrl: string): string | null {
+  const cleanBrand = getCleanDomainName(rawUrl);
+  if (!rawTitle) return cleanBrand || null;
+
+  let title = rawTitle.trim();
+  if (!title) return cleanBrand || null;
+
+  const domain = extractDomain(rawUrl);
+
+  // If the title is literally the URL or domain (e.g. "pinterest.com" or "https://www.pinterest.com")
+  if (
+    title.toLowerCase() === rawUrl.toLowerCase() || 
+    (domain && title.toLowerCase() === domain.toLowerCase()) ||
+    (domain && title.toLowerCase() === `www.${domain.toLowerCase()}`)
+  ) {
+    return cleanBrand || title;
+  }
+
+  // Remove leading protocol and www
+  title = title.replace(/^https?:\/\/(?:www\.)?/i, '');
+
+  // If title is a bare domain with TLD (e.g. "pinterest.com")
+  if (/^[a-zA-Z0-9-]+\.(?:com|org|net|io|co|is|app|dev|edu|gov|tv|ai)$/i.test(title)) {
+    return cleanBrand || title.replace(/\.[a-zA-Z]+$/i, '').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  // Check for common title separators (e.g. "Pinterest: Discover recipes...", "GitHub: Where...")
+  const separators = [' - ', ' | ', ' – ', ' — ', ' : ', ': ', ' • '];
+  for (const sep of separators) {
+    if (title.includes(sep)) {
+      const parts = title.split(sep);
+      const first = parts[0].trim();
+      if (first.length >= 2 && first.length <= 20) {
+        title = first;
+        break;
+      }
+      const last = parts[parts.length - 1].trim();
+      if (last.length >= 2 && last.length <= 20) {
+        title = last;
+        break;
+      }
+    }
+  }
+
+  // If title is long and contains the clean brand name, use the clean brand name
+  if (title.length > 24 && cleanBrand && title.toLowerCase().includes(cleanBrand.toLowerCase())) {
+    title = cleanBrand;
+  }
+
+  return title.substring(0, 24).trim();
+}
+
 export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
   const trimmed = rawUrl.trim();
   if (!trimmed) return null;
@@ -198,6 +250,8 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
     return null;
   }
 
+  const cleanBrand = getCleanDomainName(trimmed);
+
   // 1. Direct fetch (works for local relative html files and CORS-friendly web servers)
   try {
     const res = await fetch(url, { method: 'GET' });
@@ -206,7 +260,8 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
       const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
       if (match && match[1]) {
         const decoded = decodeHtmlEntities(match[1]);
-        if (decoded) return decoded;
+        const cleaned = cleanPageTitle(decoded, trimmed);
+        if (cleaned) return cleaned;
       }
     }
   } catch {
@@ -225,7 +280,8 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
         const data = await res.json();
         if (data?.status === 'success' && data?.data?.title) {
           const title = String(data.data.title).trim();
-          if (title) return decodeHtmlEntities(title);
+          const cleaned = cleanPageTitle(decodeHtmlEntities(title), trimmed);
+          if (cleaned) return cleaned;
         }
       }
     } catch {
@@ -245,7 +301,8 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
           const match = data.contents.match(/<title[^>]*>([^<]+)<\/title>/i);
           if (match && match[1]) {
             const decoded = decodeHtmlEntities(match[1]);
-            if (decoded) return decoded;
+            const cleaned = cleanPageTitle(decoded, trimmed);
+            if (cleaned) return cleaned;
           }
         }
       }
@@ -255,13 +312,13 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
   }
 
   // 4. Return the verified clean brand / site name from domain/path (e.g. Pinterest, Google, etc.)
-  const cleanName = getCleanDomainName(trimmed);
-  if (cleanName) {
-    return cleanName;
+  if (cleanBrand) {
+    return cleanBrand;
   }
 
   return null;
 }
+
 
 
 
