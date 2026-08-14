@@ -555,6 +555,9 @@ export class OS {
         } else if (x >= cancelBtnRect.x && x <= cancelBtnRect.x + cancelBtnRect.w && y >= cancelBtnRect.y && y <= cancelBtnRect.y + cancelBtnRect.h) {
           this.addFileModal = null;
         } else if (x >= nameInputRect.x && x <= nameInputRect.x + nameInputRect.w && y >= nameInputRect.y && y <= nameInputRect.y + nameInputRect.h) {
+          if (this.addFileModal.activeField === 'url') {
+            this.resolveModalTitleNow();
+          }
           this.addFileModal.activeField = 'name';
           this.addFileModal.nameCursorPos = this.addFileModal.name.length;
         } else if (x >= urlInputRect.x && x <= urlInputRect.x + urlInputRect.w && y >= urlInputRect.y && y <= urlInputRect.y + urlInputRect.h) {
@@ -880,6 +883,19 @@ export class OS {
 
   private titleFetchTimer: any = null;
 
+  private resolveModalTitleNow() {
+    if (!this.addFileModal || this.addFileModal.userEditedName) return;
+    const targetUrl = this.addFileModal.url.trim();
+    if (!targetUrl) return;
+
+    fetchPageTitle(targetUrl).then(title => {
+      if (title && this.addFileModal && !this.addFileModal.userEditedName && this.addFileModal.url.trim() === targetUrl) {
+        this.addFileModal.name = title.substring(0, 30);
+        this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+      }
+    });
+  }
+
   private onModalUrlChanged() {
     if (!this.addFileModal || this.addFileModal.userEditedName) return;
 
@@ -897,17 +913,8 @@ export class OS {
 
     // Debounce to allow user to complete typing the link
     this.titleFetchTimer = setTimeout(() => {
-      if (!this.addFileModal || this.addFileModal.userEditedName) return;
-      const targetUrl = this.addFileModal.url.trim();
-      if (!targetUrl) return;
-
-      fetchPageTitle(targetUrl).then(title => {
-        if (title && this.addFileModal && !this.addFileModal.userEditedName && this.addFileModal.url.trim() === targetUrl) {
-          this.addFileModal.name = title.substring(0, 30);
-          this.addFileModal.nameCursorPos = this.addFileModal.name.length;
-        }
-      });
-    }, 350);
+      this.resolveModalTitleNow();
+    }, 250);
   }
 
   private executeContextMenuOption(option: string) {
@@ -1066,6 +1073,9 @@ export class OS {
         return;
       }
       if (key === 'Tab') {
+        if (this.addFileModal.activeField === 'url') {
+          this.resolveModalTitleNow();
+        }
         this.addFileModal.activeField = this.addFileModal.activeField === 'url' ? 'name' : 'url';
         return;
       }

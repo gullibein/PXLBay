@@ -216,8 +216,11 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
   // 2. For external web URLs, query Microlink metadata API to get the verified page title
   if (isWebUrl) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
       const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}`;
-      const res = await fetch(apiUrl);
+      const res = await fetch(apiUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const data = await res.json();
         if (data?.status === 'success' && data?.data?.title) {
@@ -226,13 +229,16 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
         }
       }
     } catch {
-      // Fallback to next strategy
+      // Fallback
     }
 
     // 3. Fallback via AllOrigins CORS proxy
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
       const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-      const res = await fetch(proxyUrl);
+      const res = await fetch(proxyUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const data = await res.json();
         if (data?.contents) {
@@ -244,11 +250,18 @@ export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
         }
       }
     } catch {
-      // No title found
+      // No live title scraped
     }
+  }
+
+  // 4. Return the verified clean brand / site name from domain/path (e.g. Pinterest, Google, etc.)
+  const cleanName = getCleanDomainName(trimmed);
+  if (cleanName) {
+    return cleanName;
   }
 
   return null;
 }
+
 
 
