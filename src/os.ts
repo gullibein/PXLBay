@@ -2,7 +2,7 @@ import { FontRenderer } from './font';
 import fontUrl from '../public/Bm437_EverexME_7x8.FON?url';
 import { VFS, type VFSNode } from './vfs';
 import { fetchRepositoryTree } from './scanner';
-import { getFavicon, normalizeUrl, getCleanDomainName, fetchPageTitle } from './favicon';
+import { getFavicon, normalizeUrl, fetchPageTitle } from './favicon';
 
 export class OS {
   private vfs = new VFS();
@@ -868,7 +868,7 @@ export class OS {
     const rawUrl = this.addFileModal.url.trim();
     if (rawUrl) {
       const url = normalizeUrl(rawUrl);
-      const name = this.addFileModal.name.trim() || getCleanDomainName(rawUrl) || 'Untitled';
+      const name = this.addFileModal.name.trim() || 'Untitled';
       const newNode = this.vfs.createFile(this.currentFolderId, name, url, true);
       this.refreshFiles();
       this.selectedIds.clear();
@@ -878,28 +878,36 @@ export class OS {
     this.addFileModal = null;
   }
 
+  private titleFetchTimer: any = null;
+
   private onModalUrlChanged() {
     if (!this.addFileModal || this.addFileModal.userEditedName) return;
-    const url = this.addFileModal.url.trim();
-    if (!url) {
+
+    if (this.titleFetchTimer) {
+      clearTimeout(this.titleFetchTimer);
+      this.titleFetchTimer = null;
+    }
+
+    const rawUrl = this.addFileModal.url.trim();
+    if (!rawUrl) {
       this.addFileModal.name = '';
       this.addFileModal.nameCursorPos = 0;
       return;
     }
 
-    const cleanName = getCleanDomainName(url);
-    if (cleanName && !this.addFileModal.userEditedName) {
-      this.addFileModal.name = cleanName;
-      this.addFileModal.nameCursorPos = cleanName.length;
-    }
+    // Debounce to allow user to complete typing the link
+    this.titleFetchTimer = setTimeout(() => {
+      if (!this.addFileModal || this.addFileModal.userEditedName) return;
+      const targetUrl = this.addFileModal.url.trim();
+      if (!targetUrl) return;
 
-    const targetUrl = url;
-    fetchPageTitle(targetUrl).then(title => {
-      if (title && this.addFileModal && !this.addFileModal.userEditedName && this.addFileModal.url.trim() === targetUrl) {
-        this.addFileModal.name = title.substring(0, 30);
-        this.addFileModal.nameCursorPos = this.addFileModal.name.length;
-      }
-    });
+      fetchPageTitle(targetUrl).then(title => {
+        if (title && this.addFileModal && !this.addFileModal.userEditedName && this.addFileModal.url.trim() === targetUrl) {
+          this.addFileModal.name = title.substring(0, 30);
+          this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+        }
+      });
+    }, 350);
   }
 
   private executeContextMenuOption(option: string) {

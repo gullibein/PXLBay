@@ -173,29 +173,82 @@ export function getCleanDomainName(rawUrl: string): string {
   return mainName.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .trim();
+}
+
 export async function fetchPageTitle(rawUrl: string): Promise<string | null> {
-  const url = normalizeUrl(rawUrl);
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+
+  const url = normalizeUrl(trimmed);
   if (!url) return null;
 
+  const isWebUrl = url.startsWith('http://') || url.startsWith('https://');
+  const isLocalHtml = trimmed.endsWith('.html') || trimmed.endsWith('.htm') || trimmed.startsWith('./') || trimmed.startsWith('/');
+
+  if (!isWebUrl && !isLocalHtml) {
+    return null;
+  }
+
+  // 1. Direct fetch (works for local relative html files and CORS-friendly web servers)
   try {
     const res = await fetch(url, { method: 'GET' });
     if (res.ok) {
       const html = await res.text();
       const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
       if (match && match[1]) {
-        const decoded = match[1]
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .trim();
+        const decoded = decodeHtmlEntities(match[1]);
         if (decoded) return decoded;
       }
     }
   } catch {
-    // Ignore CORS / network errors
+    // Cross-origin request failed, continue to metadata resolvers
   }
+
+  // 2. For external web URLs, query Microlink metadata API to get the verified page title
+  if (isWebUrl) {
+    try {
+      const apiUrl = `https://api.microlink.io?url=${encodeURIComponent(url)}`;
+      const res = await fetch(apiUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.status === 'success' && data?.data?.title) {
+          const title = String(data.data.title).trim();
+          if (title) return decodeHtmlEntities(title);
+        }
+      }
+    } catch {
+      // Fallback to next strategy
+    }
+
+    // 3. Fallback via AllOrigins CORS proxy
+    try {
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const res = await fetch(proxyUrl);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.contents) {
+          const match = data.contents.match(/<title[^>]*>([^<]+)<\/title>/i);
+          if (match && match[1]) {
+            const decoded = decodeHtmlEntities(match[1]);
+            if (decoded) return decoded;
+          }
+        }
+      }
+    } catch {
+      // No title found
+    }
+  }
+
   return null;
 }
+
 
