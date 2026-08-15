@@ -26,8 +26,8 @@ export class OS {
   
   private readonly iconWidth = 32;
   private readonly iconHeight = 24;
-  private cellWidth = 105;
-  private cellHeight = 64;
+  private readonly cellWidth = 105;
+  private readonly cellHeight = 64;
   private readonly marginY = 8;
 
   public width: number = 640;
@@ -135,15 +135,6 @@ export class OS {
     } else if (scale !== undefined && scale > 0) {
       this.currentZoom = `${Math.round(scale)}x`;
     }
-
-    if (this.height > this.width) {
-      // Portrait: 3 columns fit horizontally
-      this.cellWidth = Math.max(50, Math.floor(this.width / 3));
-    } else {
-      // Landscape: 6 columns fit horizontally
-      this.cellWidth = Math.max(50, Math.min(105, Math.floor(this.width / 6)));
-    }
-
     this.clampScroll();
   }
 
