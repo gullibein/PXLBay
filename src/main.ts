@@ -13,8 +13,8 @@ let mouseY = 180;
 
 window.addEventListener('os-resize', (e: Event) => {
   const customEvent = e as CustomEvent;
-  const { width, height } = customEvent.detail;
-  os.resize(width, height);
+  const { width, height, scale } = customEvent.detail;
+  os.resize(width, height, scale);
 });
 
 

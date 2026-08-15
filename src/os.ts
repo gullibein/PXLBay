@@ -125,10 +125,20 @@ export class OS {
     }
   }
 
-  public resize(width: number, height: number) {
+  private currentZoom: number = 1;
+
+  public resize(width: number, height: number, scale?: number) {
     this.width = width;
     this.height = height;
+    if (scale !== undefined && scale > 0) {
+      this.currentZoom = Math.round(scale);
+    }
     this.clampScroll();
+  }
+
+  private getZoomOptions(): string[] {
+    const allZooms = [1, 2, 3, 4];
+    return allZooms.filter(z => z !== this.currentZoom).map(z => `${z}x`);
   }
 
   private clampScroll() {
@@ -579,7 +589,7 @@ export class OS {
 
     // Draw sub-menu if Zoom is hovered
     if (this.contextMenu.hoveredIndex !== -1 && this.contextMenu.options[this.contextMenu.hoveredIndex] === 'Zoom') {
-      const subOptions = ['2x', '3x', '4x'];
+      const subOptions = this.getZoomOptions();
       const subWidth = 60;
       const subHeight = subOptions.length * 20 + 4;
       let smx = mx + menuWidth;
@@ -1041,7 +1051,7 @@ export class OS {
 
     // Check sub-menu if Zoom is hovered
     if (this.contextMenu.hoveredIndex !== -1 && this.contextMenu.options[this.contextMenu.hoveredIndex] === 'Zoom') {
-      const subOptions = ['2x', '3x', '4x'];
+      const subOptions = this.getZoomOptions();
       const subWidth = 60;
       const subHeight = subOptions.length * 20 + 4;
       let smx = mx + menuWidth;
@@ -1242,13 +1252,20 @@ export class OS {
         }
         this.refreshFiles();
         break;
+      case 'Zoom > 1x':
+        this.currentZoom = 1;
+        window.dispatchEvent(new CustomEvent('set-zoom', { detail: 1 }));
+        break;
       case 'Zoom > 2x':
+        this.currentZoom = 2;
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 2 }));
         break;
       case 'Zoom > 3x':
+        this.currentZoom = 3;
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 3 }));
         break;
       case 'Zoom > 4x':
+        this.currentZoom = 4;
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 4 }));
         break;
     }
@@ -1918,8 +1935,9 @@ export class OS {
 
       // Check if we are over the sub-menu if Zoom is hovered
       if (this.contextMenu.hoveredIndex !== -1 && this.contextMenu.options[this.contextMenu.hoveredIndex] === 'Zoom') {
+        const subOptions = this.getZoomOptions();
         const subWidth = 60;
-        const subHeight = 3 * 20 + 4;
+        const subHeight = subOptions.length * 20 + 4;
         let smx = mx + menuWidth;
         let smy = my + this.contextMenu.hoveredIndex * 20;
         if (smx + subWidth > this.width) smx = mx - subWidth;
@@ -1927,7 +1945,7 @@ export class OS {
 
         if (x >= smx && x <= smx + subWidth && y >= smy && y <= smy + subHeight) {
           const idx = Math.floor((y - smy - 2) / 20);
-          if (idx >= 0 && idx < 3) {
+          if (idx >= 0 && idx < subOptions.length) {
             this.contextMenu.hoveredSubIndex = idx;
           } else {
             this.contextMenu.hoveredSubIndex = -1;
