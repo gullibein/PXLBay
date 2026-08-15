@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>PXL-OS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -33,6 +33,7 @@
 
       canvas {
         image-rendering: pixelated;
+        image-rendering: crisp-edges;
         touch-action: none;
         cursor: none !important;
       }
@@ -58,23 +59,40 @@
       });
 
       function updateScale() {
-        const dpr = window.devicePixelRatio || 1;
-        const physicalWidth = window.innerWidth * dpr;
-        const physicalHeight = window.innerHeight * dpr;
-        
-        let physicalScale;
+        const cssWidth = window.innerWidth;
+        const cssHeight = window.innerHeight;
+        const isPortrait = cssHeight > cssWidth;
+
+        let logicalWidth;
+        let logicalHeight;
+        let cssScale;
+
         if (manualScaleOverride) {
-          physicalScale = manualScaleOverride * dpr;
+          cssScale = manualScaleOverride;
+          logicalWidth = Math.floor(cssWidth / cssScale);
+          logicalHeight = Math.floor(cssHeight / cssScale);
         } else {
-          // Find max integer scale that fits 640x340, min 1x
-          const maxFittingScale = Math.min(Math.floor(physicalWidth / 640), Math.floor(physicalHeight / 340));
-          physicalScale = Math.max(1, maxFittingScale);
+          // Normal mode:
+          if (isPortrait) {
+            // Portrait: exactly 3 items fit across the screen (3 * 105 = 315px -> 320px)
+            logicalWidth = 320;
+            cssScale = cssWidth / logicalWidth;
+            logicalHeight = Math.max(180, Math.floor(cssHeight / cssScale));
+          } else {
+            // Landscape: exactly 6 items fit across the screen (6 * 105 = 630px -> 640px)
+            const integerScale = Math.max(1, Math.min(Math.floor(cssWidth / 640), Math.floor(cssHeight / 340)));
+            if (cssWidth < 640 || cssHeight < 340) {
+              logicalWidth = 640;
+              cssScale = cssWidth / 640;
+              logicalHeight = Math.max(180, Math.floor(cssHeight / cssScale));
+            } else {
+              cssScale = integerScale;
+              logicalWidth = Math.floor(cssWidth / cssScale);
+              logicalHeight = Math.floor(cssHeight / cssScale);
+            }
+          }
         }
-        
-        // Calculate dynamic logical size
-        const logicalWidth = Math.floor(physicalWidth / physicalScale);
-        const logicalHeight = Math.floor(physicalHeight / physicalScale);
-        
+
         const canvas = document.getElementById('os-canvas');
         if (canvas.width !== logicalWidth || canvas.height !== logicalHeight) {
           canvas.width = logicalWidth;
@@ -86,13 +104,11 @@
           detail: { 
             width: logicalWidth, 
             height: logicalHeight, 
-            scale: physicalScale / dpr,
+            scale: cssScale,
             zoomMode: currentZoomMode
           } 
         }));
 
-        const cssScale = physicalScale / dpr;
-        
         canvas.style.width = (logicalWidth * cssScale) + 'px';
         canvas.style.height = (logicalHeight * cssScale) + 'px';
       }
