@@ -5,7 +5,7 @@
     "isDirectory": true,
     "children": [
       {
-        "name": "Rogue-8",
+        "name": "PXLRogue",
         "path": "PXL_folder/PXLRogue",
         "isDirectory": false,
         "isApp": true,
