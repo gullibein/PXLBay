@@ -125,20 +125,22 @@ export class OS {
     }
   }
 
-  private currentZoom: number = 1;
+  private currentZoom: string = 'Normal';
 
-  public resize(width: number, height: number, scale?: number) {
+  public resize(width: number, height: number, scale?: number, zoomMode?: string) {
     this.width = width;
     this.height = height;
-    if (scale !== undefined && scale > 0) {
-      this.currentZoom = Math.round(scale);
+    if (zoomMode) {
+      this.currentZoom = zoomMode;
+    } else if (scale !== undefined && scale > 0) {
+      this.currentZoom = `${Math.round(scale)}x`;
     }
     this.clampScroll();
   }
 
   private getZoomOptions(): string[] {
-    const allZooms = [1, 2, 3, 4];
-    return allZooms.filter(z => z !== this.currentZoom).map(z => `${z}x`);
+    const allZooms = ['Normal', '1x', '2x', '3x', '4x'];
+    return allZooms.filter(z => z !== this.currentZoom);
   }
 
   private clampScroll() {
@@ -1252,20 +1254,24 @@ export class OS {
         }
         this.refreshFiles();
         break;
+      case 'Zoom > Normal':
+        this.currentZoom = 'Normal';
+        window.dispatchEvent(new CustomEvent('set-zoom', { detail: 'normal' }));
+        break;
       case 'Zoom > 1x':
-        this.currentZoom = 1;
+        this.currentZoom = '1x';
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 1 }));
         break;
       case 'Zoom > 2x':
-        this.currentZoom = 2;
+        this.currentZoom = '2x';
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 2 }));
         break;
       case 'Zoom > 3x':
-        this.currentZoom = 3;
+        this.currentZoom = '3x';
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 3 }));
         break;
       case 'Zoom > 4x':
-        this.currentZoom = 4;
+        this.currentZoom = '4x';
         window.dispatchEvent(new CustomEvent('set-zoom', { detail: 4 }));
         break;
     }
@@ -2008,5 +2014,115 @@ export class OS {
         : `${cleanBase}${normalized.replace(/^\/+/, '')}`;
       window.open(targetUrl, '_blank');
     }
+  }
+
+  public handleTouchTap(x: number, y: number) {
+    if (this.modal) {
+      this.handleMouseDown(x, y, 0);
+      return;
+    }
+
+    if (this.addFileModal) {
+      this.handleMouseDown(x, y, 0);
+      return;
+    }
+
+    if (this.contextMenu) {
+      this.handleContextMenuClick(x, y);
+      return;
+    }
+
+    if (this.renamingId) {
+      this.handleMouseDown(x, y, 0);
+      return;
+    }
+
+    if (this.currentFolderId === 'bin') {
+      const { x: bx, y: by, w, h } = this.emptyBinBtnRect;
+      if (x >= bx && x <= bx + w && y >= by && y <= by + h) {
+        this.vfs.emptyBin();
+        this.refreshFiles();
+        return;
+      }
+    }
+
+    const cols = Math.floor(this.width / this.cellWidth);
+    if (cols <= 0) return;
+    const gridOffsetX = Math.floor((this.width - (cols * this.cellWidth)) / 2);
+    const cy = y - this.scrollY;
+
+    for (let i = 0; i < this.currentFiles.length; i++) {
+      const file = this.currentFiles[i];
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      
+      let iconX, iconY;
+      if (file.x !== undefined && file.y !== undefined) {
+        iconX = file.x;
+        iconY = file.y;
+      } else {
+        iconX = gridOffsetX + col * this.cellWidth + (this.cellWidth - this.iconWidth) / 2;
+        iconY = this.marginY + row * this.cellHeight;
+      }
+
+      const onIcon = x >= iconX && x <= iconX + this.iconWidth && cy >= iconY && cy <= iconY + this.iconHeight;
+      const lines = this.formatNameLines(file.name);
+      const centerX = iconX + this.iconWidth / 2;
+      const nameTop = iconY + this.iconHeight + 4;
+      const nameBottom = nameTop + lines.length * 12 + 2;
+      
+      let maxTextWidth = 0;
+      lines.forEach(line => {
+        maxTextWidth = Math.max(maxTextWidth, this.font.measureText(line));
+      });
+      
+      const onName = x >= centerX - (maxTextWidth / 2 + 3) && 
+                     x <= centerX + (maxTextWidth / 2 + 3) && 
+                     cy >= nameTop && cy <= nameBottom;
+
+      if (onIcon || onName) {
+        // Touching once opens the file or folder
+        this.executeFile(file);
+        return;
+      }
+    }
+
+    // Tapped on empty space
+    this.selectedIds.clear();
+    this.lastSelectedId = null;
+  }
+
+  public handleTouchHold(x: number, y: number) {
+    // Touching and holding equals right-clicking
+    this.handleMouseDown(x, y, 2, false, false);
+    
+    // Prepare item dragging if holding on an item
+    if (this.lastSelectedId) {
+      const file = this.vfs.getNode(this.lastSelectedId);
+      if (file && file.id !== '..') {
+        const cols = Math.floor(this.width / this.cellWidth);
+        const gridOffsetX = Math.floor((this.width - (cols * this.cellWidth)) / 2);
+        const idx = this.currentFiles.findIndex(f => f.id === file.id);
+        const col = idx >= 0 ? idx % cols : 0;
+        const row = idx >= 0 ? Math.floor(idx / cols) : 0;
+        const iconX = file.x !== undefined ? file.x : (gridOffsetX + col * this.cellWidth + (this.cellWidth - this.iconWidth) / 2);
+        const iconY = file.y !== undefined ? file.y : (this.marginY + row * this.cellHeight);
+        
+        this.draggingId = file.id;
+        this.draggingSelected = true;
+        this.dragOffsetX = x - iconX;
+        this.dragOffsetY = (y - this.scrollY) - iconY;
+        this.dragInitialPositions.clear();
+        this.dragInitialPositions.set(file.id, { x: iconX, y: iconY });
+      }
+    }
+  }
+
+  public handleTouchMoveDrag(x: number, y: number) {
+    // Moving finger after holding moves the file/folder
+    if (this.contextMenu) {
+      this.contextMenu = null;
+    }
+    this.handleMouseMove(x, y);
   }
 }

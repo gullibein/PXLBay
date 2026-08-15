@@ -9,6 +9,7 @@ export interface VFSNode {
   isExecutable?: boolean;
   isRecycleBin?: boolean;
   isUserCreated?: boolean;
+  createdAt?: number;
   url?: string;
   iconUrl?: string;
   path?: string;
@@ -18,10 +19,11 @@ export interface VFSNode {
 
 export class VFS {
   private nodes: Map<string, VFSNode> = new Map();
+  private creationSeq: number = 1;
 
   constructor() {
-    this.nodes.set('root', { id: 'root', name: '/', isDirectory: true, parentId: null, isUserCreated: false });
-    this.nodes.set('bin', { id: 'bin', name: 'Recycle Bin', isDirectory: true, parentId: 'root', isRecycleBin: true, isUserCreated: false });
+    this.nodes.set('root', { id: 'root', name: '/', isDirectory: true, parentId: null, isUserCreated: false, createdAt: 0 });
+    this.nodes.set('bin', { id: 'bin', name: 'Recycle Bin', isDirectory: true, parentId: 'root', isRecycleBin: true, isUserCreated: false, createdAt: 0 });
   }
 
   /**
@@ -41,6 +43,7 @@ export class VFS {
         isApp: item.isApp,
         isExecutable: !item.isDirectory && (isHtml || !!item.url),
         isUserCreated: false,
+        createdAt: 0,
         url: item.url,
         iconUrl: item.iconUrl,
         path: item.path
@@ -64,7 +67,8 @@ export class VFS {
       parentId,
       url,
       isExecutable,
-      isUserCreated: true
+      isUserCreated: true,
+      createdAt: ++this.creationSeq
     };
     this.nodes.set(id, node);
     return node;
@@ -77,12 +81,30 @@ export class VFS {
         result.push(node);
       }
     }
-    // Sort to ensure Recycle Bin is first on desktop, then folders, then files
+    // Sort to ensure Recycle Bin is first on desktop,
+    // then initial system/repo items (folders first, then alphabetical),
+    // then user-created files/folders at the end of the row in creation order.
     return result.sort((a, b) => {
       if (a.isRecycleBin) return -1;
       if (b.isRecycleBin) return 1;
-      if (a.isDirectory && !b.isDirectory) return -1;
-      if (!a.isDirectory && b.isDirectory) return 1;
+
+      const aIsUser = !!a.isUserCreated;
+      const bIsUser = !!b.isUserCreated;
+
+      if (!aIsUser && bIsUser) return -1;
+      if (aIsUser && !bIsUser) return 1;
+
+      if (!aIsUser && !bIsUser) {
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        return a.name.localeCompare(b.name);
+      }
+
+      const aTime = a.createdAt || 0;
+      const bTime = b.createdAt || 0;
+      if (aTime !== bTime) {
+        return aTime - bTime;
+      }
       return a.name.localeCompare(b.name);
     });
   }
@@ -109,7 +131,14 @@ export class VFS {
   public createFolder(parentId: string, name: string): VFSNode {
     const uniqueName = this.getUniqueName(parentId, name, true);
     const id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-    const node: VFSNode = { id, name: uniqueName, isDirectory: true, parentId, isUserCreated: true };
+    const node: VFSNode = { 
+      id, 
+      name: uniqueName, 
+      isDirectory: true, 
+      parentId, 
+      isUserCreated: true, 
+      createdAt: ++this.creationSeq 
+    };
     this.nodes.set(id, node);
     return node;
   }
@@ -176,6 +205,7 @@ export class VFS {
       parentId: targetParentId,
       name: newName,
       isUserCreated: true,
+      createdAt: ++this.creationSeq,
       x: source.x !== undefined ? source.x + 10 : undefined,
       y: source.y !== undefined ? source.y + 10 : undefined
     };

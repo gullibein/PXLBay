@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DOSFake OS Simulator</title>
+    <title>PXL-OS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
@@ -18,15 +18,22 @@
         justify-content: center;
         align-items: center;
         overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
         cursor: none !important;
       }
       
       * {
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
         cursor: none !important;
       }
 
       canvas {
         image-rendering: pixelated;
+        touch-action: none;
         cursor: none !important;
       }
     </style>
@@ -39,7 +46,14 @@
       let manualScaleOverride = null;
       
       window.addEventListener('set-zoom', (e) => {
-        manualScaleOverride = e.detail;
+        const detail = e.detail;
+        if (detail === 'normal' || detail === 'Normal' || detail === 0 || detail === null) {
+          manualScaleOverride = null;
+        } else if (typeof detail === 'number') {
+          manualScaleOverride = detail;
+        } else if (typeof detail === 'string' && detail.endsWith('x')) {
+          manualScaleOverride = parseInt(detail, 10) || null;
+        }
         updateScale();
       });
 
@@ -52,9 +66,9 @@
         if (manualScaleOverride) {
           physicalScale = manualScaleOverride * dpr;
         } else {
-          // Find max integer scale that fits 640x340, but enforce minimum of 2x
+          // Find max integer scale that fits 640x340, min 1x
           const maxFittingScale = Math.min(Math.floor(physicalWidth / 640), Math.floor(physicalHeight / 340));
-          physicalScale = Math.max(2, maxFittingScale);
+          physicalScale = Math.max(1, maxFittingScale);
         }
         
         // Calculate dynamic logical size
@@ -65,9 +79,17 @@
         if (canvas.width !== logicalWidth || canvas.height !== logicalHeight) {
           canvas.width = logicalWidth;
           canvas.height = logicalHeight;
-          // Notify the application of the new boundaries
-          window.dispatchEvent(new CustomEvent('os-resize', { detail: { width: logicalWidth, height: logicalHeight, scale: physicalScale / dpr } }));
         }
+
+        const currentZoomMode = manualScaleOverride ? `${manualScaleOverride}x` : 'Normal';
+        window.dispatchEvent(new CustomEvent('os-resize', { 
+          detail: { 
+            width: logicalWidth, 
+            height: logicalHeight, 
+            scale: physicalScale / dpr,
+            zoomMode: currentZoomMode
+          } 
+        }));
 
         const cssScale = physicalScale / dpr;
         

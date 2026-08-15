@@ -8,32 +8,36 @@ os.resize(canvas.width, canvas.height);
 
 let mouseX = 320;
 let mouseY = 180;
-
-
+let isTouchMode = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
 window.addEventListener('os-resize', (e: Event) => {
   const customEvent = e as CustomEvent;
-  const { width, height, scale } = customEvent.detail;
-  os.resize(width, height, scale);
+  const { width, height, scale, zoomMode } = customEvent.detail;
+  os.resize(width, height, scale, zoomMode);
 });
 
-
-
-window.addEventListener('mousemove', (e) => {
+function getLogicalCoords(clientX: number, clientY: number): { x: number, y: number } {
   const rect = canvas.getBoundingClientRect();
-  
-  // Calculate the actual CSS-to-Logical scale directly from the canvas dimensions.
-  // This is the most robust way to ensure 1:1 alignment with the system cursor.
   const scaleX = rect.width / canvas.width;
   const scaleY = rect.height / canvas.height;
 
-  mouseX = (e.clientX - rect.left) / scaleX;
-  mouseY = (e.clientY - rect.top) / scaleY;
+  const lx = (clientX - rect.left) / scaleX;
+  const ly = (clientY - rect.top) / scaleY;
 
-  const clampedX = Math.max(0, Math.min(canvas.width - 1, mouseX));
-  const clampedY = Math.max(0, Math.min(canvas.height - 1, mouseY));
+  return {
+    x: Math.max(0, Math.min(canvas.width - 1, Math.floor(lx))),
+    y: Math.max(0, Math.min(canvas.height - 1, Math.floor(ly)))
+  };
+}
 
-  os.handleMouseMove(Math.floor(clampedX), Math.floor(clampedY));
+window.addEventListener('mousemove', (e) => {
+  if (e.movementX !== 0 || e.movementY !== 0) {
+    isTouchMode = false;
+  }
+  const { x, y } = getLogicalCoords(e.clientX, e.clientY);
+  mouseX = x;
+  mouseY = y;
+  os.handleMouseMove(x, y);
 });
 
 window.addEventListener('contextmenu', (e) => {
@@ -41,7 +45,98 @@ window.addEventListener('contextmenu', (e) => {
 });
 
 window.addEventListener('mousedown', (e) => {
-  os.handleMouseDown(Math.floor(mouseX), Math.floor(mouseY), e.button, e.shiftKey, e.ctrlKey || e.metaKey);
+  if (!isTouchMode) {
+    const { x, y } = getLogicalCoords(e.clientX, e.clientY);
+    mouseX = x;
+    mouseY = y;
+    os.handleMouseDown(x, y, e.button, e.shiftKey, e.ctrlKey || e.metaKey);
+  }
+});
+
+// Touch event handling for Phones & Tablets
+let touchStartX = 0;
+let touchStartY = 0;
+let prevTouchY = 0;
+let touchMoved = false;
+let isLongPressed = false;
+let longPressTimer: any = null;
+
+canvas.addEventListener('touchstart', (e: TouchEvent) => {
+  if (e.touches.length !== 1) return;
+  isTouchMode = true;
+  const touch = e.touches[0];
+  const { x, y } = getLogicalCoords(touch.clientX, touch.clientY);
+  touchStartX = x;
+  touchStartY = y;
+  prevTouchY = y;
+  touchMoved = false;
+  isLongPressed = false;
+
+  mouseX = x;
+  mouseY = y;
+
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+  }
+
+  // Touching and holding equals right-clicking
+  longPressTimer = setTimeout(() => {
+    isLongPressed = true;
+    os.handleTouchHold(touchStartX, touchStartY);
+  }, 450);
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e: TouchEvent) => {
+  if (e.touches.length !== 1) return;
+  e.preventDefault();
+  const touch = e.touches[0];
+  const { x, y } = getLogicalCoords(touch.clientX, touch.clientY);
+  const dist = Math.hypot(x - touchStartX, y - touchStartY);
+
+  if (dist > 6) {
+    touchMoved = true;
+    if (!isLongPressed && longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+      // Scroll desktop vertically if moving without holding
+      const dy = y - prevTouchY;
+      os.handleScroll(dy, x, y);
+    } else if (isLongPressed) {
+      // Moving finger after holding moves the file/folder
+      os.handleTouchMoveDrag(x, y);
+    }
+  }
+
+  prevTouchY = y;
+  mouseX = x;
+  mouseY = y;
+}, { passive: false });
+
+canvas.addEventListener('touchend', (_e: TouchEvent) => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+
+  if (!isLongPressed && !touchMoved) {
+    // Single touch opens file/folder once or clicks UI
+    os.handleTouchTap(touchStartX, touchStartY);
+  } else if (isLongPressed) {
+    os.handleMouseUp();
+  }
+
+  isLongPressed = false;
+  touchMoved = false;
+}, { passive: false });
+
+canvas.addEventListener('touchcancel', () => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  os.handleMouseUp();
+  isLongPressed = false;
+  touchMoved = false;
 });
 
 window.addEventListener('keydown', (e) => {
@@ -56,7 +151,9 @@ window.addEventListener('paste', (e) => {
 });
 
 window.addEventListener('mouseup', () => {
-  os.handleMouseUp();
+  if (!isTouchMode) {
+    os.handleMouseUp();
+  }
 });
 
 window.addEventListener('blur', () => {
@@ -77,6 +174,8 @@ window.addEventListener('wheel', (e) => {
 });
 
 function drawCursor() {
+  if (isTouchMode) return;
+
   ctx.fillStyle = '#FFF';
   ctx.strokeStyle = '#000';
   
