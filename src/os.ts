@@ -592,7 +592,7 @@ export class OS {
     // Draw sub-menu if Zoom is hovered
     if (this.contextMenu.hoveredIndex !== -1 && this.contextMenu.options[this.contextMenu.hoveredIndex] === 'Zoom') {
       const subOptions = this.getZoomOptions();
-      const subWidth = 60;
+      const subWidth = 70;
       const subHeight = subOptions.length * 20 + 4;
       let smx = mx + menuWidth;
       let smy = my + this.contextMenu.hoveredIndex * 20;
@@ -1037,24 +1037,10 @@ export class OS {
     if (mx + menuWidth > this.width) mx = this.width - menuWidth;
     if (my + menuHeight > this.height) my = this.height - menuHeight;
 
-    // Check main menu
-    if (x >= mx && x <= mx + menuWidth && y >= my && y <= my + menuHeight) {
-      const clickedIdx = Math.floor((y - my - 2) / 20);
-      if (clickedIdx >= 0 && clickedIdx < this.contextMenu.options.length) {
-        const option = this.contextMenu.options[clickedIdx];
-        const isDisabled = option === 'Paste' && !this.clipboard;
-        if (option !== 'Zoom' && !isDisabled) {
-          this.executeContextMenuOption(option);
-          this.contextMenu = null;
-        }
-        return;
-      }
-    }
-
-    // Check sub-menu if Zoom is hovered
+    // Check sub-menu FIRST if Zoom submenu is open
     if (this.contextMenu.hoveredIndex !== -1 && this.contextMenu.options[this.contextMenu.hoveredIndex] === 'Zoom') {
       const subOptions = this.getZoomOptions();
-      const subWidth = 60;
+      const subWidth = 70;
       const subHeight = subOptions.length * 20 + 4;
       let smx = mx + menuWidth;
       let smy = my + this.contextMenu.hoveredIndex * 20;
@@ -1068,6 +1054,26 @@ export class OS {
           this.contextMenu = null;
           return;
         }
+      }
+    }
+
+    // Check main menu
+    if (x >= mx && x <= mx + menuWidth && y >= my && y <= my + menuHeight) {
+      const clickedIdx = Math.floor((y - my - 2) / 20);
+      if (clickedIdx >= 0 && clickedIdx < this.contextMenu.options.length) {
+        const option = this.contextMenu.options[clickedIdx];
+        const isDisabled = option === 'Paste' && !this.clipboard;
+        if (option === 'Zoom') {
+          // Open the Zoom submenu on tap / click
+          this.contextMenu.hoveredIndex = clickedIdx;
+          this.contextMenu.hoveredSubIndex = -1;
+          return;
+        }
+        if (!isDisabled) {
+          this.executeContextMenuOption(option);
+          this.contextMenu = null;
+        }
+        return;
       }
     }
     
@@ -1942,7 +1948,7 @@ export class OS {
       // Check if we are over the sub-menu if Zoom is hovered
       if (this.contextMenu.hoveredIndex !== -1 && this.contextMenu.options[this.contextMenu.hoveredIndex] === 'Zoom') {
         const subOptions = this.getZoomOptions();
-        const subWidth = 60;
+        const subWidth = 70;
         const subHeight = subOptions.length * 20 + 4;
         let smx = mx + menuWidth;
         let smy = my + this.contextMenu.hoveredIndex * 20;

@@ -65,31 +65,24 @@
 
         let logicalWidth;
         let logicalHeight;
-        let cssScale;
+        let integerScale;
 
         if (manualScaleOverride) {
-          cssScale = manualScaleOverride;
-          logicalWidth = Math.floor(cssWidth / cssScale);
-          logicalHeight = Math.floor(cssHeight / cssScale);
+          integerScale = Math.max(1, Math.round(manualScaleOverride));
+          logicalWidth = Math.floor(cssWidth / integerScale);
+          logicalHeight = Math.floor(cssHeight / integerScale);
         } else {
-          // Normal mode:
+          // Normal mode: strict whole integer scaling (1x, 2x, 3x, 4x, etc.)
           if (isPortrait) {
-            // Portrait: exactly 3 items fit across the screen (3 * 105 = 315px -> 320px)
-            logicalWidth = 320;
-            cssScale = cssWidth / logicalWidth;
-            logicalHeight = Math.max(180, Math.floor(cssHeight / cssScale));
+            // Target 3 items across (base 320px width)
+            integerScale = Math.max(1, Math.floor(cssWidth / 320));
+            logicalWidth = Math.floor(cssWidth / integerScale);
+            logicalHeight = Math.floor(cssHeight / integerScale);
           } else {
-            // Landscape: exactly 6 items fit across the screen (6 * 105 = 630px -> 640px)
-            const integerScale = Math.max(1, Math.min(Math.floor(cssWidth / 640), Math.floor(cssHeight / 340)));
-            if (cssWidth < 640 || cssHeight < 340) {
-              logicalWidth = 640;
-              cssScale = cssWidth / 640;
-              logicalHeight = Math.max(180, Math.floor(cssHeight / cssScale));
-            } else {
-              cssScale = integerScale;
-              logicalWidth = Math.floor(cssWidth / cssScale);
-              logicalHeight = Math.floor(cssHeight / cssScale);
-            }
+            // Target 6 items across (base 640x340)
+            integerScale = Math.max(1, Math.min(Math.floor(cssWidth / 640), Math.floor(cssHeight / 340)));
+            logicalWidth = Math.floor(cssWidth / integerScale);
+            logicalHeight = Math.floor(cssHeight / integerScale);
           }
         }
 
@@ -104,13 +97,13 @@
           detail: { 
             width: logicalWidth, 
             height: logicalHeight, 
-            scale: cssScale,
+            scale: integerScale,
             zoomMode: currentZoomMode
           } 
         }));
 
-        canvas.style.width = (logicalWidth * cssScale) + 'px';
-        canvas.style.height = (logicalHeight * cssScale) + 'px';
+        canvas.style.width = (logicalWidth * integerScale) + 'px';
+        canvas.style.height = (logicalHeight * integerScale) + 'px';
       }
       window.addEventListener('resize', updateScale);
       updateScale();

@@ -1,4 +1,23 @@
-# Rogue-8 — standing rules
+# PXLRogue — standing rules
+
+## Where everything is
+
+The whole project lives in this one folder. `build/` holds the sources,
+the four test suites and the sprite tools; everything beside it is what
+the webpage serves:
+
+    index.html          built by build/build.py - never edit by hand
+    spritesheet.png     the graphics, painted by hand
+    PXLRogue_splash.png the title screen
+    favicon.ico         the tab icon
+    build/              sources, tests, gen_atlas.py, migrate_sheet.py
+
+**Never hand-edit `index.html`.** It is generated, and the next build
+overwrites it. A title screen was once written straight into it and came
+within one build of being lost. Anything that has to survive goes in
+`build/part*.js` or in the template in `build/build.py`; `build.py`
+refuses to write a file that has lost the title screen.
+
 
 Read this before touching anything. These are the constraints the project
 is built on, in the order they matter.
@@ -10,7 +29,7 @@ beside the HTML. Gulli paints it by hand, and a repaint must show up in
 the game on reload with no build step at all.
 
 - **Never bake the sheet into the HTML.** No `data:image/png;base64` in
-  `rogue8.html` or `playtest.html`, ever. `build.py` and
+  `index.html` or `playtest.html`, ever. `build.py` and
   `build_playtest.py` both refuse to write a file that contains one — do
   not "fix" that check by removing it.
 - **Never overwrite `spritesheet.png` with a generated one.** The only
@@ -20,7 +39,7 @@ the game on reload with no build step at all.
 - `build/atlas.png` is throwaway output from `gen_atlas.py` — placeholder
   art for cells nobody has painted yet. It is not the game's graphics and
   must never be copied over `spritesheet.png`.
-- `rogue8.html` and `spritesheet.png` travel together. Moving one without
+- `index.html` and `spritesheet.png` travel together. Moving one without
   the other gives a black screen with a line of text saying so.
 
 ### Changing the sprite layout
@@ -43,8 +62,10 @@ painted in. Ask before assuming which layout that was.
 
 ## Building
 
-    python3 build/build.py            # rogue8.html
-    python3 build/build_playtest.py   # playtest.html
+    cd build
+    python3 build.py            # index.html
+    python3 build_playtest.py   # playtest.html
+    node test.js  node test_rules.js  node test_render.js  node test_sound.js
 
 Neither reads the PNG except to check it is there and the right size.
 
