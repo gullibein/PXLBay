@@ -135,6 +135,15 @@ export class OS {
     } else if (scale !== undefined && scale > 0) {
       this.currentZoom = `${Math.round(scale)}x`;
     }
+
+    if (this.height > this.width) {
+      // Portrait: 3 columns fit horizontally
+      this.cellWidth = Math.max(50, Math.floor(this.width / 3));
+    } else {
+      // Landscape: 6 columns fit horizontally
+      this.cellWidth = Math.max(50, Math.min(105, Math.floor(this.width / 6)));
+    }
+
     this.clampScroll();
   }
 
@@ -1157,10 +1166,13 @@ export class OS {
         this.startRename(newNode.id, newNode.name);
         break;
       case 'Add file':
-        const w = 240;
+        const w = Math.min(240, this.width - 16);
         const h = 125;
         const mx = Math.floor((this.width - w) / 2);
         const my = Math.floor((this.height - h) / 2);
+        const btnW = Math.min(80, Math.floor((w - 36) / 2));
+        const okX = mx + 12;
+        const cancelX = mx + w - 12 - btnW;
         this.addFileModal = {
           name: '',
           url: '',
@@ -1175,16 +1187,19 @@ export class OS {
           rect: { x: mx, y: my, w, h },
           urlInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
           nameInputRect: { x: mx + 12, y: my + 60, w: w - 24, h: 16 },
-          okBtnRect: { x: mx + 30, y: my + 94, w: 80, h: 20 },
-          cancelBtnRect: { x: mx + 130, y: my + 94, w: 80, h: 20 }
+          okBtnRect: { x: okX, y: my + 94, w: btnW, h: 20 },
+          cancelBtnRect: { x: cancelX, y: my + 94, w: btnW, h: 20 }
         };
         break;
       case 'Edit file':
         if (file && !file.isDirectory) {
-          const w = 240;
-          const h = 125;
-          const mx = Math.floor((this.width - w) / 2);
-          const my = Math.floor((this.height - h) / 2);
+          const ew = Math.min(240, this.width - 16);
+          const eh = 125;
+          const emx = Math.floor((this.width - ew) / 2);
+          const emy = Math.floor((this.height - eh) / 2);
+          const eBtnW = Math.min(80, Math.floor((ew - 36) / 2));
+          const eOkX = emx + 12;
+          const eCancelX = emx + ew - 12 - eBtnW;
           this.addFileModal = {
             name: file.name,
             url: file.url || '',
@@ -1196,11 +1211,11 @@ export class OS {
             nameSelEnd: null,
             urlSelStart: null,
             urlSelEnd: null,
-            rect: { x: mx, y: my, w, h },
-            urlInputRect: { x: mx + 12, y: my + 30, w: w - 24, h: 16 },
-            nameInputRect: { x: mx + 12, y: my + 60, w: w - 24, h: 16 },
-            okBtnRect: { x: mx + 30, y: my + 94, w: 80, h: 20 },
-            cancelBtnRect: { x: mx + 130, y: my + 94, w: 80, h: 20 },
+            rect: { x: emx, y: emy, w: ew, h: eh },
+            urlInputRect: { x: emx + 12, y: emy + 30, w: ew - 24, h: 16 },
+            nameInputRect: { x: emx + 12, y: emy + 60, w: ew - 24, h: 16 },
+            okBtnRect: { x: eOkX, y: emy + 94, w: eBtnW, h: 20 },
+            cancelBtnRect: { x: eCancelX, y: emy + 94, w: eBtnW, h: 20 },
             editingFileId: file.id
           };
         }
@@ -1228,6 +1243,9 @@ export class OS {
         break;
       case 'Copy':
         this.clipboard = { ids: new Set(this.selectedIds), type: 'copy' };
+        break;
+      case 'Cut':
+        this.clipboard = { ids: new Set(this.selectedIds), type: 'cut' };
         break;
       case 'Paste':
         if (this.clipboard) {
@@ -1295,10 +1313,11 @@ export class OS {
       message = `Delete ${this.selectedIds.size} items?`;
     }
 
-    const w = 200;
+    const w = Math.min(200, this.width - 16);
     const h = 80;
     const x = Math.floor((this.width - w) / 2);
     const y = Math.floor((this.height - h) / 2);
+    const btnW = Math.min(70, Math.floor((w - 30) / 2));
 
     this.modal = {
       message,
@@ -1308,16 +1327,17 @@ export class OS {
         this.refreshFiles();
       },
       rect: { x, y, w, h },
-      confirmBtnRect: { x: x + 20, y: y + 45, w: 70, h: 20 },
-      cancelBtnRect: { x: x + 110, y: y + 45, w: 70, h: 20 }
+      confirmBtnRect: { x: x + 10, y: y + 45, w: btnW, h: 20 },
+      cancelBtnRect: { x: x + w - 10 - btnW, y: y + 45, w: btnW, h: 20 }
     };
   }
 
   private showCannotEditAlert() {
-    const w = 220;
+    const w = Math.min(220, this.width - 16);
     const h = 75;
     const x = Math.floor((this.width - w) / 2);
     const y = Math.floor((this.height - h) / 2);
+    const btnW = Math.min(70, w - 24);
 
     this.modal = {
       message: 'You cannot edit this file',
@@ -1326,7 +1346,7 @@ export class OS {
       },
       isAlert: true,
       rect: { x, y, w, h },
-      confirmBtnRect: { x: x + 75, y: y + 42, w: 70, h: 20 }
+      confirmBtnRect: { x: x + Math.floor((w - btnW) / 2), y: y + 42, w: btnW, h: 20 }
     };
   }
 

@@ -74,12 +74,16 @@
         } else {
           // Normal mode: strict whole integer scaling (1x, 2x, 3x, 4x, etc.)
           if (isPortrait) {
-            // Target 3 items across (base 320px width)
-            integerScale = Math.max(1, Math.floor(cssWidth / 320));
+            // On mobile portrait, 2x integer scale makes icons/text larger and easily readable
+            if (cssWidth < 600) {
+              integerScale = 2;
+            } else {
+              integerScale = Math.max(2, Math.floor(cssWidth / 320));
+            }
             logicalWidth = Math.floor(cssWidth / integerScale);
             logicalHeight = Math.floor(cssHeight / integerScale);
           } else {
-            // Target 6 items across (base 640x340)
+            // Target 6 items across in landscape (base 640x340)
             integerScale = Math.max(1, Math.min(Math.floor(cssWidth / 640), Math.floor(cssHeight / 340)));
             logicalWidth = Math.floor(cssWidth / integerScale);
             logicalHeight = Math.floor(cssHeight / integerScale);
