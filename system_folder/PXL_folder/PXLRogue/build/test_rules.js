@@ -247,8 +247,15 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   check(dd.bad.length === 0, 'doors: ' + [...new Set(dd.bad)].slice(0, 3).join('; '));
 
   const bw = ctx.bowsOK();
-  console.log('bows         : ' + bw.ways + ' - all three take the same arrows');
+  console.log('bows         : ' + bw.ways + ' - all four take the same arrows');
   check(bw.bad.length === 0, 'bows: ' + [...new Set(bw.bad)].slice(0, 4).join('; '));
+
+  const bfire = ctx.bowOfFireOK(20);
+  console.log('bow of fire  : ' + bfire.lit + '/' + bfire.hits + ' shots set their mark alight ' +
+    'and ' + bfire.hitFires + ' left the square burning; ' + bfire.missFires + '/' +
+    bfire.misses + ' wide shots lit where they fell; a plain bow lit nothing in ' +
+    bfire.plain + ', and an unlearned one nothing in ' + bfire.unknown);
+  check(bfire.bad.length === 0, 'bow of fire: ' + [...new Set(bfire.bad)].slice(0, 4).join('; '));
 
   const sb3 = ctx.spiderBowOK(20);
   console.log('bow of the spider: web on ' + sb3.webs + ' of ' + sb3.shots + ' shots (' +
@@ -445,6 +452,11 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
     '% at 20; a frightened creature ' + st.scared + '% against a calm ' + st.calm + '%');
   check(st.bad.length === 0, 'stumbling: ' + [...new Set(st.bad)].slice(0, 4).join('; '));
 
+  const sf = ctx.stumbleFleeingOnlyOK();
+  console.log('turning tail : ' + sf.ways + ' - a step towards a second creature is ' +
+    'closing with it, not running away, and cannot trip you');
+  check(sf.bad.length === 0, 'fleeing: ' + [...new Set(sf.bad)].slice(0, 3).join('; '));
+
   const sr = ctx.seerOK();
   console.log('the seer     : ' + ctx.RING_SEER_TURNS + ' turns a charge; it found ' +
     sr.doors + '/' + sr.tried + ' hidden seams and ' + sr.traps + '/' + sr.tried +
@@ -590,6 +602,18 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   console.log('the squib    : ' + (s.length ? s.length + ' problems' :
     'scroll, wand and crystal all fizzle, and work again once it lifts'));
   check(s.length === 0, 'squib: ' + [...new Set(s)].slice(0, 3).join('; '));
+
+  const ms = ctx.monsterSightOK();
+  console.log('monster sight: felt ' + ms.near + ' of ' + ms.walled + ' creatures through ' +
+    'stone within ' + ctx.MONSIGHT_RANGE + ' squares, none beyond it, for ' +
+    ctx.MONSIGHT_TURNS + ' turns - and put not one square on your map');
+  check(ms.bad.length === 0, 'monster sight: ' + [...new Set(ms.bad)].slice(0, 3).join('; '));
+
+  const mp = ctx.mapScrollOK();
+  console.log('the map      : over ' + mp.tried + ' floors it drew the shape of the place ' +
+    'and every chest, left every loose thing off, and told nothing of the rooms ' +
+    'that were walled up on purpose');
+  check(mp.bad.length === 0, 'the map: ' + [...new Set(mp.bad)].slice(0, 3).join('; '));
 }
 
 /* --- holes: edged, not cornered, and they ask first ------------------ */
@@ -705,6 +729,45 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   console.log('runed stones : ' + (sl.length ? sl.length + ' problems' :
     'the five looks are dealt afresh each run, no two alike'));
   check(sl.length === 0, 'runestone looks: ' + [...new Set(sl)].slice(0, 3).join('; '));
+}
+
+/* --- a pile of stones, and a dragon caught out ----------------------- */
+{
+  let sp = ['not tested'];
+  for (let s = 0; s < 6; s++) {
+    ctx.bootTest(9400 + s); ctx.enterLevel(3);
+    const got = ctx.stonePileOK();
+    if (got.length && got[0].indexOf('no') === 0) continue;
+    sp = got; break;
+  }
+  console.log('a pile of stones: ' + (sp.length ? sp.length + ' problems' :
+    'one thrown onto another makes two on the square'));
+  check(sp.length === 0, 'stone pile: ' + [...new Set(sp)].slice(0, 3).join('; '));
+
+  let sf = ['not tested'];
+  for (let s = 0; s < 8; s++) {
+    ctx.bootTest(9500 + s); ctx.enterLevel(4);
+    const got = ctx.surprisedHoldsFireOK();
+    if (got.length && got[0].indexOf('no ') === 0) continue;
+    sf = got; break;
+  }
+  console.log('caught flat footed: ' + (sf.length ? sf.length + ' problems' :
+    'a surprised half dragon holds its fire, and shoots again once it recovers'));
+  check(sf.length === 0, 'surprised: ' + [...new Set(sf)].slice(0, 3).join('; '));
+}
+
+/* --- fire and water --------------------------------------------------- */
+{
+  let fw = ['not tested'];
+  for (let s = 0; s < 12; s++) {
+    ctx.bootTest(9700 + s); ctx.enterLevel(3);
+    const got = ctx.fireAndWaterOK();
+    if (got.length && got[0].indexOf('no water') === 0) continue;
+    fw = got; break;
+  }
+  console.log('fire and water: ' + (fw.length ? fw.length + ' problems' :
+    'water will not catch, nothing standing in it catches, and a wade puts you out'));
+  check(fw.length === 0, 'fire and water: ' + [...new Set(fw)].slice(0, 3).join('; '));
 }
 
 if (errors.length) {

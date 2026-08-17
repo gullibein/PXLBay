@@ -31,10 +31,22 @@ HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<!-- Added to the home screen, these make it start with no browser
+     furniture at all - which on an iPhone is the only way to the
+     whole screen, since Safari there has no fullscreen for
+     anything that is not a video. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PXLRogue">
+<meta name="theme-color" content="#05060d">
 <title>Rogue-8 playtest</title>
 <style>
-  html,body{margin:0;padding:0;height:100%%;background:#05060d;overflow:hidden;}
+  /* dvh is the height that is actually showing once the address bar
+     has slid away; the plain percentage is the fallback. */
+  html,body{margin:0;padding:0;height:100%%;height:100dvh;
+            background:#05060d;overflow:hidden;overscroll-behavior:none;}
   body{display:flex;align-items:center;justify-content:center;}
   canvas{
     image-rendering:pixelated;
@@ -43,6 +55,15 @@ HTML = """<!DOCTYPE html>
     -ms-interpolation-mode:nearest-neighbor;
     display:block;
     background:#0b0d1c;
+    /* the game draws its own pointer, off the sheet, at 230x128 */
+    cursor:none;
+    /* A finger works the controls, so the browser must not also read it
+       as scrolling, zooming, selecting or a link being tapped. */
+    touch-action:none;
+    -webkit-user-select:none;
+    user-select:none;
+    -webkit-touch-callout:none;
+    -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
   /* The picker is ordinary HTML over the canvas.  It is scaffolding for

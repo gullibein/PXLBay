@@ -1522,6 +1522,37 @@ spr('pan_cross', [
     "...7....",
     "..777..."])
 
+# The mouse pointer, drawn by the game at its own resolution: the browser's
+# cursor is hidden over the canvas so the arrow is a sprite like everything
+# else, and stays square however far the picture is blown up.  The point of
+# it is the top-left pixel.
+#
+# Only the top-left MOUSE_PX square of the cell is ever drawn - a whole
+# 8x8 of arrow is the size of a monster - so keep the arrow inside those
+# five pixels.  The pack on mouse_get rides in the rest of the top row,
+# which is drawn with it.
+spr('mouse', [
+    "7.......",
+    "7w7.....",
+    "7ww7....",
+    "7w777...",
+    "77......",
+    "........",
+    "........",
+    "........"])
+
+# and the same arrow with a small pack beside it, shown where a click
+# would pick something up
+spr('mouse_get', [
+    "7....kk.",
+    "7w7.k77k",
+    "7ww7kkkk",
+    "7w777k7k",
+    "77...kkk",
+    "........",
+    "........",
+    "........"])
+
 spr('cursor', [
     "77....77",
     "7......7",
@@ -1960,7 +1991,7 @@ LAYOUT = [
     ('effects',   ['flame', 'frost', 'magic', 'gas', 'icecube',
                    'flash1', 'flash2', 'flash3']),
 
-    ('interface', ['cursor', 'point', 'heart', 'pan_cross',
+    ('interface', ['mouse', 'mouse_get', 'cursor', 'point', 'heart', 'pan_cross',
                    'mk_z', 'mk_q', 'mk_x', 'mk_ally']),
 ]
 

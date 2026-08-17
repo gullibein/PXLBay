@@ -73,13 +73,21 @@
           logicalHeight = Math.floor(cssHeight / integerScale);
         } else {
           // Normal mode: strict whole integer scaling (1x, 2x, 3x, 4x, etc.)
-          if (isPortrait) {
-            // Target 3 items across with fixed 105px spacing (3 * 105 = 315px -> 320px base)
+          const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+          const isPhone = (isTouch && Math.min(cssWidth, cssHeight) <= 500) || /Android|iPhone|iPod|Mobile/i.test(navigator.userAgent) || (isPortrait && cssWidth <= 500);
+
+          if (isPhone) {
+            // Mobile phones start in 2x integer resolution for crisp, readable retro UI
+            integerScale = 2;
+            logicalWidth = Math.floor(cssWidth / integerScale);
+            logicalHeight = Math.floor(cssHeight / integerScale);
+          } else if (isPortrait) {
+            // Tablets / larger portrait displays
             integerScale = Math.max(1, Math.floor(cssWidth / 320));
             logicalWidth = Math.floor(cssWidth / integerScale);
             logicalHeight = Math.floor(cssHeight / integerScale);
           } else {
-            // Target 6 items across with fixed 105px spacing (6 * 105 = 630px -> 640px base)
+            // Desktop / landscape displays (base 640x340)
             integerScale = Math.max(1, Math.min(Math.floor(cssWidth / 640), Math.floor(cssHeight / 340)));
             logicalWidth = Math.floor(cssWidth / integerScale);
             logicalHeight = Math.floor(cssHeight / integerScale);

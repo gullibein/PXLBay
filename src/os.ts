@@ -26,7 +26,9 @@ export class OS {
   
   private readonly iconWidth = 32;
   private readonly iconHeight = 24;
-  private readonly cellWidth = 105;
+  private get cellWidth(): number {
+    return this.width < 320 ? Math.min(105, Math.floor(this.width / 2)) : 105;
+  }
   private readonly cellHeight = 64;
   private readonly marginY = 8;
 
@@ -597,8 +599,8 @@ export class OS {
       let smx = mx + menuWidth;
       let smy = my + this.contextMenu.hoveredIndex * 20;
       
-      if (smx + subWidth > this.width) smx = mx - subWidth;
-      if (smy + subHeight > this.height) smy = this.height - subHeight;
+      if (smx + subWidth > this.width) smx = Math.max(0, mx - subWidth);
+      if (smy + subHeight > this.height) smy = Math.max(0, this.height - subHeight);
 
       this.drawMenuBox(ctx, smx, smy, subWidth, subHeight, subOptions, this.contextMenu.hoveredSubIndex);
     }
@@ -1044,8 +1046,8 @@ export class OS {
       const subHeight = subOptions.length * 20 + 4;
       let smx = mx + menuWidth;
       let smy = my + this.contextMenu.hoveredIndex * 20;
-      if (smx + subWidth > this.width) smx = mx - subWidth;
-      if (smy + subHeight > this.height) smy = this.height - subHeight;
+      if (smx + subWidth > this.width) smx = Math.max(0, mx - subWidth);
+      if (smy + subHeight > this.height) smy = Math.max(0, this.height - subHeight);
 
       if (x >= smx && x <= smx + subWidth && y >= smy && y <= smy + subHeight) {
         const clickedIdx = Math.floor((y - smy - 2) / 20);
@@ -1963,8 +1965,8 @@ export class OS {
         const subHeight = subOptions.length * 20 + 4;
         let smx = mx + menuWidth;
         let smy = my + this.contextMenu.hoveredIndex * 20;
-        if (smx + subWidth > this.width) smx = mx - subWidth;
-        if (smy + subHeight > this.height) smy = this.height - subHeight;
+        if (smx + subWidth > this.width) smx = Math.max(0, mx - subWidth);
+        if (smy + subHeight > this.height) smy = Math.max(0, this.height - subHeight);
 
         if (x >= smx && x <= smx + subWidth && y >= smy && y <= smy + subHeight) {
           const idx = Math.floor((y - smy - 2) / 20);

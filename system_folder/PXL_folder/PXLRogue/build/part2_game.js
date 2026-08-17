@@ -106,7 +106,7 @@ function freshG() {
     level: null, floors: {}, pendingFall: 0, queuePick: null, pickJob: null, beat: 0,
     ask: null,
     perkPick: null, choice: null, pause: null, look: null,
-    titleMenu: null,
+    titleMenu: null, walk: null, ctx: null, drag: null, waiting: null,
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
@@ -793,7 +793,7 @@ function newPlayer() {
     eq: { rh: null, body: null, lh: null, head: null, feet: null },
     amulet: 0,
     blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
-    seeinv: 0, detmon: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
+    seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
     unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, webbed: 0,
     runSteps: 0, seer: 0, warp: null,
     statWas: null, statLit: {},
@@ -1132,6 +1132,165 @@ function cursesOnYou() {
   return out;
 }
 
+/* ======================================================= going somewhere
+   A click on a square sets off a walk: the cheapest route in turns, not
+   in squares.  Water is thigh deep and costs you every second step, so a
+   long way round dry ground can be quicker than a short wade - and the
+   other way about, which is why it is measured rather than avoided.
+
+   The route goes nowhere you can see would hurt you: a trap you have
+   found, a hole, a wall of fire or ice, a barrel of powder.  It cannot
+   route round what you have not seen, and it does not pretend to. */
+var STEP_COST = 2;                 /* an ordinary square, in half-turns */
+function stepCost(x, y) {
+  if (!walkable(x, y)) return 0;
+  var t = tileAt(x, y);
+  if (t === HOLE) return 0;
+  if (barrelAt(x, y)) return 0;
+  var tr = trapAtLevel(L, x, y);
+  if (tr && tr.found && !tr.spent) return 0;     /* one you can see */
+  if (!inWater(x, y)) return STEP_COST;
+  /* Wading: every WADE_EVERY-th step through it costs the turn as well,
+     so a square of water is worth that much more than a square of
+     floor.  Riverborn is at home in it and pays nothing extra. */
+  if (hasPerk('riverborn')) return STEP_COST;
+  return STEP_COST + Math.round(STEP_COST / WADE_EVERY);
+}
+/* Dijkstra, since the squares do not all cost the same.  Returns the
+   path from where you are to the square asked for, not including the
+   square you are standing on, or null if there is no way. */
+function findPath(tx, ty, opts) {
+  opts = opts || {};
+  if (tx === P.x && ty === P.y) return [];
+  var n = MAP_W * MAP_H, dist = new Int32Array(n), from = new Int32Array(n), i;
+  for (i = 0; i < n; i++) { dist[i] = 2147483647; from[i] = -1; }
+  var start = P.y * MAP_W + P.x, goal = ty * MAP_W + tx;
+  dist[start] = 0;
+  /* a plain binary heap: the floors are small enough that this is
+     nothing, and it keeps the walk instant however far you click */
+  var heap = [[0, start]];
+  function push(d, k) {
+    heap.push([d, k]);
+    var c = heap.length - 1;
+    while (c > 0) {
+      var par = (c - 1) >> 1;
+      if (heap[par][0] <= heap[c][0]) break;
+      var tmp = heap[par]; heap[par] = heap[c]; heap[c] = tmp; c = par;
+    }
+  }
+  function pop() {
+    var top = heap[0], last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      var c = 0;
+      for (;;) {
+        var l = c * 2 + 1, r = l + 1, s = c;
+        if (l < heap.length && heap[l][0] < heap[s][0]) s = l;
+        if (r < heap.length && heap[r][0] < heap[s][0]) s = r;
+        if (s === c) break;
+        var tmp2 = heap[s]; heap[s] = heap[c]; heap[c] = tmp2; c = s;
+      }
+    }
+    return top;
+  }
+  while (heap.length) {
+    var top2 = pop(), d0 = top2[0], k0 = top2[1];
+    if (d0 > dist[k0]) continue;
+    if (k0 === goal) break;
+    var x0 = k0 % MAP_W, y0 = (k0 / MAP_W) | 0, q;
+    for (q = 0; q < DIR4.length; q++) {
+      var nx = x0 + DIR4[q][0], ny = y0 + DIR4[q][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var k1 = ny * MAP_W + nx;
+      var c1 = stepCost(nx, ny);
+      /* Walking up to something rather than onto it does not care
+         whether the square itself can be stood on - a locked door is
+         asked for exactly so you can go and try the handle. */
+      if (!c1) {
+        if (!opts.stopShort || k1 !== goal) continue;
+        c1 = STEP_COST;
+      }
+      /* Something standing in the way is in the way - unless it is the
+         square you asked for, which is how you walk up to a monster. */
+      if (k1 !== goal && monAt(L, nx, ny)) continue;
+      if (dist[k0] + c1 < dist[k1]) {
+        dist[k1] = dist[k0] + c1;
+        from[k1] = k0;
+        push(dist[k1], k1);
+      }
+    }
+  }
+  if (dist[goal] === 2147483647) return null;
+  var path = [], at = goal;
+  while (at !== start) { path.push({ x: at % MAP_W, y: (at / MAP_W) | 0 }); at = from[at]; }
+  path.reverse();
+  /* Walking up to something rather than onto it: drop the last square. */
+  if (opts.stopShort) path.pop();
+  return path;
+}
+
+/* How far a square is from the nearest one you have seen.  Zero if you
+   have seen it yourself.  Beyond UNSEEN_REACH it stops counting, because
+   nothing further than that is worth pointing at. */
+function unseenReach(x, y) {
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 99;
+  if (L.flags[y * MAP_W + x] & F_SEEN) return 0;
+  for (var d = 1; d <= UNSEEN_REACH + 1; d++) {
+    for (var dy = -d; dy <= d; dy++) for (var dx = -d; dx <= d; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+      var nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      if (L.flags[ny * MAP_W + nx] & F_SEEN) return d;
+    }
+  }
+  return 99;
+}
+/* The square you can actually reach that comes nearest to the one you
+   pointed at.  Clicking into the dark is a guess - there may be no floor
+   there at all - so you walk as close as the map allows and stop. */
+function nearestApproach(tx, ty) {
+  var best = null, bestD = 1e9, i;
+  for (i = 0; i < L.tiles.length; i++) {
+    if (!(L.flags[i] & F_SEEN)) continue;
+    var x = i % MAP_W, y = (i / MAP_W) | 0;
+    if (!stepCost(x, y)) continue;
+    if (monAt(L, x, y)) continue;
+    var d = Math.max(Math.abs(x - tx), Math.abs(y - ty));
+    if (d >= bestD) continue;
+    if (d && !findPath(x, y, {})) continue;      /* no way to it */
+    bestD = d; best = { x: x, y: y };
+    if (!d) break;
+  }
+  return best;
+}
+
+/* Everything hostile that can see you at this moment. */
+function watchingNow() {
+  var out = [], i;
+  for (i = 0; i < L.mons.length; i++) {
+    var m = L.mons[i];
+    if (m.ally || m.disguise || m.state === 0) continue;
+    if (monSeesPlayer(m)) out.push(m);
+  }
+  return out;
+}
+/* Anything hostile that has just noticed you - which is what ends a
+   walk.  Something that was already watching when you set off does not:
+   a fight that has begun is one you are allowed to walk about in. */
+function watchedByFoe(known) {
+  for (var i = 0; i < L.mons.length; i++) {
+    var m = L.mons[i];
+    if (m.ally || m.disguise || m.state === 0) continue;
+    if (known && known.indexOf(m) >= 0) continue;
+    if (monSeesPlayer(m)) return m;
+  }
+  return null;
+}
+/* You cannot walk while something is holding you. */
+function heldFast() {
+  return P.frozen > 0 || P.held || P.webbed > 0 || P.iced > 0;
+}
+
 /* ------------------------------------------------- asking you first
    A hole in the floor is the one step you cannot take back, and you used
    to take it by leaning on an arrow key.  The question is raised as
@@ -1190,7 +1349,7 @@ function playerEffects() {
   if (P.seeinv) out.push(['seeing invisible (' + P.seeinv + ')', 'c']);
   if (P.unseen) out.push(['unseen (' + P.unseen + ')', 'c']);
   if (P.fireShield) out.push(['ringed in fire (' + P.fireShield + ')', 'O']);
-  if (P.detmon) out.push(['sensing monsters (' + P.detmon + ')', 'c']);
+  if (P.monsight) out.push(['monster sight (' + P.monsight + ')', 'c']);
   if (P.seer) out.push(['seeing all (' + P.seer + ')', 'P']);
   if (darkAt(P.x, P.y)) out.push([nightEyes() ? 'in the dark, and seeing'
                                               : 'in the dark: one square', nightEyes() ? 'c' : 'p']);
@@ -1390,7 +1549,7 @@ function packPlayer() {
 /* everything that has to survive, and nothing that does not */
 function packRun() {
   var g = {}, k;
-  var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1,
+  var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1, waiting: 1,
                box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
@@ -1469,7 +1628,15 @@ function slotLabel(i) {
    that happens stamps itself with that instant so the picture and the
    words arrive together. */
 function beatNow() { return Date.now() + (G.beat || 0); }
-function beatWait(ms) { G.beat = (G.beat || 0) + ms; }
+/* An auto-walk plays the same turn out, only faster: every wait in it is
+   scaled so the step, the lines of text and the creatures' own moves all
+   stay in step with each other rather than the walk running ahead of the
+   log.  Walking a square takes WALK_MS instead of a whole beat. */
+function beatScale() {
+  if (!G || !G.walk) return 1;
+  return Math.max(0.04, WALK_MS / BEAT);
+}
+function beatWait(ms) { G.beat = (G.beat || 0) + Math.round(ms * beatScale()); }
 
 /* ---------------------------------------------------------- messages */
 function msg(s, col) { G.msgq.push({ s: s, c: col || 'w', at: beatNow() }); }
@@ -2216,6 +2383,18 @@ function decorHides(x, y, Lv) {
 function dropNear(x, y, it) {
   var ring = [[0, 0]].concat(DIR4).concat([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
   var i, nx, ny;
+  /* A stone thrown onto a stone joins it.  Every square in the ring
+     having something on it used to mean the thing was simply lost, and
+     the commonest way to arrange that is to throw twice at the same
+     spot. */
+  for (i = 0; i < ring.length; i++) {
+    nx = x + ring[i][0]; ny = y + ring[i][1];
+    if (!walkable(nx, ny)) continue;
+    var there = itemAt(L, nx, ny);
+    if (!there || !stackable(there, it)) continue;
+    there.cnt = (there.cnt || 1) + (it.cnt || 1);
+    return true;
+  }
   /* first pass: somewhere clear of the scenery */
   for (i = 0; i < ring.length; i++) {
     nx = x + ring[i][0]; ny = y + ring[i][1];
@@ -2399,7 +2578,8 @@ function sightClear(x0, y0, x1, y1) {
 function markVis(x, y) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return;
   var i = y * MAP_W + x;
-  L.flags[i] |= F_VIS | F_SEEN;      /* secret doors are drawn as plain wall */
+  /* seen with your own eyes, so it is no longer only on a map */
+  L.flags[i] = (L.flags[i] | F_VIS | F_SEEN) & ~F_MAP;   /* secret doors draw as plain wall */
 }
 /* ------------------------------------------------------------ running
    Five steps in a row without striking anything and you are running
@@ -2432,10 +2612,37 @@ function battleNear() {
   return false;
 }
 function playerRunning() { return battleNear() && (P.runSteps || 0) >= RUN_AFTER; }
+/* Is this step running away?
+
+   Going over your own feet is something that happens when you turn your
+   back on a fight, so the step has to be a retreat from all of it.
+   Backing off one creature straight into the reach of another is not
+   fleeing - it is closing with the second one, and you are watching
+   where you put your feet the whole way.
+
+   Steps are up, down, left or right, so a step changes the distance to
+   anything by exactly one square either way; away from every one of
+   them is the whole test. */
+function stepIsFleeing(dx, dy) {
+  var nx = P.x + dx, ny = P.y + dy, any = false, i;
+  for (i = 0; i < L.mons.length; i++) {
+    var m = L.mons[i];
+    if (m.ally || m.state < 2) continue;
+    if (mdist(m) > BATTLE_NEAR) continue;
+    if (!monSeesPlayer(m)) continue;
+    if (!canSeeMon(m)) continue;
+    any = true;
+    var now = Math.abs(m.x - P.x) + Math.abs(m.y - P.y);
+    var soon = Math.abs(m.x - nx) + Math.abs(m.y - ny);
+    if (soon <= now) return false;
+  }
+  return any;
+}
 /* Called on every step you take.  Returns true if you went over, in
    which case the step is spent picking yourself up. */
-function playerStumbles() {
+function playerStumbles(dx, dy) {
   if (!playerRunning()) return false;
+  if (!stepIsFleeing(dx, dy)) return false;
   if (rnd(100) >= stumbleChance(effDex(), 0)) return false;
   P.runSteps = 0;
   msg('You are running too fast and stumble.', 'O');
@@ -2497,11 +2704,20 @@ function seerLook() {
 
 /* does this square have a floor of that room beside it? */
 function touchesRoom(idx, ri) {
-  var x = idx % MAP_W, y = (idx / MAP_W) | 0;
+  var W = MAP_W, RA = L.roomAt, x = idx % W, y = (idx / W) | 0;
+  /* The sight pass asks this of nearly every square it looks at, and
+     away from the very edge of the map none of the eight neighbours can
+     fall off it - so the bounds check, and walking a list of pairs to
+     get the offsets, are both work that need not happen. */
+  if (x > 0 && y > 0 && x < W - 1 && y < MAP_H - 1) {
+    return RA[idx - W - 1] === ri || RA[idx - W] === ri || RA[idx - W + 1] === ri ||
+           RA[idx - 1]     === ri ||                       RA[idx + 1]     === ri ||
+           RA[idx + W - 1] === ri || RA[idx + W] === ri || RA[idx + W + 1] === ri;
+  }
   for (var d = 0; d < 8; d++) {
     var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
-    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
-    if (L.roomAt[ny * MAP_W + nx] === ri) return true;
+    if (nx < 0 || ny < 0 || nx >= W || ny >= MAP_H) continue;
+    if (RA[ny * W + nx] === ri) return true;
   }
   return false;
 }
@@ -2558,7 +2774,7 @@ function computeVis() {
       reach = MAP_W + MAP_H;
     if (!seeInDark && (blind || L.darkMap[idx])) reach = DARK_RADIUS;
     if (dist > reach) continue;
-    if (sightClear(px, py, x, y)) F[idx] |= F_VIS | F_SEEN;
+    if (sightClear(px, py, x, y)) F[idx] = (F[idx] | F_VIS | F_SEEN) & ~F_MAP;
   }
   /* Light the wall faces bordering anything you can see, so a room never
      looks like it has holes punched in its outline.  Doors sit inside a
@@ -2580,15 +2796,29 @@ function computeVis() {
         var ni = ny * W + nx;
         if ((F[ni] & F_VIS) && !BLOCKS[T[ni]]) { lit = 1; break; }
       }
-      if (lit) F[j] |= F_VIS | F_SEEN;
+      if (lit) F[j] = (F[j] | F_VIS | F_SEEN) & ~F_MAP;
     }
   }
 }
-function canSeeMon(m) {
+function canSeeMonAt(m, x, y) {
   if (P.blind) return false;
-  if (!(L.flags[m.y * MAP_W + m.x] & F_VIS)) return false;
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return false;
+  if (!(L.flags[y * MAP_W + x] & F_VIS)) return false;
   if (m.invis && !P.seeinv && !hasProp('see invisible')) return false;
   return true;
+}
+/* Where it really is.  The rules always want this one; only the drawing
+   asks about the square it happens to be standing on at this instant of
+   the playback. */
+function canSeeMon(m) { return canSeeMonAt(m, m.x, m.y); }
+/* Felt rather than seen.  Monster sight reaches through stone, so no
+   line of sight is asked for and the dark is no object - but it reaches
+   only so far, and it finds creatures, never things.  Measured corner to
+   corner, so its edge is a square about you rather than a diamond: what
+   you watch is the ring of floor around you, walls and all. */
+function sensedMon(m) {
+  if (!(P.monsight > 0)) return false;
+  return Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y)) <= MONSIGHT_RANGE;
 }
 
 /* ---------------------------------------------------------- level flow */
@@ -2878,6 +3108,8 @@ function enterLevel(depth, how) {
   tidyCracks(L);
   edgeTheMoss(L);
   tidyMossEdges(L);
+  /* last of all, with nothing else left to move the stone about */
+  sealRock(L);
 
   if (hasPerk('antiquary')) P.freeIdent = 1;
 
@@ -3126,6 +3358,11 @@ function igniteMon(m, line) {
     if (canSeeMon(m)) msgFight('The flames wash over it.', '6', 'unburnt', '6', m);
     return 0;
   }
+  /* Standing in the water is the one place nothing catches. */
+  if (inWater(m.x, m.y)) {
+    if (canSeeMon(m)) msgFight('The water keeps it from catching.', 'c', 'wet', 'c', m);
+    return 0;
+  }
   var turns = BURN_MIN + rnd(BURN_MAX - BURN_MIN + 1);
   m.burn = Math.max(m.burn || 0, turns);
   hurtByPlayer(m);
@@ -3143,6 +3380,14 @@ function freezeMon(m, line) {
    the fire finished it, in which case the caller must stop touching it. */
 function burnTick(m) {
   if (!m.burn) return false;
+  /* Into the water and it is out.  Walking into a pool is the obvious
+     thing to do when you are alight, and it ought to work. */
+  if (inWater(m.x, m.y)) {
+    m.burn = 0;
+    if (canSeeMon(m)) msgFight(fightLine('', cap(monShort(m)), ' steps into the water.'),
+      'c', 'out', 'c', m);
+    return false;
+  }
   m.burn--;
   var d = roll(BURN_DAMAGE[0], BURN_DAMAGE[1]);
   m.hp -= d;
@@ -3599,7 +3844,10 @@ function knockBack(m, fromx, fromy) {
   if (!walkable(nx, ny) || monAt(L, nx, ny)) return 0;
   if (nx === P.x && ny === P.y) return 0;
   if (!m.anim) m.anim = [];
-  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
+  /* the fifth number is when it starts, the sixth how long it takes:
+     a hurried step is over in half the time */
+  m.anim.push([m.x, m.y, nx, ny, beatNow(),
+               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
   m.x = nx; m.y = ny;
   m.held = 0;
   if (P.heldBy === m) { P.held = 0; P.heldBy = null; }
@@ -3742,11 +3990,16 @@ function monstersMove() {
     watched = watched || canSeeMon(m);
 
     if ((m.hasted || (m.def.fly && rnd(100) < 35)) && L.mons.indexOf(m) >= 0) {
-      /* A second step is a second thing to see.  One beat between them:
-         the pause before the next creature comes afterwards, not twice
-         in the middle of this one's turn. */
-      if (watched) beatWait(BEAT_STEP);
+      /* A second step is a second thing to see, but it is not worth as
+         much of the turn as the first: something quick enough to move
+         twice should look quick.  Everything after the first step is
+         taken at half the pace - half the pause before it, and half the
+         time crossing the square - so two steps read as one hurried
+         creature rather than as two ordinary ones. */
+      if (watched) beatWait(Math.round(BEAT_STEP * EXTRA_STEP));
+      m.quickStep = 1;
       monOneMove(m);
+      m.quickStep = 0;
       if (G.dead) return;
       watched = watched || canSeeMon(m);
     }
@@ -4214,6 +4467,9 @@ function monWitch(m) {
 }
 
 function monRanged(m) {
+  /* Caught flat footed is caught flat footed: a half dragon that has
+     just been surprised does not calmly line up a fireball. */
+  if (m.surprised) return false;
   if (monWitch(m)) return true;
   if (monWeb(m)) return true;
   if (monFireball(m)) return true;
@@ -4607,7 +4863,10 @@ function tryMonStep(m, dx, dy) {
      one start time - so the first was thrown away and the pair replayed
      together after a pause, which looked exactly like teleporting. */
   if (!m.anim) m.anim = [];
-  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
+  /* the fifth number is when it starts, the sixth how long it takes:
+     a hurried step is over in half the time */
+  m.anim.push([m.x, m.y, nx, ny, beatNow(),
+               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
   /* And it faces the way it went.  The sprites are painted facing right,
      so this is only ever a mirror, and only for the creatures that have
      a front and a back worth speaking of.  Being shoved is not walking,
@@ -4871,7 +5130,7 @@ function upkeep() {
   }
 
   ['blind', 'conf', 'hallu', 'haste', 'frozen', 'iced', 'webbed', 'seeinv',
-   'detmon', 'scare', 'fireShield', 'seer'].forEach(function (k) {
+   'monsight', 'scare', 'fireShield', 'seer'].forEach(function (k) {
     if (P[k] > 0) {
       P[k]--;
       if (P[k] === 0) {
@@ -4881,6 +5140,7 @@ function upkeep() {
         if (k === 'haste') msg('You feel yourself slowing down.', 'c');
         if (k === 'seer') msg('The ring goes quiet. The floor keeps its secrets again.', 'p');
         if (k === 'webbed') msg('You tear free of the web.', 'c');
+        if (k === 'monsight') msg('You stop feeling what moves nearby.', 'c');
       }
     }
   });
@@ -4929,7 +5189,7 @@ function scorch(cells, turns, at) {
   var lit = 0;
   for (i = 0; i < cells.length; i++) {
     var x = cells[i][0], y = cells[i][1];
-    if (!walkable(x, y)) continue;
+    if (!walkable(x, y) || inWater(x, y)) continue;
     lit++;
     dropEmber(x, y, life, at);
   }
@@ -5105,6 +5365,9 @@ function dazzled(m) {
 
 /* a single square of fire left behind, not a spreading blaze */
 function dropEmber(x, y, turns, at) {
+  /* Water does not catch.  A pool with a fire burning on it was the one
+     thing in the dungeon that read as a mistake however it got there. */
+  if (inWater(x, y)) return;
   if (typeof lightBarrel === 'function') lightBarrel(x, y);
   var life = turns || BURN_TRAIL_TURNS;
   for (var i = 0; i < L.clouds.length; i++) {

@@ -75,7 +75,12 @@ var ROCK = 0, WALL = 1, FLOOR = 2, CORR = 3, DOOR = 4, STAIR = 5, SDOOR = 6,
 
 var MATS = ['wood', 'bronze', 'iron', 'silver', 'gold', 'crystal'];
 
-var F_SEEN = 1, F_VIS = 2;
+/* F_MAP marks a square you know from a map rather than from standing in
+   front of it.  A map is a drawing of the floor: it shows you the shape
+   of the place and what is built into it, not the odds and ends somebody
+   dropped on the flagstones.  The bit is struck off the moment you lay
+   eyes on the square yourself, and from then on it is simply seen. */
+var F_SEEN = 1, F_VIS = 2, F_MAP = 4;
 
 /* orthogonal only - no diagonals anywhere in this game */
 var DIR4 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
@@ -258,6 +263,11 @@ var HUNTRESS_ARROW_PCT = 78, HUNTRESS_CHEST_PCT = 30;
 var ARROW_OVERSHOOT = 4;      /* how far a miss can sail past its mark */
 var CRYSTAL_MIN_PCT = 10, CRYSTAL_MAX_PCT = 25;
 var MOVE_ANIM_MS = 110;       /* how long one monster step takes on screen */
+/* What every step after the first costs, as a share of an ordinary
+   one.  A creature quick enough to move twice in a turn should look
+   it, rather than taking twice as long over the turn as everything
+   else does. */
+var EXTRA_STEP = 0.5;
 /* A hit knocks the victim back a pixel and flashes it red, so you can see
    the blow land rather than inferring it from the numbers. */
 /* A blow reads as two movements: the one striking leans a pixel in, the
@@ -265,6 +275,46 @@ var MOVE_ANIM_MS = 110;       /* how long one monster step takes on screen */
 /* How long a stat stays coloured after it changes: green if it went up,
    red if it went down, and a fall always wins over a rise. */
 var STAT_LIT_TURNS = 20;
+/* How much of the pointer cell is actually drawn.  A full tile of arrow
+   is the size of a monster; five pixels reads as a pointer. */
+var MOUSE_PX = 5;
+/* how far the mouse has to move with the button down before it counts as
+   pushing the map about rather than choosing a square */
+var DRAG_SLOP = 3;
+/* How long a finger has to stay put before the press means the right
+   button.  A finger has only one button, so the second one has to be
+   said with time instead. */
+var TOUCH_HOLD_MS = 450;
+/* Two fingers on a trackpad arrive as scrolling.  While it is still
+   coming in the view is held exactly where the fingers have put it, the
+   same as while a hand is dragging; this is how long after the last of
+   it before the picture settles onto the grid.  A wheel notch that
+   reports lines rather than pixels is worth about this many. */
+var WHEEL_HOLD_MS = 140, WHEEL_LINE_PX = 16;
+/* how long a pressed inventory button stays lit */
+var BTN_FLASH_MS = 110;
+/* how much of the way home the sliding map travels each frame, and how
+   many squares from the edge the player has to be to count as on screen */
+var CAM_CHASE = 0.25, CAM_EDGE = 2;
+/* and never more than this much of a tile in a single frame */
+var CAM_MAX_STEP = 0.6;
+/* How long an auto-walk takes over one square.  A turn is normally
+   played out over a whole BEAT so you can watch it happen; crossing a
+   room at that pace is a wait, so the whole turn - the step, the lines
+   of text, the creatures' own moves - is squeezed into this instead.
+   Eighty milliseconds, arrived at with a slider and a lot of walking. */
+var WALK_MS = 80;
+/* How far past the edge of what you have seen you may click.  Further
+   than this and there is no telling there is even a floor there. */
+var UNSEEN_REACH = 4;
+/* the frame that follows the pointer round the map */
+/* The modes that have the dungeon drawn behind them, and so have a
+   square under the pointer to click on. */
+var MAP_MODES = { play: 1, ask: 1, choice: 1, ctx: 1, aim: 1, target: 1,
+                  dir: 1, blink: 1, look: 1 };
+var HOVER_COL = '#fad039';
+/* and the colour it takes past the edge of what you have seen */
+var HOVER_DARK_COL = '#f59e0b';
 var HURT_MS = 150, HURT_PX = 2;
 /* and a moment after the wince before the thing that took it is allowed
    to move, so the two are never read as one motion */
@@ -443,6 +493,11 @@ var WARP_FRAMES = ['flash1', 'flash2', 'flash3'];
 var MOTES_PER_ROOM = 14, MOTE_MS = 5200;
 
 /* Fire shield: the squares round you burn for a few turns. */
+/* Monster sight is not a map of the floor - it is a sense of what is
+   moving near you.  Whatever is inside this many squares you watch as
+   though the walls were not there; beyond it you see nothing you would
+   not have seen anyway. */
+var MONSIGHT_RANGE = 5, MONSIGHT_TURNS = 100;
 var FIRE_SHIELD_TURNS = 5;
 /* the special rooms */
 var SHRINE_COST = 1;          /* maximum health, permanently */
@@ -564,7 +619,7 @@ var POTIONS = [
   { n: 'see invisible', p: 3, w: 100 },
   { n: 'fire shield', p: 4, w: 190 },
   { n: 'healing', p: 12, w: 130, hurl: 'mend' },
-  { n: 'monster detection', p: 6, w: 130 },
+  { n: 'monster sight', p: 6, w: 130 },
   { n: 'magic detection', p: 5, w: 105 },
   { n: 'raise level', p: 2, w: 250 },
   { n: 'extra healing', p: 5, w: 200, hurl: 'mend' },
@@ -714,6 +769,13 @@ var WEAPONS = [
      bookkeeping rather than a decision. */
   { n: 'crossbow', gen: 'bow', d: [1, 3], p: 8, w: 40, s: 'crossbow', launch: 1, ammo: 'arrow',
     shot: [1, 5], fly: 'arrow' },
+  /* The long bow's bigger brother: a stave you have to be strong to bend
+     at all, reaching further still and hitting harder for it.  Rarer
+     than any of them, and deep in the dungeon before one turns up.  It
+     is drawn as a long bow - to the eye it is the same weapon, only
+     bigger, and it did not seem worth a cell of the sheet to say so. */
+  { n: 'great bow', gen: 'bow', d: [1, 3], p: 4, w: 110, s: 'bow_long', launch: 1,
+    ammo: 'arrow', shot: [3, 5], fly: 'arrow', two: 1, reach: 5, minDepth: 5 },
   /* No bow needed, and a little softer than one: a stone is what you
      have before you find anything better. */
   { n: 'stone', d: [1, 3], p: 16, w: 1, s: 'stone', grp: 1, pile: [1, 2],
@@ -894,11 +956,11 @@ var ROOM_ENTRY = {
 
 var TILE_INFO = {};
 TILE_INFO[ROCK]     = ['Solid rock.', 'Dynamite might open it.'];
-TILE_INFO[WALL]     = ['A dressed stone wall.', 'Dynamite would blow it in.'];
+TILE_INFO[WALL]     = ['A dressed stone wall.'];
 TILE_INFO[FLOOR]    = ['Bare stone floor.'];
 TILE_INFO[CORR]     = ['A hallway between rooms.'];
 TILE_INFO[DOOR]     = ['A doorway. It blocks sight', 'and arrows both ways.'];
-TILE_INFO[SDOOR]    = ['A dressed stone wall.', 'Dynamite would blow it in.'];
+TILE_INFO[SDOOR]    = ['A dressed stone wall.'];
 TILE_INFO[LOCKED]   = ['A locked door. You need the', 'key of the right metal.'];
 TILE_INFO[STAIR]    = ['Stairs down to the next floor.'];
 TILE_INFO[STAIR_UP] = ['Stairs back up the way', 'you came.'];
@@ -921,11 +983,26 @@ TILE_INFO[FIREWALL] = ['A sheet of flame. You can see', 'and shoot through it.']
 /* Which of the four wall faces a square wears.  A pure function of where
    the square is, so the renderer and the floor builder always agree
    without either storing anything. */
+/* A square's own number, well mixed.  The hash used to be x*7 + y*13
+   with a little of x*y stirred in, which lines up with itself: how often
+   each face turned up depended on which patch of the map you looked at,
+   and a room could come out a third broken wall. */
+function tileHash(x, y) {
+  var h = (x | 0) * 374761393 + (y | 0) * 668265263;
+  h = (h ^ (h >> 13)) * 1274126177;
+  return (h ^ (h >> 16)) >>> 0;
+}
+/* Four wall faces, and what each is for: `wall` is the plain course and
+   most of the dungeon is built of it; `wall2` is broken stonework, which
+   turns up here and there rather than every other block; `wall3` and
+   `wall_moss` are both mossy, and a mossy stretch draws from the two of
+   them so it does not read as one tile repeated. */
 function wallVariant(x, y) {
-  var h = (x * 7 + y * 13 + ((x * y) & 7)) % 9;
-  if (h === 8) return 'wall_moss';
-  if (h === 5) return 'wall3';
-  return (h & 1) ? 'wall2' : 'wall';
+  var h = tileHash(x, y) % 16;
+  if (h === 0) return 'wall_moss';
+  if (h === 1) return 'wall3';
+  if (h === 2 || h === 9) return 'wall2';
+  return 'wall';
 }
 
 var RUNE_STONE_SPRITES = ['stone_blast', 'stone_slow', 'stone_return',
@@ -2394,6 +2471,34 @@ function tidyMossEdges(L) {
   return gone;
 }
 
+/* Walls are derived from what touches a floor tile, once, early.  Plenty
+   happens after that: a blind corridor is filled back in, a doorway that
+   leads nowhere becomes wall again.  Fill a corridor that ran alongside a
+   room and the room's floor is left touching raw stone with no wall
+   between - you could see out through the gap.
+
+   So look once more at the end, with the floor in the state you will
+   actually walk into, and dress any rock that has come to touch
+   something walkable.  This is buildWalls' own rule, applied late. */
+function sealRock(L) {
+  var sealed = 0, i, d;
+  for (i = 0; i < L.tiles.length; i++) {
+    if (L.tiles[i] !== ROCK) continue;
+    var x = i % MAP_W, y = (i / MAP_W) | 0;
+    if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+    var touches = 0;
+    for (d = 0; d < DIR8.length; d++) {
+      var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      if (walkTile(L.tiles[ny * MAP_W + nx])) { touches = 1; break; }
+    }
+    if (!touches) continue;
+    L.tiles[i] = WALL;
+    sealed++;
+  }
+  return sealed;
+}
+
 function tidyCracks(L) {
   var removed = 0, i, k;
   for (i = 0; i < L.tiles.length; i++) {
@@ -2698,17 +2803,45 @@ function genLevelOnce(depth) {
 
 /* turn raw rock into dressed stone wherever it touches a given tile kind */
 function wallPass(L, isTarget) {
-  var T = L.tiles, x, y, dx, dy;
-  for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) {
-    var i = y * MAP_W + x;
-    if (T[i] !== ROCK) continue;
-    var touch = false;
-    for (dy = -1; dy <= 1 && !touch; dy++) for (dx = -1; dx <= 1; dx++) {
+  var T = L.tiles, x, y, dx, dy, t;
+  /* tiles are bytes, so ask isTarget its 256 answers once instead of
+     calling it for all nine neighbours of every rock square */
+  var tab = new Uint8Array(256);
+  for (t = 0; t < 256; t++) tab[t] = isTarget(t) ? 1 : 0;
+
+  /* Neither caller counts rock or wall as something to face, and that is
+     what makes the fast way below sound: turning a square of rock into
+     wall never creates a new target, so no square's answer depends on
+     whether another was visited first.  Should a caller ever want one of
+     those, the answer really would depend on the order and the plain
+     pass is the honest one. */
+  if (tab[ROCK] || tab[WALL]) {
+    for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) {
+      var i0 = y * MAP_W + x;
+      if (T[i0] !== ROCK) continue;
+      var touch = false;
+      for (dy = -1; dy <= 1 && !touch; dy++) for (dx = -1; dx <= 1; dx++) {
+        var ax = x + dx, ay = y + dy;
+        if (ax < 0 || ay < 0 || ax >= MAP_W || ay >= MAP_H) continue;
+        if (tab[T[ay * MAP_W + ax]]) { touch = true; break; }
+      }
+      if (touch) T[i0] = WALL;
+    }
+    return;
+  }
+
+  /* Driven from the targets instead of from the rock: a floor is mostly
+     rock, and this way each square of it is looked at once by whatever
+     it happens to touch rather than nine times over. */
+  for (var i = 0; i < T.length; i++) {
+    if (!tab[T[i]]) continue;
+    x = i % MAP_W; y = (i / MAP_W) | 0;
+    for (dy = -1; dy <= 1; dy++) for (dx = -1; dx <= 1; dx++) {
       var nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
-      if (isTarget(T[ny * MAP_W + nx])) { touch = true; break; }
+      var j = ny * MAP_W + nx;
+      if (T[j] === ROCK) T[j] = WALL;
     }
-    if (touch) T[i] = WALL;
   }
 }
 function trapAtLevel(Lv, x, y) {
@@ -2916,14 +3049,20 @@ function connect(L, ra, rb, dir) {
 /* No two doors may sit next to each other.  Drop the spare ones, but only
    while the whole floor stays walkable. */
 /* the door tiles sitting on a room's boundary */
+/* One reused buffer with a generation stamp instead of a fresh hash
+   object per call: this runs inside sealing and dedupe loops, and the
+   hashing was a measurable slice of building a floor. */
+var _rdSeen = null, _rdGen = 0;
 function roomDoors(L, r) {
-  var out = [], seen = {}, i, d;
+  var n = L.tiles.length, i, d;
+  if (!_rdSeen || _rdSeen.length < n) { _rdSeen = new Int32Array(n); _rdGen = 0; }
+  var seen = _rdSeen, gen = ++_rdGen, out = [];
   for (i = 0; i < r.floors.length; i++) {
     for (d = 0; d < 4; d++) {
       var x = r.floors[i][0] + DIR4[d][0], y = r.floors[i][1] + DIR4[d][1];
       var j = y * MAP_W + x;
-      if (seen[j]) continue;
-      seen[j] = 1;
+      if (seen[j] === gen) continue;
+      seen[j] = gen;
       if (L.tiles[j] === DOOR) out.push(j);
     }
   }
@@ -2940,6 +3079,7 @@ function roomDoors(L, r) {
    afterwards, that room is now genuinely behind it.
 
    Returns the tile index of the door that now guards the room, or -1. */
+var _rhSeen = null, _rhGen = 0;
 function roomHolds(r, x, y) {
   for (var i = 0; i < r.floors.length; i++)
     if (r.floors[i][0] === x && r.floors[i][1] === y) return true;
@@ -3283,21 +3423,66 @@ function carveSecretShape(L, sw, sh) {
    is what that door is for. */
 function doorDestinations(L, r) {
   var T = L.tiles, doors = roomDoors(L, r), saved = [], out = [], i, j, d;
+  /* the room's own squares, marked once: roomHolds walks the whole floor
+     list, and asking it four times per door was the bulk of this */
+  var n0 = T.length;
+  if (!_rhSeen || _rhSeen.length < n0) { _rhSeen = new Int32Array(n0); _rhGen = 0; }
+  var mine = _rhSeen, myGen = ++_rhGen;
+  for (i = 0; i < r.floors.length; i++)
+    mine[r.floors[i][1] * MAP_W + r.floors[i][0]] = myGen;
+
   for (i = 0; i < doors.length; i++) { saved.push(T[doors[i]]); T[doors[i]] = WALL; }
+
+  /* Which wall each door is set into.  Cheap, and it decides which of
+     them are worth flooding out of at all. */
+  var sides = [], perSide = [0, 0, 0, 0];
   for (i = 0; i < doors.length; i++) {
-    var at = doors[i], x = at % MAP_W, y = (at / MAP_W) | 0, side = -1;
-    for (d = 0; d < 4; d++)
-      if (roomHolds(r, x - DIR4[d][0], y - DIR4[d][1])) { side = d; break; }
+    var at0 = doors[i], x0 = at0 % MAP_W, y0 = (at0 / MAP_W) | 0, sd = -1;
+    for (d = 0; d < 4; d++) {
+      var qx = x0 - DIR4[d][0], qy = y0 - DIR4[d][1];
+      /* coordinates, not a flat index, decide this: off the left edge is
+         nowhere, not the end of the row above */
+      if (qx < 0 || qy < 0 || qx >= MAP_W || qy >= MAP_H) continue;
+      if (mine[qy * MAP_W + qx] === myGen) { sd = d; break; }
+    }
+    sides.push(sd);
+    if (sd >= 0) perSide[sd]++;
+  }
+
+  /* Where a door leads is only ever held up against another door in the
+     same wall - a room with one door in each wall has nothing to compare
+     and no reason to flood the floor four times over.  Two doors in the
+     same wall nearly always come out onto the same stretch, so the first
+     fill answers the second as well.
+
+     Labelling every piece of the floor instead was tried and is slower. */
+  var reaches = [], keys = [];
+  for (i = 0; i < doors.length; i++) {
+    var at = doors[i], side = sides[i];
     if (side < 0) { out.push(null); continue; }
+    var x = at % MAP_W, y = (at / MAP_W) | 0;
     var ox = x + DIR4[side][0], oy = y + DIR4[side][1];
     var key = '';
-    if (walkTile(T[oy * MAP_W + ox])) {
-      var reach = reachSet(L, ox, oy, true), hits = [];
-      for (j = 0; j < L.rooms.length; j++) {
-        if (L.rooms[j] === r || L.rooms[j].gone) continue;
-        if (reach[L.rooms[j].cy * MAP_W + L.rooms[j].cx]) hits.push(j);
+    if (perSide[side] > 1 && walkTile(T[oy * MAP_W + ox])) {
+      var o = oy * MAP_W + ox, got = -1;
+      for (j = 0; j < reaches.length; j++)
+        if (reaches[j][o]) { got = j; break; }
+      if (got >= 0) key = keys[got];
+      else {
+        var reach = reachSet(L, ox, oy, true), hits = [];
+        for (j = 0; j < L.rooms.length; j++) {
+          if (L.rooms[j] === r || L.rooms[j].gone) continue;
+          if (reach[L.rooms[j].cy * MAP_W + L.rooms[j].cx]) hits.push(j);
+        }
+        key = hits.join(',');
+        /* Only a fill that started on ground it could actually enter is
+           worth keeping: one started on a square it cannot pass through
+           reached out of both sides at once, and that answer is its own. */
+        var t0 = T[o];
+        if (!(t0 === ROCK || t0 === WALL || t0 === SDOOR || t0 === HOLE || t0 === BARS)) {
+          reaches.push(new Uint8Array(reach)); keys.push(key);
+        }
       }
-      key = hits.join(',');
     }
     out.push({ at: at, side: side, key: key });
   }
@@ -3669,6 +3854,9 @@ function reachSet(Lv, sx, sy, keys) {
     _reachSeen = new Uint8Array(N); _reachStack = new Int32Array(N);
   }
   var seen = _reachSeen, stack = _reachStack;
+  /* Clearing only the squares the last fill touched was tried and is
+     slower: fill(0) on a few kilobytes is a memset, and cheaper than a
+     second write for every square walked. */
   seen.fill(0);
   var sp = 0, s0 = sy * MAP_W + sx;
   seen[s0] = 1; stack[sp++] = s0;

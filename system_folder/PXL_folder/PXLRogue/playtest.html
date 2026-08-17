@@ -2,10 +2,22 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<!-- Added to the home screen, these make it start with no browser
+     furniture at all - which on an iPhone is the only way to the
+     whole screen, since Safari there has no fullscreen for
+     anything that is not a video. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PXLRogue">
+<meta name="theme-color" content="#05060d">
 <title>Rogue-8 playtest</title>
 <style>
-  html,body{margin:0;padding:0;height:100%;background:#05060d;overflow:hidden;}
+  /* dvh is the height that is actually showing once the address bar
+     has slid away; the plain percentage is the fallback. */
+  html,body{margin:0;padding:0;height:100%;height:100dvh;
+            background:#05060d;overflow:hidden;overscroll-behavior:none;}
   body{display:flex;align-items:center;justify-content:center;}
   canvas{
     image-rendering:pixelated;
@@ -14,6 +26,15 @@
     -ms-interpolation-mode:nearest-neighbor;
     display:block;
     background:#0b0d1c;
+    /* the game draws its own pointer, off the sheet, at 230x128 */
+    cursor:none;
+    /* A finger works the controls, so the browser must not also read it
+       as scrolling, zooming, selecting or a link being tapped. */
+    touch-action:none;
+    -webkit-user-select:none;
+    user-select:none;
+    -webkit-touch-callout:none;
+    -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
   /* The picker is ordinary HTML over the canvas.  It is scaffolding for
@@ -54,7 +75,7 @@ spritesheet.png is not beside this file.<br>The graphics live in that PNG.</div>
 <button id="again">pick again</button>
 <div id="pick"><div id="pickhead"></div><div id="picklist"></div></div>
 <script>
-var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 12, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "keyhole": 20, "ice_wall": 21, "fire_wall": 22, "door_wood": 23, "door_bronze": 24, "door_iron": 25, "door_silver": 26, "door_gold": 27, "door_crystal": 28, "moss": 29, "moss_b": 30, "moss2": 31, "moss3": 32, "moss4": 33, "crack": 34, "crack2": 35, "crack3": 36, "crack4": 37, "bones": 38, "skull": 39, "web": 40, "rubble": 41, "table": 42, "chair": 43, "barrel": 44, "trap": 45, "trap_dart": 46, "trap_gas": 47, "trap_pit": 48, "rug_nw": 49, "rug_n": 50, "rug_ne": 51, "rug_w": 52, "rug_c": 53, "rug_c2": 54, "rug_e": 55, "rug_sw": 56, "rug_s": 57, "rug_se": 58, "chest": 59, "chest_open": 60, "pouch": 61, "chest_wood": 62, "chest_bronze": 63, "chest_iron": 64, "chest_silver": 65, "chest_gold": 66, "chest_crystal": 67, "key_wood": 68, "key_bronze": 69, "key_iron": 70, "key_silver": 71, "key_gold": 72, "key_crystal": 73, "gold": 74, "gold2": 75, "amulet": 76, "crystal": 77, "pin": 78, "dynamite": 79, "food": 80, "fruit": 81, "mushroom": 82, "berries": 83, "scroll": 84, "wand": 85, "wand2": 86, "wand3": 87, "staff": 88, "staff2": 89, "ring_b": 90, "ring_g": 91, "ring_r": 92, "ring_c": 93, "ring_y": 94, "ring_p": 95, "ring_m": 96, "ring_o": 97, "ring_n": 98, "pot_r": 99, "pot_b": 100, "pot_g": 101, "pot_y": 102, "pot_p": 103, "pot_c": 104, "pot_w": 105, "pot_o": 106, "sword": 107, "dagger": 108, "dagger_throw": 109, "mace": 110, "axe": 111, "spear": 112, "bow": 113, "bow_long": 114, "crossbow": 115, "arrow": 116, "bolt": 117, "stone": 118, "stone_blast": 119, "stone_slow": 120, "stone_return": 121, "stone_fire": 122, "stone_ice": 123, "armor_l": 124, "armor_c": 125, "armor_p": 126, "shield": 127, "shield2": 128, "shield3": 129, "cap": 130, "helm": 131, "crown": 132, "boots": 133, "sandals": 134, "ironboots": 135, "hero": 136, "hero2": 137, "grave": 138, "mon_A": 139, "mon_B": 140, "mon_C": 141, "mon_D": 142, "mon_E": 143, "mon_F": 144, "mon_G": 145, "mon_H": 146, "mon_I": 147, "mon_J": 148, "mon_K": 149, "mon_L": 150, "mon_M": 151, "mon_N": 152, "mon_O": 153, "mon_P": 154, "mon_Q": 155, "mon_R": 156, "mon_S": 157, "mon_T": 158, "mon_U": 159, "mon_V": 160, "mon_W": 161, "mon_X": 162, "mon_Y": 163, "mon_Z": 164, "mon_h": 165, "mon_w": 166, "mon_k": 167, "flame": 168, "frost": 169, "magic": 170, "gas": 171, "icecube": 172, "flash1": 173, "flash2": 174, "flash3": 175, "cursor": 176, "point": 177, "heart": 178, "pan_cross": 179, "mk_z": 180, "mk_q": 181, "mk_x": 182, "mk_ally": 183}, "font": {"x": 0, "y": 96, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 138, "moved": {"moss2": [30, 31], "moss3": [31, 32], "moss4": [32, 33], "crack": [33, 34], "crack2": [34, 35], "crack3": [35, 36], "crack4": [36, 37], "bones": [37, 38], "skull": [38, 39], "web": [39, 40], "rubble": [40, 41], "table": [41, 42], "chair": [42, 43], "barrel": [43, 44], "trap": [44, 45], "trap_dart": [45, 46], "trap_gas": [46, 47], "trap_pit": [47, 48], "rug_nw": [48, 49], "rug_n": [49, 50], "rug_ne": [50, 51], "rug_w": [51, 52], "rug_c": [52, 53], "rug_c2": [53, 54], "rug_e": [54, 55], "rug_sw": [55, 56], "rug_s": [56, 57], "rug_se": [57, 58], "chest": [58, 59], "chest_open": [59, 60], "pouch": [60, 61], "chest_wood": [61, 62], "chest_bronze": [62, 63], "chest_iron": [63, 64], "chest_silver": [64, 65], "chest_gold": [65, 66], "chest_crystal": [66, 67], "key_wood": [67, 68], "key_bronze": [68, 69], "key_iron": [69, 70], "key_silver": [70, 71], "key_gold": [71, 72], "key_crystal": [72, 73], "gold": [73, 74], "gold2": [74, 75], "amulet": [75, 76], "crystal": [76, 77], "pin": [77, 78], "dynamite": [78, 79], "food": [79, 80], "fruit": [80, 81], "mushroom": [81, 82], "berries": [82, 83], "scroll": [83, 84], "wand": [84, 85], "wand2": [85, 86], "wand3": [86, 87], "staff": [87, 88], "staff2": [88, 89], "ring_b": [89, 90], "ring_g": [90, 91], "ring_r": [91, 92], "ring_c": [92, 93], "ring_y": [93, 94], "ring_p": [94, 95], "ring_m": [95, 96], "ring_o": [96, 97], "ring_n": [97, 98], "pot_r": [98, 99], "pot_b": [99, 100], "pot_g": [100, 101], "pot_y": [101, 102], "pot_p": [102, 103], "pot_c": [103, 104], "pot_w": [104, 105], "pot_o": [105, 106], "sword": [106, 107], "dagger": [107, 108], "dagger_throw": [108, 109], "mace": [109, 110], "axe": [110, 111], "spear": [111, 112], "bow": [112, 113], "bow_long": [113, 114], "crossbow": [114, 115], "arrow": [115, 116], "bolt": [116, 117], "stone": [117, 118], "stone_blast": [118, 119], "stone_slow": [119, 120], "stone_return": [120, 121], "stone_fire": [121, 122], "stone_ice": [122, 123], "armor_l": [123, 124], "armor_c": [124, 125], "armor_p": [125, 126], "shield": [126, 127], "shield2": [127, 128], "shield3": [128, 129], "cap": [129, 130], "helm": [130, 131], "crown": [131, 132], "boots": [132, 133], "sandals": [133, 134], "ironboots": [134, 135], "hero": [135, 136], "hero2": [136, 137], "grave": [137, 138], "mon_A": [138, 139], "mon_B": [139, 140], "mon_C": [140, 141], "mon_D": [141, 142], "mon_E": [142, 143], "mon_F": [143, 144], "mon_G": [144, 145], "mon_H": [145, 146], "mon_I": [146, 147], "mon_J": [147, 148], "mon_K": [148, 149], "mon_L": [149, 150], "mon_M": [150, 151], "mon_N": [151, 152], "mon_O": [152, 153], "mon_P": [153, 154], "mon_Q": [154, 155], "mon_R": [155, 156], "mon_S": [156, 157], "mon_T": [157, 158], "mon_U": [158, 159], "mon_V": [159, 160], "mon_W": [160, 161], "mon_X": [161, 162], "mon_Y": [162, 163], "mon_Z": [163, 164], "mon_h": [164, 165], "mon_w": [165, 166], "mon_k": [166, 167], "flame": [167, 168], "frost": [168, 169], "magic": [169, 170], "gas": [170, 171], "icecube": [171, 172], "flash1": [172, 173], "flash2": [173, 174], "flash3": [174, 175], "cursor": [175, 176], "point": [176, 177], "heart": [177, 178], "pan_cross": [178, 179], "mk_z": [179, 180], "mk_q": [180, 181], "mk_x": [181, 182], "mk_ally": [182, 183]}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen"]};
+var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 12, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "keyhole": 20, "ice_wall": 21, "fire_wall": 22, "door_wood": 23, "door_bronze": 24, "door_iron": 25, "door_silver": 26, "door_gold": 27, "door_crystal": 28, "moss": 29, "moss_b": 30, "moss2": 31, "moss3": 32, "moss4": 33, "crack": 34, "crack2": 35, "crack3": 36, "crack4": 37, "bones": 38, "skull": 39, "web": 40, "rubble": 41, "table": 42, "chair": 43, "barrel": 44, "trap": 45, "trap_dart": 46, "trap_gas": 47, "trap_pit": 48, "rug_nw": 49, "rug_n": 50, "rug_ne": 51, "rug_w": 52, "rug_c": 53, "rug_c2": 54, "rug_e": 55, "rug_sw": 56, "rug_s": 57, "rug_se": 58, "chest": 59, "chest_open": 60, "pouch": 61, "chest_wood": 62, "chest_bronze": 63, "chest_iron": 64, "chest_silver": 65, "chest_gold": 66, "chest_crystal": 67, "key_wood": 68, "key_bronze": 69, "key_iron": 70, "key_silver": 71, "key_gold": 72, "key_crystal": 73, "gold": 74, "gold2": 75, "amulet": 76, "crystal": 77, "pin": 78, "dynamite": 79, "food": 80, "fruit": 81, "mushroom": 82, "berries": 83, "scroll": 84, "wand": 85, "wand2": 86, "wand3": 87, "staff": 88, "staff2": 89, "ring_b": 90, "ring_g": 91, "ring_r": 92, "ring_c": 93, "ring_y": 94, "ring_p": 95, "ring_m": 96, "ring_o": 97, "ring_n": 98, "pot_r": 99, "pot_b": 100, "pot_g": 101, "pot_y": 102, "pot_p": 103, "pot_c": 104, "pot_w": 105, "pot_o": 106, "sword": 107, "dagger": 108, "dagger_throw": 109, "mace": 110, "axe": 111, "spear": 112, "bow": 113, "bow_long": 114, "crossbow": 115, "arrow": 116, "bolt": 117, "stone": 118, "stone_blast": 119, "stone_slow": 120, "stone_return": 121, "stone_fire": 122, "stone_ice": 123, "armor_l": 124, "armor_c": 125, "armor_p": 126, "shield": 127, "shield2": 128, "shield3": 129, "cap": 130, "helm": 131, "crown": 132, "boots": 133, "sandals": 134, "ironboots": 135, "hero": 136, "hero2": 137, "grave": 138, "mon_A": 139, "mon_B": 140, "mon_C": 141, "mon_D": 142, "mon_E": 143, "mon_F": 144, "mon_G": 145, "mon_H": 146, "mon_I": 147, "mon_J": 148, "mon_K": 149, "mon_L": 150, "mon_M": 151, "mon_N": 152, "mon_O": 153, "mon_P": 154, "mon_Q": 155, "mon_R": 156, "mon_S": 157, "mon_T": 158, "mon_U": 159, "mon_V": 160, "mon_W": 161, "mon_X": 162, "mon_Y": 163, "mon_Z": 164, "mon_h": 165, "mon_w": 166, "mon_k": 167, "flame": 168, "frost": 169, "magic": 170, "gas": 171, "icecube": 172, "flash1": 173, "flash2": 174, "flash3": 175, "mouse": 176, "mouse_get": 177, "cursor": 178, "point": 179, "heart": 180, "pan_cross": 181, "mk_z": 182, "mk_q": 183, "mk_x": 184, "mk_ally": 185}, "font": {"x": 0, "y": 96, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 138, "moved": {}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen"]};
 var ATLAS_PNG = "spritesheet.png";
 /* ============================================================ ROGUE-8
    Part 1 : constants, RNG, data tables, dungeon generation.
@@ -133,7 +154,12 @@ var ROCK = 0, WALL = 1, FLOOR = 2, CORR = 3, DOOR = 4, STAIR = 5, SDOOR = 6,
 
 var MATS = ['wood', 'bronze', 'iron', 'silver', 'gold', 'crystal'];
 
-var F_SEEN = 1, F_VIS = 2;
+/* F_MAP marks a square you know from a map rather than from standing in
+   front of it.  A map is a drawing of the floor: it shows you the shape
+   of the place and what is built into it, not the odds and ends somebody
+   dropped on the flagstones.  The bit is struck off the moment you lay
+   eyes on the square yourself, and from then on it is simply seen. */
+var F_SEEN = 1, F_VIS = 2, F_MAP = 4;
 
 /* orthogonal only - no diagonals anywhere in this game */
 var DIR4 = [[0, -1], [0, 1], [-1, 0], [1, 0]];
@@ -316,6 +342,11 @@ var HUNTRESS_ARROW_PCT = 78, HUNTRESS_CHEST_PCT = 30;
 var ARROW_OVERSHOOT = 4;      /* how far a miss can sail past its mark */
 var CRYSTAL_MIN_PCT = 10, CRYSTAL_MAX_PCT = 25;
 var MOVE_ANIM_MS = 110;       /* how long one monster step takes on screen */
+/* What every step after the first costs, as a share of an ordinary
+   one.  A creature quick enough to move twice in a turn should look
+   it, rather than taking twice as long over the turn as everything
+   else does. */
+var EXTRA_STEP = 0.5;
 /* A hit knocks the victim back a pixel and flashes it red, so you can see
    the blow land rather than inferring it from the numbers. */
 /* A blow reads as two movements: the one striking leans a pixel in, the
@@ -323,6 +354,46 @@ var MOVE_ANIM_MS = 110;       /* how long one monster step takes on screen */
 /* How long a stat stays coloured after it changes: green if it went up,
    red if it went down, and a fall always wins over a rise. */
 var STAT_LIT_TURNS = 20;
+/* How much of the pointer cell is actually drawn.  A full tile of arrow
+   is the size of a monster; five pixels reads as a pointer. */
+var MOUSE_PX = 5;
+/* how far the mouse has to move with the button down before it counts as
+   pushing the map about rather than choosing a square */
+var DRAG_SLOP = 3;
+/* How long a finger has to stay put before the press means the right
+   button.  A finger has only one button, so the second one has to be
+   said with time instead. */
+var TOUCH_HOLD_MS = 450;
+/* Two fingers on a trackpad arrive as scrolling.  While it is still
+   coming in the view is held exactly where the fingers have put it, the
+   same as while a hand is dragging; this is how long after the last of
+   it before the picture settles onto the grid.  A wheel notch that
+   reports lines rather than pixels is worth about this many. */
+var WHEEL_HOLD_MS = 140, WHEEL_LINE_PX = 16;
+/* how long a pressed inventory button stays lit */
+var BTN_FLASH_MS = 110;
+/* how much of the way home the sliding map travels each frame, and how
+   many squares from the edge the player has to be to count as on screen */
+var CAM_CHASE = 0.25, CAM_EDGE = 2;
+/* and never more than this much of a tile in a single frame */
+var CAM_MAX_STEP = 0.6;
+/* How long an auto-walk takes over one square.  A turn is normally
+   played out over a whole BEAT so you can watch it happen; crossing a
+   room at that pace is a wait, so the whole turn - the step, the lines
+   of text, the creatures' own moves - is squeezed into this instead.
+   Eighty milliseconds, arrived at with a slider and a lot of walking. */
+var WALK_MS = 80;
+/* How far past the edge of what you have seen you may click.  Further
+   than this and there is no telling there is even a floor there. */
+var UNSEEN_REACH = 4;
+/* the frame that follows the pointer round the map */
+/* The modes that have the dungeon drawn behind them, and so have a
+   square under the pointer to click on. */
+var MAP_MODES = { play: 1, ask: 1, choice: 1, ctx: 1, aim: 1, target: 1,
+                  dir: 1, blink: 1, look: 1 };
+var HOVER_COL = '#fad039';
+/* and the colour it takes past the edge of what you have seen */
+var HOVER_DARK_COL = '#f59e0b';
 var HURT_MS = 150, HURT_PX = 2;
 /* and a moment after the wince before the thing that took it is allowed
    to move, so the two are never read as one motion */
@@ -501,6 +572,11 @@ var WARP_FRAMES = ['flash1', 'flash2', 'flash3'];
 var MOTES_PER_ROOM = 14, MOTE_MS = 5200;
 
 /* Fire shield: the squares round you burn for a few turns. */
+/* Monster sight is not a map of the floor - it is a sense of what is
+   moving near you.  Whatever is inside this many squares you watch as
+   though the walls were not there; beyond it you see nothing you would
+   not have seen anyway. */
+var MONSIGHT_RANGE = 5, MONSIGHT_TURNS = 100;
 var FIRE_SHIELD_TURNS = 5;
 /* the special rooms */
 var SHRINE_COST = 1;          /* maximum health, permanently */
@@ -622,7 +698,7 @@ var POTIONS = [
   { n: 'see invisible', p: 3, w: 100 },
   { n: 'fire shield', p: 4, w: 190 },
   { n: 'healing', p: 12, w: 130, hurl: 'mend' },
-  { n: 'monster detection', p: 6, w: 130 },
+  { n: 'monster sight', p: 6, w: 130 },
   { n: 'magic detection', p: 5, w: 105 },
   { n: 'raise level', p: 2, w: 250 },
   { n: 'extra healing', p: 5, w: 200, hurl: 'mend' },
@@ -772,6 +848,13 @@ var WEAPONS = [
      bookkeeping rather than a decision. */
   { n: 'crossbow', gen: 'bow', d: [1, 3], p: 8, w: 40, s: 'crossbow', launch: 1, ammo: 'arrow',
     shot: [1, 5], fly: 'arrow' },
+  /* The long bow's bigger brother: a stave you have to be strong to bend
+     at all, reaching further still and hitting harder for it.  Rarer
+     than any of them, and deep in the dungeon before one turns up.  It
+     is drawn as a long bow - to the eye it is the same weapon, only
+     bigger, and it did not seem worth a cell of the sheet to say so. */
+  { n: 'great bow', gen: 'bow', d: [1, 3], p: 4, w: 110, s: 'bow_long', launch: 1,
+    ammo: 'arrow', shot: [3, 5], fly: 'arrow', two: 1, reach: 5, minDepth: 5 },
   /* No bow needed, and a little softer than one: a stone is what you
      have before you find anything better. */
   { n: 'stone', d: [1, 3], p: 16, w: 1, s: 'stone', grp: 1, pile: [1, 2],
@@ -952,11 +1035,11 @@ var ROOM_ENTRY = {
 
 var TILE_INFO = {};
 TILE_INFO[ROCK]     = ['Solid rock.', 'Dynamite might open it.'];
-TILE_INFO[WALL]     = ['A dressed stone wall.', 'Dynamite would blow it in.'];
+TILE_INFO[WALL]     = ['A dressed stone wall.'];
 TILE_INFO[FLOOR]    = ['Bare stone floor.'];
 TILE_INFO[CORR]     = ['A hallway between rooms.'];
 TILE_INFO[DOOR]     = ['A doorway. It blocks sight', 'and arrows both ways.'];
-TILE_INFO[SDOOR]    = ['A dressed stone wall.', 'Dynamite would blow it in.'];
+TILE_INFO[SDOOR]    = ['A dressed stone wall.'];
 TILE_INFO[LOCKED]   = ['A locked door. You need the', 'key of the right metal.'];
 TILE_INFO[STAIR]    = ['Stairs down to the next floor.'];
 TILE_INFO[STAIR_UP] = ['Stairs back up the way', 'you came.'];
@@ -979,11 +1062,26 @@ TILE_INFO[FIREWALL] = ['A sheet of flame. You can see', 'and shoot through it.']
 /* Which of the four wall faces a square wears.  A pure function of where
    the square is, so the renderer and the floor builder always agree
    without either storing anything. */
+/* A square's own number, well mixed.  The hash used to be x*7 + y*13
+   with a little of x*y stirred in, which lines up with itself: how often
+   each face turned up depended on which patch of the map you looked at,
+   and a room could come out a third broken wall. */
+function tileHash(x, y) {
+  var h = (x | 0) * 374761393 + (y | 0) * 668265263;
+  h = (h ^ (h >> 13)) * 1274126177;
+  return (h ^ (h >> 16)) >>> 0;
+}
+/* Four wall faces, and what each is for: `wall` is the plain course and
+   most of the dungeon is built of it; `wall2` is broken stonework, which
+   turns up here and there rather than every other block; `wall3` and
+   `wall_moss` are both mossy, and a mossy stretch draws from the two of
+   them so it does not read as one tile repeated. */
 function wallVariant(x, y) {
-  var h = (x * 7 + y * 13 + ((x * y) & 7)) % 9;
-  if (h === 8) return 'wall_moss';
-  if (h === 5) return 'wall3';
-  return (h & 1) ? 'wall2' : 'wall';
+  var h = tileHash(x, y) % 16;
+  if (h === 0) return 'wall_moss';
+  if (h === 1) return 'wall3';
+  if (h === 2 || h === 9) return 'wall2';
+  return 'wall';
 }
 
 var RUNE_STONE_SPRITES = ['stone_blast', 'stone_slow', 'stone_return',
@@ -2452,6 +2550,34 @@ function tidyMossEdges(L) {
   return gone;
 }
 
+/* Walls are derived from what touches a floor tile, once, early.  Plenty
+   happens after that: a blind corridor is filled back in, a doorway that
+   leads nowhere becomes wall again.  Fill a corridor that ran alongside a
+   room and the room's floor is left touching raw stone with no wall
+   between - you could see out through the gap.
+
+   So look once more at the end, with the floor in the state you will
+   actually walk into, and dress any rock that has come to touch
+   something walkable.  This is buildWalls' own rule, applied late. */
+function sealRock(L) {
+  var sealed = 0, i, d;
+  for (i = 0; i < L.tiles.length; i++) {
+    if (L.tiles[i] !== ROCK) continue;
+    var x = i % MAP_W, y = (i / MAP_W) | 0;
+    if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+    var touches = 0;
+    for (d = 0; d < DIR8.length; d++) {
+      var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      if (walkTile(L.tiles[ny * MAP_W + nx])) { touches = 1; break; }
+    }
+    if (!touches) continue;
+    L.tiles[i] = WALL;
+    sealed++;
+  }
+  return sealed;
+}
+
 function tidyCracks(L) {
   var removed = 0, i, k;
   for (i = 0; i < L.tiles.length; i++) {
@@ -2756,17 +2882,45 @@ function genLevelOnce(depth) {
 
 /* turn raw rock into dressed stone wherever it touches a given tile kind */
 function wallPass(L, isTarget) {
-  var T = L.tiles, x, y, dx, dy;
-  for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) {
-    var i = y * MAP_W + x;
-    if (T[i] !== ROCK) continue;
-    var touch = false;
-    for (dy = -1; dy <= 1 && !touch; dy++) for (dx = -1; dx <= 1; dx++) {
+  var T = L.tiles, x, y, dx, dy, t;
+  /* tiles are bytes, so ask isTarget its 256 answers once instead of
+     calling it for all nine neighbours of every rock square */
+  var tab = new Uint8Array(256);
+  for (t = 0; t < 256; t++) tab[t] = isTarget(t) ? 1 : 0;
+
+  /* Neither caller counts rock or wall as something to face, and that is
+     what makes the fast way below sound: turning a square of rock into
+     wall never creates a new target, so no square's answer depends on
+     whether another was visited first.  Should a caller ever want one of
+     those, the answer really would depend on the order and the plain
+     pass is the honest one. */
+  if (tab[ROCK] || tab[WALL]) {
+    for (y = 0; y < MAP_H; y++) for (x = 0; x < MAP_W; x++) {
+      var i0 = y * MAP_W + x;
+      if (T[i0] !== ROCK) continue;
+      var touch = false;
+      for (dy = -1; dy <= 1 && !touch; dy++) for (dx = -1; dx <= 1; dx++) {
+        var ax = x + dx, ay = y + dy;
+        if (ax < 0 || ay < 0 || ax >= MAP_W || ay >= MAP_H) continue;
+        if (tab[T[ay * MAP_W + ax]]) { touch = true; break; }
+      }
+      if (touch) T[i0] = WALL;
+    }
+    return;
+  }
+
+  /* Driven from the targets instead of from the rock: a floor is mostly
+     rock, and this way each square of it is looked at once by whatever
+     it happens to touch rather than nine times over. */
+  for (var i = 0; i < T.length; i++) {
+    if (!tab[T[i]]) continue;
+    x = i % MAP_W; y = (i / MAP_W) | 0;
+    for (dy = -1; dy <= 1; dy++) for (dx = -1; dx <= 1; dx++) {
       var nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
-      if (isTarget(T[ny * MAP_W + nx])) { touch = true; break; }
+      var j = ny * MAP_W + nx;
+      if (T[j] === ROCK) T[j] = WALL;
     }
-    if (touch) T[i] = WALL;
   }
 }
 function trapAtLevel(Lv, x, y) {
@@ -2974,14 +3128,20 @@ function connect(L, ra, rb, dir) {
 /* No two doors may sit next to each other.  Drop the spare ones, but only
    while the whole floor stays walkable. */
 /* the door tiles sitting on a room's boundary */
+/* One reused buffer with a generation stamp instead of a fresh hash
+   object per call: this runs inside sealing and dedupe loops, and the
+   hashing was a measurable slice of building a floor. */
+var _rdSeen = null, _rdGen = 0;
 function roomDoors(L, r) {
-  var out = [], seen = {}, i, d;
+  var n = L.tiles.length, i, d;
+  if (!_rdSeen || _rdSeen.length < n) { _rdSeen = new Int32Array(n); _rdGen = 0; }
+  var seen = _rdSeen, gen = ++_rdGen, out = [];
   for (i = 0; i < r.floors.length; i++) {
     for (d = 0; d < 4; d++) {
       var x = r.floors[i][0] + DIR4[d][0], y = r.floors[i][1] + DIR4[d][1];
       var j = y * MAP_W + x;
-      if (seen[j]) continue;
-      seen[j] = 1;
+      if (seen[j] === gen) continue;
+      seen[j] = gen;
       if (L.tiles[j] === DOOR) out.push(j);
     }
   }
@@ -2998,6 +3158,7 @@ function roomDoors(L, r) {
    afterwards, that room is now genuinely behind it.
 
    Returns the tile index of the door that now guards the room, or -1. */
+var _rhSeen = null, _rhGen = 0;
 function roomHolds(r, x, y) {
   for (var i = 0; i < r.floors.length; i++)
     if (r.floors[i][0] === x && r.floors[i][1] === y) return true;
@@ -3341,21 +3502,66 @@ function carveSecretShape(L, sw, sh) {
    is what that door is for. */
 function doorDestinations(L, r) {
   var T = L.tiles, doors = roomDoors(L, r), saved = [], out = [], i, j, d;
+  /* the room's own squares, marked once: roomHolds walks the whole floor
+     list, and asking it four times per door was the bulk of this */
+  var n0 = T.length;
+  if (!_rhSeen || _rhSeen.length < n0) { _rhSeen = new Int32Array(n0); _rhGen = 0; }
+  var mine = _rhSeen, myGen = ++_rhGen;
+  for (i = 0; i < r.floors.length; i++)
+    mine[r.floors[i][1] * MAP_W + r.floors[i][0]] = myGen;
+
   for (i = 0; i < doors.length; i++) { saved.push(T[doors[i]]); T[doors[i]] = WALL; }
+
+  /* Which wall each door is set into.  Cheap, and it decides which of
+     them are worth flooding out of at all. */
+  var sides = [], perSide = [0, 0, 0, 0];
   for (i = 0; i < doors.length; i++) {
-    var at = doors[i], x = at % MAP_W, y = (at / MAP_W) | 0, side = -1;
-    for (d = 0; d < 4; d++)
-      if (roomHolds(r, x - DIR4[d][0], y - DIR4[d][1])) { side = d; break; }
+    var at0 = doors[i], x0 = at0 % MAP_W, y0 = (at0 / MAP_W) | 0, sd = -1;
+    for (d = 0; d < 4; d++) {
+      var qx = x0 - DIR4[d][0], qy = y0 - DIR4[d][1];
+      /* coordinates, not a flat index, decide this: off the left edge is
+         nowhere, not the end of the row above */
+      if (qx < 0 || qy < 0 || qx >= MAP_W || qy >= MAP_H) continue;
+      if (mine[qy * MAP_W + qx] === myGen) { sd = d; break; }
+    }
+    sides.push(sd);
+    if (sd >= 0) perSide[sd]++;
+  }
+
+  /* Where a door leads is only ever held up against another door in the
+     same wall - a room with one door in each wall has nothing to compare
+     and no reason to flood the floor four times over.  Two doors in the
+     same wall nearly always come out onto the same stretch, so the first
+     fill answers the second as well.
+
+     Labelling every piece of the floor instead was tried and is slower. */
+  var reaches = [], keys = [];
+  for (i = 0; i < doors.length; i++) {
+    var at = doors[i], side = sides[i];
     if (side < 0) { out.push(null); continue; }
+    var x = at % MAP_W, y = (at / MAP_W) | 0;
     var ox = x + DIR4[side][0], oy = y + DIR4[side][1];
     var key = '';
-    if (walkTile(T[oy * MAP_W + ox])) {
-      var reach = reachSet(L, ox, oy, true), hits = [];
-      for (j = 0; j < L.rooms.length; j++) {
-        if (L.rooms[j] === r || L.rooms[j].gone) continue;
-        if (reach[L.rooms[j].cy * MAP_W + L.rooms[j].cx]) hits.push(j);
+    if (perSide[side] > 1 && walkTile(T[oy * MAP_W + ox])) {
+      var o = oy * MAP_W + ox, got = -1;
+      for (j = 0; j < reaches.length; j++)
+        if (reaches[j][o]) { got = j; break; }
+      if (got >= 0) key = keys[got];
+      else {
+        var reach = reachSet(L, ox, oy, true), hits = [];
+        for (j = 0; j < L.rooms.length; j++) {
+          if (L.rooms[j] === r || L.rooms[j].gone) continue;
+          if (reach[L.rooms[j].cy * MAP_W + L.rooms[j].cx]) hits.push(j);
+        }
+        key = hits.join(',');
+        /* Only a fill that started on ground it could actually enter is
+           worth keeping: one started on a square it cannot pass through
+           reached out of both sides at once, and that answer is its own. */
+        var t0 = T[o];
+        if (!(t0 === ROCK || t0 === WALL || t0 === SDOOR || t0 === HOLE || t0 === BARS)) {
+          reaches.push(new Uint8Array(reach)); keys.push(key);
+        }
       }
-      key = hits.join(',');
     }
     out.push({ at: at, side: side, key: key });
   }
@@ -3727,6 +3933,9 @@ function reachSet(Lv, sx, sy, keys) {
     _reachSeen = new Uint8Array(N); _reachStack = new Int32Array(N);
   }
   var seen = _reachSeen, stack = _reachStack;
+  /* Clearing only the squares the last fill touched was tried and is
+     slower: fill(0) on a few kilobytes is a memset, and cheaper than a
+     second write for every square walked. */
   seen.fill(0);
   var sp = 0, s0 = sy * MAP_W + sx;
   seen[s0] = 1; stack[sp++] = s0;
@@ -4032,7 +4241,7 @@ function freshG() {
     level: null, floors: {}, pendingFall: 0, queuePick: null, pickJob: null, beat: 0,
     ask: null,
     perkPick: null, choice: null, pause: null, look: null,
-    titleMenu: null,
+    titleMenu: null, walk: null, ctx: null, drag: null, waiting: null,
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
@@ -4719,7 +4928,7 @@ function newPlayer() {
     eq: { rh: null, body: null, lh: null, head: null, feet: null },
     amulet: 0,
     blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
-    seeinv: 0, detmon: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
+    seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
     unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, webbed: 0,
     runSteps: 0, seer: 0, warp: null,
     statWas: null, statLit: {},
@@ -5058,6 +5267,165 @@ function cursesOnYou() {
   return out;
 }
 
+/* ======================================================= going somewhere
+   A click on a square sets off a walk: the cheapest route in turns, not
+   in squares.  Water is thigh deep and costs you every second step, so a
+   long way round dry ground can be quicker than a short wade - and the
+   other way about, which is why it is measured rather than avoided.
+
+   The route goes nowhere you can see would hurt you: a trap you have
+   found, a hole, a wall of fire or ice, a barrel of powder.  It cannot
+   route round what you have not seen, and it does not pretend to. */
+var STEP_COST = 2;                 /* an ordinary square, in half-turns */
+function stepCost(x, y) {
+  if (!walkable(x, y)) return 0;
+  var t = tileAt(x, y);
+  if (t === HOLE) return 0;
+  if (barrelAt(x, y)) return 0;
+  var tr = trapAtLevel(L, x, y);
+  if (tr && tr.found && !tr.spent) return 0;     /* one you can see */
+  if (!inWater(x, y)) return STEP_COST;
+  /* Wading: every WADE_EVERY-th step through it costs the turn as well,
+     so a square of water is worth that much more than a square of
+     floor.  Riverborn is at home in it and pays nothing extra. */
+  if (hasPerk('riverborn')) return STEP_COST;
+  return STEP_COST + Math.round(STEP_COST / WADE_EVERY);
+}
+/* Dijkstra, since the squares do not all cost the same.  Returns the
+   path from where you are to the square asked for, not including the
+   square you are standing on, or null if there is no way. */
+function findPath(tx, ty, opts) {
+  opts = opts || {};
+  if (tx === P.x && ty === P.y) return [];
+  var n = MAP_W * MAP_H, dist = new Int32Array(n), from = new Int32Array(n), i;
+  for (i = 0; i < n; i++) { dist[i] = 2147483647; from[i] = -1; }
+  var start = P.y * MAP_W + P.x, goal = ty * MAP_W + tx;
+  dist[start] = 0;
+  /* a plain binary heap: the floors are small enough that this is
+     nothing, and it keeps the walk instant however far you click */
+  var heap = [[0, start]];
+  function push(d, k) {
+    heap.push([d, k]);
+    var c = heap.length - 1;
+    while (c > 0) {
+      var par = (c - 1) >> 1;
+      if (heap[par][0] <= heap[c][0]) break;
+      var tmp = heap[par]; heap[par] = heap[c]; heap[c] = tmp; c = par;
+    }
+  }
+  function pop() {
+    var top = heap[0], last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      var c = 0;
+      for (;;) {
+        var l = c * 2 + 1, r = l + 1, s = c;
+        if (l < heap.length && heap[l][0] < heap[s][0]) s = l;
+        if (r < heap.length && heap[r][0] < heap[s][0]) s = r;
+        if (s === c) break;
+        var tmp2 = heap[s]; heap[s] = heap[c]; heap[c] = tmp2; c = s;
+      }
+    }
+    return top;
+  }
+  while (heap.length) {
+    var top2 = pop(), d0 = top2[0], k0 = top2[1];
+    if (d0 > dist[k0]) continue;
+    if (k0 === goal) break;
+    var x0 = k0 % MAP_W, y0 = (k0 / MAP_W) | 0, q;
+    for (q = 0; q < DIR4.length; q++) {
+      var nx = x0 + DIR4[q][0], ny = y0 + DIR4[q][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var k1 = ny * MAP_W + nx;
+      var c1 = stepCost(nx, ny);
+      /* Walking up to something rather than onto it does not care
+         whether the square itself can be stood on - a locked door is
+         asked for exactly so you can go and try the handle. */
+      if (!c1) {
+        if (!opts.stopShort || k1 !== goal) continue;
+        c1 = STEP_COST;
+      }
+      /* Something standing in the way is in the way - unless it is the
+         square you asked for, which is how you walk up to a monster. */
+      if (k1 !== goal && monAt(L, nx, ny)) continue;
+      if (dist[k0] + c1 < dist[k1]) {
+        dist[k1] = dist[k0] + c1;
+        from[k1] = k0;
+        push(dist[k1], k1);
+      }
+    }
+  }
+  if (dist[goal] === 2147483647) return null;
+  var path = [], at = goal;
+  while (at !== start) { path.push({ x: at % MAP_W, y: (at / MAP_W) | 0 }); at = from[at]; }
+  path.reverse();
+  /* Walking up to something rather than onto it: drop the last square. */
+  if (opts.stopShort) path.pop();
+  return path;
+}
+
+/* How far a square is from the nearest one you have seen.  Zero if you
+   have seen it yourself.  Beyond UNSEEN_REACH it stops counting, because
+   nothing further than that is worth pointing at. */
+function unseenReach(x, y) {
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 99;
+  if (L.flags[y * MAP_W + x] & F_SEEN) return 0;
+  for (var d = 1; d <= UNSEEN_REACH + 1; d++) {
+    for (var dy = -d; dy <= d; dy++) for (var dx = -d; dx <= d; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+      var nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      if (L.flags[ny * MAP_W + nx] & F_SEEN) return d;
+    }
+  }
+  return 99;
+}
+/* The square you can actually reach that comes nearest to the one you
+   pointed at.  Clicking into the dark is a guess - there may be no floor
+   there at all - so you walk as close as the map allows and stop. */
+function nearestApproach(tx, ty) {
+  var best = null, bestD = 1e9, i;
+  for (i = 0; i < L.tiles.length; i++) {
+    if (!(L.flags[i] & F_SEEN)) continue;
+    var x = i % MAP_W, y = (i / MAP_W) | 0;
+    if (!stepCost(x, y)) continue;
+    if (monAt(L, x, y)) continue;
+    var d = Math.max(Math.abs(x - tx), Math.abs(y - ty));
+    if (d >= bestD) continue;
+    if (d && !findPath(x, y, {})) continue;      /* no way to it */
+    bestD = d; best = { x: x, y: y };
+    if (!d) break;
+  }
+  return best;
+}
+
+/* Everything hostile that can see you at this moment. */
+function watchingNow() {
+  var out = [], i;
+  for (i = 0; i < L.mons.length; i++) {
+    var m = L.mons[i];
+    if (m.ally || m.disguise || m.state === 0) continue;
+    if (monSeesPlayer(m)) out.push(m);
+  }
+  return out;
+}
+/* Anything hostile that has just noticed you - which is what ends a
+   walk.  Something that was already watching when you set off does not:
+   a fight that has begun is one you are allowed to walk about in. */
+function watchedByFoe(known) {
+  for (var i = 0; i < L.mons.length; i++) {
+    var m = L.mons[i];
+    if (m.ally || m.disguise || m.state === 0) continue;
+    if (known && known.indexOf(m) >= 0) continue;
+    if (monSeesPlayer(m)) return m;
+  }
+  return null;
+}
+/* You cannot walk while something is holding you. */
+function heldFast() {
+  return P.frozen > 0 || P.held || P.webbed > 0 || P.iced > 0;
+}
+
 /* ------------------------------------------------- asking you first
    A hole in the floor is the one step you cannot take back, and you used
    to take it by leaning on an arrow key.  The question is raised as
@@ -5116,7 +5484,7 @@ function playerEffects() {
   if (P.seeinv) out.push(['seeing invisible (' + P.seeinv + ')', 'c']);
   if (P.unseen) out.push(['unseen (' + P.unseen + ')', 'c']);
   if (P.fireShield) out.push(['ringed in fire (' + P.fireShield + ')', 'O']);
-  if (P.detmon) out.push(['sensing monsters (' + P.detmon + ')', 'c']);
+  if (P.monsight) out.push(['monster sight (' + P.monsight + ')', 'c']);
   if (P.seer) out.push(['seeing all (' + P.seer + ')', 'P']);
   if (darkAt(P.x, P.y)) out.push([nightEyes() ? 'in the dark, and seeing'
                                               : 'in the dark: one square', nightEyes() ? 'c' : 'p']);
@@ -5316,7 +5684,7 @@ function packPlayer() {
 /* everything that has to survive, and nothing that does not */
 function packRun() {
   var g = {}, k;
-  var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1,
+  var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1, waiting: 1,
                box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
@@ -5395,7 +5763,15 @@ function slotLabel(i) {
    that happens stamps itself with that instant so the picture and the
    words arrive together. */
 function beatNow() { return Date.now() + (G.beat || 0); }
-function beatWait(ms) { G.beat = (G.beat || 0) + ms; }
+/* An auto-walk plays the same turn out, only faster: every wait in it is
+   scaled so the step, the lines of text and the creatures' own moves all
+   stay in step with each other rather than the walk running ahead of the
+   log.  Walking a square takes WALK_MS instead of a whole beat. */
+function beatScale() {
+  if (!G || !G.walk) return 1;
+  return Math.max(0.04, WALK_MS / BEAT);
+}
+function beatWait(ms) { G.beat = (G.beat || 0) + Math.round(ms * beatScale()); }
 
 /* ---------------------------------------------------------- messages */
 function msg(s, col) { G.msgq.push({ s: s, c: col || 'w', at: beatNow() }); }
@@ -6142,6 +6518,18 @@ function decorHides(x, y, Lv) {
 function dropNear(x, y, it) {
   var ring = [[0, 0]].concat(DIR4).concat([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
   var i, nx, ny;
+  /* A stone thrown onto a stone joins it.  Every square in the ring
+     having something on it used to mean the thing was simply lost, and
+     the commonest way to arrange that is to throw twice at the same
+     spot. */
+  for (i = 0; i < ring.length; i++) {
+    nx = x + ring[i][0]; ny = y + ring[i][1];
+    if (!walkable(nx, ny)) continue;
+    var there = itemAt(L, nx, ny);
+    if (!there || !stackable(there, it)) continue;
+    there.cnt = (there.cnt || 1) + (it.cnt || 1);
+    return true;
+  }
   /* first pass: somewhere clear of the scenery */
   for (i = 0; i < ring.length; i++) {
     nx = x + ring[i][0]; ny = y + ring[i][1];
@@ -6325,7 +6713,8 @@ function sightClear(x0, y0, x1, y1) {
 function markVis(x, y) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return;
   var i = y * MAP_W + x;
-  L.flags[i] |= F_VIS | F_SEEN;      /* secret doors are drawn as plain wall */
+  /* seen with your own eyes, so it is no longer only on a map */
+  L.flags[i] = (L.flags[i] | F_VIS | F_SEEN) & ~F_MAP;   /* secret doors draw as plain wall */
 }
 /* ------------------------------------------------------------ running
    Five steps in a row without striking anything and you are running
@@ -6358,10 +6747,37 @@ function battleNear() {
   return false;
 }
 function playerRunning() { return battleNear() && (P.runSteps || 0) >= RUN_AFTER; }
+/* Is this step running away?
+
+   Going over your own feet is something that happens when you turn your
+   back on a fight, so the step has to be a retreat from all of it.
+   Backing off one creature straight into the reach of another is not
+   fleeing - it is closing with the second one, and you are watching
+   where you put your feet the whole way.
+
+   Steps are up, down, left or right, so a step changes the distance to
+   anything by exactly one square either way; away from every one of
+   them is the whole test. */
+function stepIsFleeing(dx, dy) {
+  var nx = P.x + dx, ny = P.y + dy, any = false, i;
+  for (i = 0; i < L.mons.length; i++) {
+    var m = L.mons[i];
+    if (m.ally || m.state < 2) continue;
+    if (mdist(m) > BATTLE_NEAR) continue;
+    if (!monSeesPlayer(m)) continue;
+    if (!canSeeMon(m)) continue;
+    any = true;
+    var now = Math.abs(m.x - P.x) + Math.abs(m.y - P.y);
+    var soon = Math.abs(m.x - nx) + Math.abs(m.y - ny);
+    if (soon <= now) return false;
+  }
+  return any;
+}
 /* Called on every step you take.  Returns true if you went over, in
    which case the step is spent picking yourself up. */
-function playerStumbles() {
+function playerStumbles(dx, dy) {
   if (!playerRunning()) return false;
+  if (!stepIsFleeing(dx, dy)) return false;
   if (rnd(100) >= stumbleChance(effDex(), 0)) return false;
   P.runSteps = 0;
   msg('You are running too fast and stumble.', 'O');
@@ -6423,11 +6839,20 @@ function seerLook() {
 
 /* does this square have a floor of that room beside it? */
 function touchesRoom(idx, ri) {
-  var x = idx % MAP_W, y = (idx / MAP_W) | 0;
+  var W = MAP_W, RA = L.roomAt, x = idx % W, y = (idx / W) | 0;
+  /* The sight pass asks this of nearly every square it looks at, and
+     away from the very edge of the map none of the eight neighbours can
+     fall off it - so the bounds check, and walking a list of pairs to
+     get the offsets, are both work that need not happen. */
+  if (x > 0 && y > 0 && x < W - 1 && y < MAP_H - 1) {
+    return RA[idx - W - 1] === ri || RA[idx - W] === ri || RA[idx - W + 1] === ri ||
+           RA[idx - 1]     === ri ||                       RA[idx + 1]     === ri ||
+           RA[idx + W - 1] === ri || RA[idx + W] === ri || RA[idx + W + 1] === ri;
+  }
   for (var d = 0; d < 8; d++) {
     var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
-    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
-    if (L.roomAt[ny * MAP_W + nx] === ri) return true;
+    if (nx < 0 || ny < 0 || nx >= W || ny >= MAP_H) continue;
+    if (RA[ny * W + nx] === ri) return true;
   }
   return false;
 }
@@ -6484,7 +6909,7 @@ function computeVis() {
       reach = MAP_W + MAP_H;
     if (!seeInDark && (blind || L.darkMap[idx])) reach = DARK_RADIUS;
     if (dist > reach) continue;
-    if (sightClear(px, py, x, y)) F[idx] |= F_VIS | F_SEEN;
+    if (sightClear(px, py, x, y)) F[idx] = (F[idx] | F_VIS | F_SEEN) & ~F_MAP;
   }
   /* Light the wall faces bordering anything you can see, so a room never
      looks like it has holes punched in its outline.  Doors sit inside a
@@ -6506,15 +6931,29 @@ function computeVis() {
         var ni = ny * W + nx;
         if ((F[ni] & F_VIS) && !BLOCKS[T[ni]]) { lit = 1; break; }
       }
-      if (lit) F[j] |= F_VIS | F_SEEN;
+      if (lit) F[j] = (F[j] | F_VIS | F_SEEN) & ~F_MAP;
     }
   }
 }
-function canSeeMon(m) {
+function canSeeMonAt(m, x, y) {
   if (P.blind) return false;
-  if (!(L.flags[m.y * MAP_W + m.x] & F_VIS)) return false;
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return false;
+  if (!(L.flags[y * MAP_W + x] & F_VIS)) return false;
   if (m.invis && !P.seeinv && !hasProp('see invisible')) return false;
   return true;
+}
+/* Where it really is.  The rules always want this one; only the drawing
+   asks about the square it happens to be standing on at this instant of
+   the playback. */
+function canSeeMon(m) { return canSeeMonAt(m, m.x, m.y); }
+/* Felt rather than seen.  Monster sight reaches through stone, so no
+   line of sight is asked for and the dark is no object - but it reaches
+   only so far, and it finds creatures, never things.  Measured corner to
+   corner, so its edge is a square about you rather than a diamond: what
+   you watch is the ring of floor around you, walls and all. */
+function sensedMon(m) {
+  if (!(P.monsight > 0)) return false;
+  return Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y)) <= MONSIGHT_RANGE;
 }
 
 /* ---------------------------------------------------------- level flow */
@@ -6804,6 +7243,8 @@ function enterLevel(depth, how) {
   tidyCracks(L);
   edgeTheMoss(L);
   tidyMossEdges(L);
+  /* last of all, with nothing else left to move the stone about */
+  sealRock(L);
 
   if (hasPerk('antiquary')) P.freeIdent = 1;
 
@@ -7052,6 +7493,11 @@ function igniteMon(m, line) {
     if (canSeeMon(m)) msgFight('The flames wash over it.', '6', 'unburnt', '6', m);
     return 0;
   }
+  /* Standing in the water is the one place nothing catches. */
+  if (inWater(m.x, m.y)) {
+    if (canSeeMon(m)) msgFight('The water keeps it from catching.', 'c', 'wet', 'c', m);
+    return 0;
+  }
   var turns = BURN_MIN + rnd(BURN_MAX - BURN_MIN + 1);
   m.burn = Math.max(m.burn || 0, turns);
   hurtByPlayer(m);
@@ -7069,6 +7515,14 @@ function freezeMon(m, line) {
    the fire finished it, in which case the caller must stop touching it. */
 function burnTick(m) {
   if (!m.burn) return false;
+  /* Into the water and it is out.  Walking into a pool is the obvious
+     thing to do when you are alight, and it ought to work. */
+  if (inWater(m.x, m.y)) {
+    m.burn = 0;
+    if (canSeeMon(m)) msgFight(fightLine('', cap(monShort(m)), ' steps into the water.'),
+      'c', 'out', 'c', m);
+    return false;
+  }
   m.burn--;
   var d = roll(BURN_DAMAGE[0], BURN_DAMAGE[1]);
   m.hp -= d;
@@ -7525,7 +7979,10 @@ function knockBack(m, fromx, fromy) {
   if (!walkable(nx, ny) || monAt(L, nx, ny)) return 0;
   if (nx === P.x && ny === P.y) return 0;
   if (!m.anim) m.anim = [];
-  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
+  /* the fifth number is when it starts, the sixth how long it takes:
+     a hurried step is over in half the time */
+  m.anim.push([m.x, m.y, nx, ny, beatNow(),
+               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
   m.x = nx; m.y = ny;
   m.held = 0;
   if (P.heldBy === m) { P.held = 0; P.heldBy = null; }
@@ -7668,11 +8125,16 @@ function monstersMove() {
     watched = watched || canSeeMon(m);
 
     if ((m.hasted || (m.def.fly && rnd(100) < 35)) && L.mons.indexOf(m) >= 0) {
-      /* A second step is a second thing to see.  One beat between them:
-         the pause before the next creature comes afterwards, not twice
-         in the middle of this one's turn. */
-      if (watched) beatWait(BEAT_STEP);
+      /* A second step is a second thing to see, but it is not worth as
+         much of the turn as the first: something quick enough to move
+         twice should look quick.  Everything after the first step is
+         taken at half the pace - half the pause before it, and half the
+         time crossing the square - so two steps read as one hurried
+         creature rather than as two ordinary ones. */
+      if (watched) beatWait(Math.round(BEAT_STEP * EXTRA_STEP));
+      m.quickStep = 1;
       monOneMove(m);
+      m.quickStep = 0;
       if (G.dead) return;
       watched = watched || canSeeMon(m);
     }
@@ -8140,6 +8602,9 @@ function monWitch(m) {
 }
 
 function monRanged(m) {
+  /* Caught flat footed is caught flat footed: a half dragon that has
+     just been surprised does not calmly line up a fireball. */
+  if (m.surprised) return false;
   if (monWitch(m)) return true;
   if (monWeb(m)) return true;
   if (monFireball(m)) return true;
@@ -8533,7 +8998,10 @@ function tryMonStep(m, dx, dy) {
      one start time - so the first was thrown away and the pair replayed
      together after a pause, which looked exactly like teleporting. */
   if (!m.anim) m.anim = [];
-  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
+  /* the fifth number is when it starts, the sixth how long it takes:
+     a hurried step is over in half the time */
+  m.anim.push([m.x, m.y, nx, ny, beatNow(),
+               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
   /* And it faces the way it went.  The sprites are painted facing right,
      so this is only ever a mirror, and only for the creatures that have
      a front and a back worth speaking of.  Being shoved is not walking,
@@ -8797,7 +9265,7 @@ function upkeep() {
   }
 
   ['blind', 'conf', 'hallu', 'haste', 'frozen', 'iced', 'webbed', 'seeinv',
-   'detmon', 'scare', 'fireShield', 'seer'].forEach(function (k) {
+   'monsight', 'scare', 'fireShield', 'seer'].forEach(function (k) {
     if (P[k] > 0) {
       P[k]--;
       if (P[k] === 0) {
@@ -8807,6 +9275,7 @@ function upkeep() {
         if (k === 'haste') msg('You feel yourself slowing down.', 'c');
         if (k === 'seer') msg('The ring goes quiet. The floor keeps its secrets again.', 'p');
         if (k === 'webbed') msg('You tear free of the web.', 'c');
+        if (k === 'monsight') msg('You stop feeling what moves nearby.', 'c');
       }
     }
   });
@@ -8855,7 +9324,7 @@ function scorch(cells, turns, at) {
   var lit = 0;
   for (i = 0; i < cells.length; i++) {
     var x = cells[i][0], y = cells[i][1];
-    if (!walkable(x, y)) continue;
+    if (!walkable(x, y) || inWater(x, y)) continue;
     lit++;
     dropEmber(x, y, life, at);
   }
@@ -9031,6 +9500,9 @@ function dazzled(m) {
 
 /* a single square of fire left behind, not a spreading blaze */
 function dropEmber(x, y, turns, at) {
+  /* Water does not catch.  A pool with a fire burning on it was the one
+     thing in the dungeon that read as a mistake however it got there. */
+  if (inWater(x, y)) return;
   if (typeof lightBarrel === 'function') lightBarrel(x, y);
   var life = turns || BURN_TRAIL_TURNS;
   for (var i = 0; i < L.clouds.length; i++) {
@@ -9371,8 +9843,9 @@ function playerMove(dx, dy) {
   /* With a fight on, five steps in a row without striking anything and
      you are running.  The step is still spent, but you spend it on the
      floor.  Away from a fight none of this applies: walking across an
-     empty floor is just walking. */
-  if (playerStumbles()) return true;
+     empty floor is just walking - and neither does a step that carries
+     you towards something, which is advancing, not fleeing. */
+  if (playerStumbles(dx, dy)) return true;
   P.runSteps = battleNear() ? (P.runSteps || 0) + 1 : 0;
   P.x = nx; P.y = ny;
   P.walkT = Date.now();
@@ -9439,7 +9912,12 @@ function afterStep() {
      trap off - which is the opposite of the point of the stone. */
   var tr = trapAt(P.x, P.y);
   var pinned = trapPinned(tr);
-  autoPickup();
+  /* With a mouse in your hand, a thing on the floor is picked up by
+     clicking it and a chest is opened by clicking it - walking over
+     something does not help itself to it.  With the keyboard there is
+     nothing to click with, so walking on is what picking up is. */
+  if (typeof usingPointer !== 'function' || !usingPointer()) autoPickup();
+  else noteUnderfoot();
   if (tr && pinned) {
     tr.found = 1;
     msgTrap('You lift it clear of the plate.', 'c', 'held', 'G');
@@ -9483,6 +9961,15 @@ function announceRoom() {
 }
 
 /* ---------------------------------------------------------- pickup */
+/* Mouse in hand: say what you are standing on rather than taking it. */
+function noteUnderfoot() {
+  var it = itemAt(L, P.x, P.y);
+  if (!it) return;
+  if (it.t === 'chest')
+    msg(it.seen ? 'An open chest. Click it to look.' : 'A chest. Click it to open it.', 'k');
+  else if (it.t === 'gold') msg('Gold on the floor. Click it to take it.', 'y');
+  else msg(cap(itemName(it)) + ' lies here. Click it to take it.', 'c');
+}
 function autoPickup() {
   var it = itemAt(L, P.x, P.y);
   if (!it) return;
@@ -9686,7 +10173,8 @@ function spawnFire(fx, fy) {
   seen[fy * MAP_W + fx] = 1;
   while (open.length && made < FIRE_MAX_CELLS) {
     var c = open.shift();
-    if (!walkable(c[0], c[1])) continue;
+    /* fire crosses the floor, not the water: a pool stops it dead */
+    if (!walkable(c[0], c[1]) || inWater(c[0], c[1])) continue;
     if (barrelAt(c[0], c[1])) { lightBarrel(c[0], c[1]); continue; }
     L.clouds.push({ x: c[0], y: c[1], kind: 'fire',
                     turns: FIRE_TURNS_MIN + rnd(FIRE_TURNS_MAX - FIRE_TURNS_MIN + 1) });
@@ -10237,16 +10725,23 @@ function quaff(it) {
       hurtPlayer(fd, 'a flask of liquid fire', 'fire');
       break;
     }
-    case 'monster detection':
-      if (L.mons.length) { P.detmon = 30; msg('You sense the presence of monsters.', 'P'); }
-      else { msg('You have a strange feeling for a moment.', '6'); id = 0; }
+    /* Not a roll-call of the floor - a sense of what is moving close by.
+       It reaches through stone, but only as far as MONSIGHT_RANGE, and it
+       shows creatures and nothing else: no chest, no scroll, no square of
+       floor you have not walked. */
+    case 'monster sight':
+      P.monsight = Math.max(P.monsight || 0, MONSIGHT_TURNS);
+      msg('You feel every living thing that moves nearby.', 'P');
       break;
     case 'magic detection': {
       var any = false;
       for (var i = 0; i < L.items.length; i++) {
         var o = L.items[i];
         if (o.t === 'potion' || o.t === 'scroll' || o.t === 'wand' || o.t === 'amulet' || o.t === 'chest') {
-          L.flags[o.y * MAP_W + o.x] |= F_SEEN; any = true;
+          /* this one is about the things themselves, so the square stops
+             being a bare line on a map and shows what is on it */
+          var mj = o.y * MAP_W + o.x;
+          L.flags[mj] = (L.flags[mj] | F_SEEN) & ~F_MAP; any = true;
         }
       }
       if (any) msg('You sense the presence of magic.', 'P');
@@ -10313,13 +10808,28 @@ function readScroll(it) {
   if (!used) msg('The words fade but the parchment holds.', 'c');
   switch (n) {
     case 'monster confusion': P.confuseTouch = 1; msg('Your hands begin to glow red.', 'R'); break;
-    case 'magic mapping':
+    /* A map of the floor as the people who built it knew it.  What was
+       walled up on purpose is not on it - a vault with no door and the
+       chamber behind a secret door are secrets the map does not tell,
+       and it leaves the seam in the wall a seam.  Nor does it list what
+       is lying about: you learn the shape of the rooms and where the
+       chests stand, and find the rest by walking. */
+    case 'magic mapping': {
       msg('This scroll has a map on it.', 'c');
+      var hush = {}, ri, rf;
+      for (ri = 0; ri < L.rooms.length; ri++) {
+        var rm = L.rooms[ri];
+        if (rm.gone || !rm.sealed) continue;
+        for (rf = 0; rf < rm.floors.length; rf++)
+          hush[rm.floors[rf][1] * MAP_W + rm.floors[rf][0]] = 1;
+      }
       for (i = 0; i < L.tiles.length; i++) {
-        if (L.tiles[i] === SDOOR) L.tiles[i] = DOOR;
-        if (L.tiles[i] !== ROCK) L.flags[i] |= F_SEEN;
+        if (L.tiles[i] === ROCK || L.tiles[i] === SDOOR) continue;
+        if (hush[i] || (L.sealed && L.sealed[i])) continue;
+        L.flags[i] |= F_SEEN | F_MAP;
       }
       break;
+    }
     case 'hold monster': {
       /* It used to reach a diamond five squares across, which is a good
          deal smaller than a room: read it with three spiders across the
@@ -11115,6 +11625,10 @@ function fireAt(best) {
   else spendUse(am);
 
   var thrown = !!kit.thrown;
+  /* A bow of fire lights the shaft as it leaves the string.  What it
+     hits catches; what it comes down on catches; and it is the bow that
+     does it, so an arrow out of any other bow is only an arrow. */
+  var aflame = !thrown && lw && activeRune(lw) && activeRune(lw).n === 'fire';
   /* A crossbow sends it flatter and faster than a bow does.  They share
      the same arrows now, so it is the launcher that decides, not what is
      loaded into it. */
@@ -11166,6 +11680,14 @@ function fireAt(best) {
     if (isHurlWeapon(am)) keepPct = 100;
     if (!W.rune && !flyHome(am, best.x, best.y, flight) && rnd(100) < keepPct)
       dropNear(best.x, best.y, likeItem(am));
+    if (aflame) {
+      /* the square first: it burns whether or not the shot killed it */
+      var bx0 = best.x, by0 = best.y;
+      if (best.hp <= 0) { killMonster(best, true, fx, flight); dropEmber(bx0, by0); return true; }
+      igniteMon(best, 'The burning shaft sets it alight.');
+      dropEmber(bx0, by0);
+      if (best.hp <= 0) { killMonster(best, true, 'burnt', flight); return true; }
+    }
     if (best.hp <= 0) { killMonster(best, true, fx, flight); return true; }
     msgFight(fightLine(ammoName + ' hits ', name, '.'), 'y', fx, 'O', best);
     if (!best.flee && best.hp * 4 < best.mhp && rnd(100) < 30) best.flee = 1;
@@ -11192,6 +11714,7 @@ function fireAt(best) {
        sailing on past and one already flying home. */
     beatWait(sail);
     landed = { x: fx, y: fy };
+    if (aflame) dropEmber(fx, fy);
     if (W.rune !== 'return' && !flyHome(am, fx, fy, flight))
       dropNear(fx, fy, likeItem(am));
   }
@@ -11944,6 +12467,37 @@ function boot() {
   window.addEventListener('keydown', onKey, false);
   window.addEventListener('keyup', onKeyUp, false);
   window.addEventListener('blur', onBlur, false);
+  /* The mouse listens on the canvas, not the window: the pointer is only
+     ours while it is over the picture. */
+  cv.addEventListener('mousemove', onMouseMove, false);
+  cv.addEventListener('mousedown', onMouseDown, false);
+  cv.addEventListener('mouseup', onMouseUp, false);
+  /* Three ways out of the picture, and all of them count: off the edge
+     of the canvas, off the edge of the page, and away from the window
+     altogether.  mouseout alone missed the last two. */
+  cv.addEventListener('mouseout', onMouseOut, false);
+  cv.addEventListener('mouseleave', onMouseOut, false);
+  window.addEventListener('mouseout', function (e) {
+    if (!e.relatedTarget && !e.toElement) onMouseOut();
+  }, false);
+  window.addEventListener('blur', onMouseOut, false);
+  /* the right button is the game's, not the browser's */
+  cv.addEventListener('contextmenu', function (e) { e.preventDefault(); }, false);
+  /* A finger works the same controls.  Not passive: these have to be
+     able to refuse the browser's own scrolling and zooming, and refusing
+     them is also what stops a tap arriving a second time as a
+     mouse click and lighting the arrow up. */
+  cv.addEventListener('touchstart', onTouchStart, { passive: false });
+  cv.addEventListener('touchmove', onTouchMove, { passive: false });
+  cv.addEventListener('touchend', onTouchEnd, { passive: false });
+  cv.addEventListener('touchcancel', onTouchCancel, { passive: false });
+  /* two fingers on a trackpad, or a wheel: both push the map */
+  cv.addEventListener('wheel', onWheel, { passive: false });
+  /* the visible area is not the window on a phone: the address bar comes
+     and goes, and turning it sideways changes everything */
+  window.addEventListener('orientationchange', fit);
+  if (window.visualViewport && window.visualViewport.addEventListener)
+    window.visualViewport.addEventListener('resize', fit);
   fit();
 }
 
@@ -11997,12 +12551,647 @@ function makeFont(color) {
 }
 
 /* --- integer-exact upscaling: snap to whole DEVICE pixels ------------ */
+/* The room there actually is.  On a phone the window is not it: the
+   address bar slides in and out, and window.innerHeight goes on
+   reporting the taller figure.  visualViewport is what is really
+   showing. */
+function viewSize() {
+  var vv = window.visualViewport;
+  return { w: (vv && vv.width) || window.innerWidth,
+           h: (vv && vv.height) || window.innerHeight };
+}
 function fit() {
   var dpr = window.devicePixelRatio || 1;
-  var s = Math.floor(Math.min(window.innerWidth * dpr / SW, window.innerHeight * dpr / SH));
+  var v = viewSize();
+  var s = Math.floor(Math.min(v.w * dpr / SW, v.h * dpr / SH));
   if (s < 1) s = 1;
   cv.style.width = (SW * s / dpr) + 'px';
   cv.style.height = (SH * s / dpr) + 'px';
+}
+/* Take the whole screen if the browser will give it.
+
+   It only ever happens on a real gesture, because that is the only time
+   a browser will grant it, and only once - a refusal is final and asking
+   again every tap would be noise.  Android and the desktop honour it.
+   An iPhone does not: Safari there still has no fullscreen for anything
+   that is not a video, so on one of those the way to get the whole
+   screen is Share -> Add to Home Screen, which the tags in the page
+   head make launch without any browser furniture at all. */
+var FULLSCREEN_TRIED = 0;
+function goFullscreen() {
+  if (FULLSCREEN_TRIED) return;
+  FULLSCREEN_TRIED = 1;
+  try {
+    var el = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement) return;
+    var go = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!go) return;                    /* an iPhone: nothing to ask for */
+    var r = go.call(el, { navigationUI: 'hide' });
+    if (r && r.catch) r.catch(function () { });
+    /* sideways is the way this is meant to be played, and a phone that
+       will lock to it should */
+    if (screen.orientation && screen.orientation.lock) {
+      var l = screen.orientation.lock('landscape');
+      if (l && l.catch) l.catch(function () { });
+    }
+  } catch (e) { }
+}
+
+
+/* ============================================================ the mouse
+   The pointer is a sprite off the sheet, drawn by the game at 230x128
+   like everything else - the browser's own cursor is hidden over the
+   canvas.  Blown up eight times, an operating system arrow would be the
+   one thing on screen that was not made of square pixels.
+
+   Where a click lands is worked out from the canvas rectangle rather
+   than from the scale factor, so it stays right through a resize, a
+   zoom, and a display with a different pixel ratio. */
+var MOUSE = { x: -99, y: -99, on: 0 };
+/* Which device you last used.  Only two things depend on it - whether
+   walking over an item picks it up, and whether the pointer is drawn -
+   and both should follow the hand you actually have on the desk. */
+var LAST_INPUT = 'key';
+
+/* A real mouse, with a pointer that hovers.  Only two things want this:
+   the arrow drawn off the sheet, and the highlights that follow it.  A
+   finger has nothing to hover with, and a drawn arrow sitting under it
+   would be a lie. */
+function usingMouse() { return LAST_INPUT === 'mouse'; }
+/* Something you point at squares with, finger or mouse alike.  Anything
+   that asks "which square is under it" or "is there a pack to tap on"
+   wants this one, or a touch device gets no pack icon, cannot click a
+   square, and helps itself to everything it walks over. */
+function usingPointer() { return LAST_INPUT === 'mouse' || LAST_INPUT === 'touch'; }
+
+/* Every clickable thing registers itself as it is drawn, so a click can
+   never disagree with the picture: what you see is the hit list.  It is
+   emptied at the top of every frame. */
+/* which button was pressed, and when, so it can be seen to go down */
+var BTN_FLASH = { i: -1, t: 0 };
+
+var HITS = [];
+function hit(x, y, w, h, what, i) {
+  HITS.push({ x: x, y: y, w: w, h: h, what: what, i: i });
+}
+function hitAt(mx, my) {
+  /* last drawn is on top */
+  for (var k = HITS.length - 1; k >= 0; k--) {
+    var r = HITS[k];
+    if (mx >= r.x && my >= r.y && mx < r.x + r.w && my < r.y + r.h) return r;
+  }
+  return null;
+}
+
+/* client pixels to buffer pixels */
+function mousePos(e) {
+  if (!cv || !cv.getBoundingClientRect) return { x: -99, y: -99 };
+  var r = cv.getBoundingClientRect();
+  if (!r.width || !r.height) return { x: -99, y: -99 };
+  return {
+    x: Math.floor((e.clientX - r.left) * SW / r.width),
+    y: Math.floor((e.clientY - r.top) * SH / r.height)
+  };
+}
+function onMouseMove(e) {
+  var m = mousePos(e);
+  MOUSE.x = m.x; MOUSE.y = m.y;
+  MOUSE.on = m.x >= 0 && m.y >= 0 && m.x < SW && m.y < SH;
+  if (MOUSE.on) LAST_INPUT = 'mouse';
+  /* Held down and moved: you are pushing the map about, not choosing a
+     square.  Once it counts as a drag the button no longer means a
+     click, so the view can be shoved around without walking anywhere. */
+  if (!MOUSE.held) return;
+  var dx = m.x - MOUSE.held.x, dy = m.y - MOUSE.held.y;
+  if (!MOUSE.held.drag &&
+      Math.max(Math.abs(dx), Math.abs(dy)) >= DRAG_SLOP) MOUSE.held.drag = 1;
+  if (!MOUSE.held.drag) return;
+  /* picking the map up again is a change of mind about where you were
+     going, so whatever was waiting on the view is dropped */
+  G.waiting = null;
+  G.drag = G.drag || { dx: 0, dy: 0 };
+  /* The map goes exactly where the hand goes.  The squares are still
+     drawn on their grid - G.drag is whole tiles, and everything that
+     asks which square is which uses it - but CAM_AT keeps the fraction
+     left over, and the map is drawn shifted by that fraction.  So the
+     picture follows the mouse a pixel at a time while every sprite still
+     lands on a whole pixel.
+
+     Rounding the offset to whole tiles here is what made a drag stutter:
+     the map only moved once the hand had crossed half a square, and then
+     it moved a whole one. */
+  var ex = clamp(MOUSE.held.ex - dx / TS, -PAN_MAX, PAN_MAX);
+  var ey = clamp(MOUSE.held.ey - dy / TS, -PAN_MAX, PAN_MAX);
+  G.drag.dx = Math.round(ex);
+  G.drag.dy = Math.round(ey);
+  CAM_AT.x = ex; CAM_AT.y = ey;
+}
+function onMouseOut() {
+  MOUSE.on = 0; MOUSE.x = -99; MOUSE.y = -99; MOUSE.held = null;
+}
+
+/* ============================================================== a finger
+   A touch screen works the mouse's controls, because they are the same
+   controls: a tap is a click, a drag pushes the map about, and a press
+   held still is the right button - which is the only one of the three a
+   finger has no obvious way to say.
+
+   What it does not get is the arrow.  The pointer is drawn off the sheet
+   for a mouse; under a finger it would sit where the finger already is
+   and be covered by it.  Connect a real mouse to the same device and the
+   first movement of it brings the arrow back, because that is what sets
+   LAST_INPUT - nothing has to be sniffed or guessed. */
+var TOUCH = null;
+function touchPos(t) {
+  if (!cv || !cv.getBoundingClientRect) return { x: -99, y: -99 };
+  var r = cv.getBoundingClientRect();
+  if (!r.width || !r.height) return { x: -99, y: -99 };
+  return {
+    x: Math.floor((t.clientX - r.left) * SW / r.width),
+    y: Math.floor((t.clientY - r.top) * SH / r.height)
+  };
+}
+function firstTouch(e) {
+  if (e.touches && e.touches.length) return e.touches[0];
+  if (e.changedTouches && e.changedTouches.length) return e.changedTouches[0];
+  return null;
+}
+function onTouchStart(e) {
+  if (e.preventDefault) e.preventDefault();     /* no scrolling, no double-tap zoom */
+  if (!ready) return;
+  /* a finger is a good enough reason to start the sound, and it was the
+     only thing that never woke it: the wake-up hung off the keyboard */
+  if (typeof soundWake === 'function') soundWake();
+  goFullscreen();
+  var t = firstTouch(e);
+  if (!t) return;
+  LAST_INPUT = 'touch';
+  var m = touchPos(t);
+  MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
+  TOUCH = { x: m.x, y: m.y, t: Date.now(), held: 0, id: t.identifier };
+  MOUSE.held = { x: m.x, y: m.y, right: 0, drag: 0,
+                 dx: (G.drag ? G.drag.dx : 0), dy: (G.drag ? G.drag.dy : 0),
+                 ex: CAM_AT.x, ey: CAM_AT.y };
+}
+function onTouchMove(e) {
+  if (e.preventDefault) e.preventDefault();
+  if (!ready || !TOUCH) return;
+  var t = firstTouch(e);
+  if (!t) return;
+  LAST_INPUT = 'touch';
+  onMouseMove({ clientX: t.clientX, clientY: t.clientY });
+}
+function onTouchEnd(e) {
+  if (e.preventDefault) e.preventDefault();
+  if (!ready) { TOUCH = null; MOUSE.held = null; return; }
+  var held = MOUSE.held, press = TOUCH;
+  MOUSE.held = null; TOUCH = null;
+  if (!press) return;
+  MOUSE.on = 0;                        /* a finger stops pointing at anything */
+  if (!held || held.drag) return;      /* that was a shove, not a tap */
+  if (press.held) return;              /* the long press already answered it */
+  MOUSE.on = 1;
+  clickAt(MOUSE.x, MOUSE.y, 0);
+  MOUSE.on = 0;
+}
+function onTouchCancel() { TOUCH = null; MOUSE.held = null; MOUSE.on = 0; }
+
+/* ---------------------------------------------------- two fingers
+   A trackpad reports two fingers sliding about as scrolling, and there
+   is nothing on this page to scroll, so it pushes the map instead -
+   the same shove as dragging it with the button down, given by the
+   other gesture people already use for moving a picture around.  A
+   wheel does the same, which is no loss: it had nothing else to do. */
+var WHEEL_T = 0;
+function onWheel(e) {
+  if (e.preventDefault) e.preventDefault();
+  if (!ready) return;
+  if (!MAP_MODES[G.mode]) return;         /* no dungeon behind it to move */
+  /* pixels, lines or pages - only the first is any use as it stands */
+  var k = e.deltaMode === 1 ? WHEEL_LINE_PX
+        : e.deltaMode === 2 ? VIEW_H * TS : 1;
+  var dx = (e.deltaX || 0) * k, dy = (e.deltaY || 0) * k;
+  if (!dx && !dy) return;
+  /* a shove of the view is a change of mind about where you were going */
+  G.waiting = null;
+  WHEEL_T = Date.now();
+  G.drag = G.drag || { dx: 0, dy: 0 };
+  var ex = clamp(CAM_AT.x + dx / TS, -PAN_MAX, PAN_MAX);
+  var ey = clamp(CAM_AT.y + dy / TS, -PAN_MAX, PAN_MAX);
+  G.drag.dx = Math.round(ex);
+  G.drag.dy = Math.round(ey);
+  CAM_AT.x = ex; CAM_AT.y = ey;
+}
+function wheeling() { return Date.now() - WHEEL_T < WHEEL_HOLD_MS; }
+/* A press held still on one square is the right button.  It is answered
+   where it stands rather than when the finger comes up, so it is plain
+   the press was heard. */
+function touchHold() {
+  if (!TOUCH || TOUCH.held) return;
+  if (MOUSE.held && MOUSE.held.drag) return;
+  if (Date.now() - TOUCH.t < TOUCH_HOLD_MS) return;
+  TOUCH.held = 1;
+  MOUSE.on = 1;
+  clickAt(TOUCH.x, TOUCH.y, 1);
+}
+
+/* The arrow, and the arrow with a pack beside it where a click would pick
+   something up.  Drawn last of all, over everything.
+
+   Only the top-left corner of the cell is drawn: a whole 8x8 tile is the
+   size of a monster, which is far too much arrow.  MOUSE_PX square is
+   about the size of a real pointer against these tiles, and the rest of
+   the cell is there for the pack that rides beside it. */
+function drawPointer() {
+  if (!MOUSE.on || !usingMouse()) return;
+  var name = pointerSprite();
+  sprClip(name, MOUSE.x, MOUSE.y, name === 'mouse' ? MOUSE_PX : TS, MOUSE_PX);
+}
+function pointerSprite() {
+  var h = hitAt(MOUSE.x, MOUSE.y);
+  return (h && h.what === 'pack') ? 'mouse_get' : 'mouse';
+}
+/* the top-left w by h pixels of a sprite, and nothing else of it */
+function sprClip(name, px, py, w, h) {
+  var i = IX[name]; if (i === undefined) return;
+  cx.drawImage(atlasImg, (i % ATLAS.cols) * TS, ((i / ATLAS.cols) | 0) * TS, w, h,
+    px, py, w, h);
+}
+
+/* Which map square the pointer is over, or nothing if it is not over the
+   map at all.  The camera is worked out the same way drawMap works it
+   out, panning included, so the frame sits on the square you can see. */
+function mouseTile() {
+  if (!MOUSE.on || !usingPointer()) return null;
+  /* Any mode with the dungeon on screen behind it.  This used to name
+     only the three quiet ones, so a click while aiming a throw found no
+     square under the pointer and backed out of the throw instead of
+     letting it go. */
+  if (!MAP_MODES[G.mode]) return null;
+  var shift = panShift();
+  if (MOUSE.x < VIEW_PX - shift || MOUSE.y < VIEW_PY) return null;
+  var pdx = (G.pan ? G.pan.dx : 0) + (G.drag ? G.drag.dx : 0);
+  var pdy = (G.pan ? G.pan.dy : 0) + (G.drag ? G.drag.dy : 0);
+  var camx = P.x - (VIEW_W >> 1) + pdx;
+  var camy = P.y - (VIEW_H >> 1) + pdy;
+  var mx = camx + Math.floor((MOUSE.x - VIEW_PX) / TS);
+  var my = camy + Math.floor((MOUSE.y - VIEW_PY) / TS);
+  if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) return null;
+  return { x: mx, y: my, px: VIEW_PX + (mx - camx) * TS, py: VIEW_PY + (my - camy) * TS };
+}
+/* A square of the map lights up under the pointer, so it is never in
+   doubt which one a click would land on. */
+function drawHoverTile() {
+  var m = mouseTile();
+  if (!m) return;
+  if (L.flags[m.y * MAP_W + m.x] & F_SEEN) {
+    frame(m.px, m.py, TS, TS, HOVER_COL);
+    return;
+  }
+  /* Past the edge of the map you know, the frame turns orange and thins
+     out with every square, so how far into the dark you are pointing is
+     something you can see rather than something you count.  Full at one
+     square out, gone at six. */
+  var d = unseenReach(m.x, m.y);
+  if (d < 1 || d > UNSEEN_REACH) return;
+  frameFade(m.px, m.py, TS, TS, HOVER_DARK_COL, (UNSEEN_REACH + 1 - d) / UNSEEN_REACH);
+}
+/* A frame drawn at less than full strength.  Not the ordinary frame with
+   the alpha turned down: that one lays its top and bottom across the
+   full width and then its sides across the full height, so the four
+   corner pixels get painted twice and come out brighter than the lines
+   they join.  Here the sides stop short of them. */
+function frameFade(x, y, w, h, col, a) {
+  var was = cx.globalAlpha;
+  cx.globalAlpha = ALPHA * clamp(a, 0, 1);
+  rect(x, y, w, 1, col);
+  rect(x, y + h - 1, w, 1, col);
+  rect(x, y + 1, 1, h - 2, col);
+  rect(x + w - 1, y + 1, 1, h - 2, col);
+  cx.globalAlpha = was;
+}
+
+/* The start of anything you do.  A keypress has always cleared the turn
+   clock before acting; a click did not, so it inherited whatever was
+   left of the last turn - and with several creatures on you that was a
+   second or more.  Everything you killed died on time and then waited
+   that long to fall over. */
+function beginAction() {
+  settleLog();
+  G.msgq = []; G.msgIdx = 0; G.beat = 0;
+}
+
+/* A click on a menu row is the same thing as walking the cursor onto it
+   and pressing ENTER, so it goes through the same key handlers rather
+   than repeating what they do. */
+/* The button going down starts either a click or a drag; which of the
+   two it was is only known when it comes back up. */
+function onMouseDown(e) {
+  if (!ready) return;
+  if (typeof soundWake === 'function') soundWake();
+  LAST_INPUT = 'mouse';
+  var m = mousePos(e);
+  MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
+  if (e.preventDefault) e.preventDefault();
+  MOUSE.held = { x: m.x, y: m.y, right: e.button === 2, drag: 0,
+                 dx: (G.drag ? G.drag.dx : 0), dy: (G.drag ? G.drag.dy : 0),
+                 /* to the fraction, so picking the map up again does not
+                    snap it to the nearest square first */
+                 ex: CAM_AT.x, ey: CAM_AT.y };
+}
+function onMouseUp(e) {
+  if (!ready) return;
+  var held = MOUSE.held;
+  MOUSE.held = null;
+  if (!held) return;
+  if (e && e.preventDefault) e.preventDefault();
+  /* That was a shove, not a click.  The picture is left wherever the
+     hand put it, up to half a square off the grid; the frame loop eases
+     it onto the grid over the next few frames, so it settles rather than
+     snapping and nothing is left drawn between two pixels. */
+  if (held.drag) return;
+  var m = mousePos(e);
+  MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
+  clickAt(m.x, m.y, held.right);
+}
+function clickAt(mx, my, right) {
+  var h = hitAt(mx, my);
+  /* the pack, wherever you are */
+  if (h && h.what === 'pack' && !right) {
+    if (G.mode === 'inv') closeInv(); else openInv();
+    return;
+  }
+  switch (G.mode) {
+    case 'title':
+      if (!G.titleMenu) { G.titleMenu = { i: 0 }; return; }
+      if (h && h.what === 'title') { G.titleMenu.i = h.i; titleKey('Enter'); }
+      return;
+    case 'pause':
+      if (h && h.what === 'pause') { G.pause.i = h.i; pauseKey('Enter'); }
+      else if (!h) pauseKey('Escape');
+      return;
+    case 'slots':
+      if (h && h.what === 'slot') { G.slots.i = h.i; slotsKey('Enter'); }
+      else if (!h) slotsKey('Escape');
+      return;
+    case 'hint':
+      hintKey(h && h.what === 'hint' && h.i === 1 ? 'Escape' : ' ');
+      return;
+    case 'help':
+      onKey({ key: 'Escape', preventDefault: function () { } });
+      return;
+    case 'perk':
+      if (h && h.what === 'perk') { G.perkPick.i = h.i; perkKey('Enter'); }
+      return;
+    case 'ask':
+      if (h && h.what === 'ask') { G.ask.i = h.i; askKey('Enter'); }
+      else if (!h) askKey('Escape');
+      return;
+    case 'choice':
+      if (h && h.what === 'choice') { G.choice.i = h.i; chooseKey('Enter'); }
+      else if (!h) chooseKey('Escape');
+      return;
+    case 'inv':
+      invClick(h, right);
+      return;
+    case 'ctx':
+      if (h && h.what === 'ctx') { G.ctx.i = h.i; ctxKey('Enter'); }
+      else G.ctx = null, G.mode = 'play';
+      return;
+    case 'play':
+      mapClick(mx, my, right);
+      return;
+    /* Aiming with the mouse: the square you click is the square you meant,
+       so put the cursor there and let go of it.  The right button, or a
+       click off the map, backs out. */
+    case 'aim': {
+      if (right) { aimKey('Escape'); return; }
+      var a = mouseTile();
+      if (!a) { aimKey('Escape'); return; }
+      G.aimSq.x = a.x; G.aimSq.y = a.y;
+      aimKey('Enter');
+      return;
+    }
+    case 'target': {
+      if (right) { targetKey('Escape'); return; }
+      var s2 = mouseTile();
+      if (!s2) { targetKey('Escape'); return; }
+      var pick = -1, q;
+      for (q = 0; q < G.targets.length; q++)
+        if (G.targets[q].x === s2.x && G.targets[q].y === s2.y) pick = q;
+      if (pick < 0) return;                    /* nothing of yours there */
+      G.tIdx = pick;
+      targetKey('Enter');
+      return;
+    }
+    case 'dir': {
+      if (right) { dirKey('Escape'); return; }
+      var s3 = mouseTile();
+      if (!s3) { dirKey('Escape'); return; }
+      /* a wand goes in one of four directions: take the one the click
+         lies furthest along */
+      var ddx = s3.x - P.x, ddy = s3.y - P.y;
+      if (!ddx && !ddy) return;
+      var key2 = Math.abs(ddx) >= Math.abs(ddy)
+        ? (ddx > 0 ? 'ArrowRight' : 'ArrowLeft')
+        : (ddy > 0 ? 'ArrowDown' : 'ArrowUp');
+      dirKey(key2);
+      return;
+    }
+    case 'blink': {
+      if (right) { blinkKey('Escape'); return; }
+      var s4 = mouseTile();
+      if (!s4) { blinkKey('Escape'); return; }
+      G.bl.x = s4.x; G.bl.y = s4.y;
+      blinkKey('Enter');
+      return;
+    }
+    case 'look': {
+      var s5 = mouseTile();
+      if (right || !s5) { lookKey('Escape'); return; }
+      G.look.x = s5.x; G.look.y = s5.y;
+      lookKey('Enter');
+      return;
+    }
+  }
+}
+
+/* ------------------------------------------------- clicking the dungeon
+   The left button sends you somewhere: to a square, up to a monster and
+   into it, onto a thing to pick it up, onto a chest to open it.  The
+   right button asks what you want done with whatever is there. */
+function mapClick(mx, my, right) {
+  var m = mouseTile();
+  if (!m) return;
+  if (G.walk) { stopWalk(null); if (!right) return; }
+  if (right) { openCtxMenu(m.x, m.y); return; }
+  /* Already waiting on the view?  Then this is a change of mind, and it
+     is the square you asked for last that you get. */
+  if (G.waiting) { G.waiting = { x: m.x, y: m.y }; return; }
+  /* With yourself off the screen the view comes home first - and the
+     order is kept, not thrown away, so the square you pointed at is the
+     square you walk to once you can see yourself again.  Looking is
+     still free: a right click is a question, not an order. */
+  if (camHomeFirst()) { G.waiting = { x: m.x, y: m.y }; return; }
+  mapOrder(m.x, m.y);
+}
+/* An order to the map, whether it was given a moment ago or is only
+   being carried out now that the view has arrived.  The square is what
+   is remembered, not the place on the screen: the view has moved in
+   between, and the same pixel is a different square by then. */
+function mapOrder(mx2, my2) {
+  var m = { x: mx2, y: my2 };
+  beginAction();
+  if (!(L.flags[m.y * MAP_W + m.x] & F_SEEN)) {
+    /* Into the dark: you cannot know there is a floor there, so you go
+       as near as the map you have allows and stop. */
+    var d = unseenReach(m.x, m.y);
+    if (d < 1 || d > UNSEEN_REACH) return;
+    var near = nearestApproach(m.x, m.y);
+    if (near) walkTo(near.x, near.y, null);
+    return;
+  }
+  /* A staircase is a thing to use, not just a square to stand on.  With
+     no keyboard there was no way off the floor at all: walking onto one
+     left you standing on it, and ENTER was the only thing that took it. */
+  if (tileAt(m.x, m.y) === STAIR || tileAt(m.x, m.y) === STAIR_UP) {
+    if (m.x === P.x && m.y === P.y) { beginAction(); tick(useStairs()); return; }
+    walkTo(m.x, m.y, { stairs: 1 });
+    return;
+  }
+  /* A locked door is a thing to go and try, not a square to stand on.
+     Clicking one used to be answered with "You can't go there", which is
+     true and useless: you walk over and put your hand to it instead. */
+  if (tileAt(m.x, m.y) === LOCKED) {
+    if (mdist({ x: m.x, y: m.y }) === 1) {
+      var mv = playerMove(m.x - P.x, m.y - P.y);
+      tick(mv);
+      return;
+    }
+    walkTo(m.x, m.y, { door: { x: m.x, y: m.y } });
+    return;
+  }
+  var foe = monAt(L, m.x, m.y);
+  if (foe && canSeeMon(foe) && !foe.ally) {
+    if (mdist(foe) === 1) { playerAttack(foe); tick(true); return; }
+    walkTo(m.x, m.y, { foe: foe });
+    return;
+  }
+  var it = itemAt(L, m.x, m.y);
+  if (it) {
+    if (m.x === P.x && m.y === P.y) { tick(handPickup()); return; }
+    walkTo(m.x, m.y, { what: it.t === 'chest' ? 'open' : 'get' });
+    return;
+  }
+  /* Clicking yourself is reaching into your own pack.  It used to be
+     the one square on the map a click did nothing at all with. */
+  if (m.x === P.x && m.y === P.y) { openInv(); return; }
+  walkTo(m.x, m.y, null);
+}
+
+/* ------------------------------------------------- the right-click menu
+   What is on the square decides what it offers.  Look is always there;
+   the rest depend on what you are pointing at and what you are holding. */
+function openCtxMenu(x, y) {
+  var opts = [], foe = monAt(L, x, y), it = itemAt(L, x, y);
+  var mine = (x === P.x && y === P.y);
+  opts.push(['look', 'Look']);
+  if (foe && canSeeMon(foe) && !foe.ally && !mine && canShoot())
+    opts.push(['shoot', 'Shoot']);
+  if (it && it.t === 'chest') opts.push(['open', 'Open']);
+  else if (it) opts.push(['get', 'Take']);
+  if (mine) opts.push(['inv', 'Inventory']);
+  opts.push(['cancel', 'Cancel']);
+  /* Where the pointer was when it was asked.  The menu used to be
+     anchored to the square by working the camera out from the player
+     alone, which ignores however far the map has been pushed - so once
+     you had dragged the view the menu opened somewhere else entirely. */
+  G.ctx = { x: x, y: y, i: 0, opts: opts, px: MOUSE.x, py: MOUSE.y };
+  G.mode = 'ctx';
+}
+function ctxKey(k) {
+  var d = keyDir(k);
+  if (!G.ctx) { G.mode = 'play'; return; }
+  if (k === 'Escape' || k === 'Tab') { G.ctx = null; G.mode = 'play'; return; }
+  if (d && d[1]) {
+    G.ctx.i = (G.ctx.i + d[1] + G.ctx.opts.length) % G.ctx.opts.length;
+    return;
+  }
+  if (k !== 'Enter' && k !== ' ') return;
+  var job = G.ctx.opts[G.ctx.i][0], x = G.ctx.x, y = G.ctx.y;
+  G.ctx = null; G.mode = 'play';
+  if (job === 'cancel') return;
+  if (job === 'look') {
+    /* Looking at yourself is opening your pack: what there is to know
+       about the square you are standing on is what you are carrying. */
+    if (x === P.x && y === P.y) { openInv(); return; }
+    beginAction();
+    var lines = lookAt(x, y), i;
+    for (i = 0; i < lines.length; i++) msg(lines[i], i ? '6' : 'c');
+    finishMsgs();
+    return;
+  }
+  if (job === 'inv') { openInv(); return; }
+  if (job === 'shoot') {
+    var foe2 = monAt(L, x, y);
+    if (!foe2 || !canSeeMon(foe2)) { msg('It is not there now.', '6'); finishMsgs(); return; }
+    beginAction();
+    tick(fireAt(foe2));
+    return;
+  }
+  if (job === 'get' || job === 'open') {
+    if (x === P.x && y === P.y) { beginAction(); tick(handPickup()); return; }
+    walkTo(x, y, { what: job });
+    return;
+  }
+}
+function drawCtxMenu() {
+  var m = G.ctx, i, wide = 0;
+  for (i = 0; i < m.opts.length; i++)
+    if (textW(m.opts[i][1]) > wide) wide = textW(m.opts[i][1]);
+  var w = 9 + wide + 2, h = m.opts.length * LH + 4;
+  /* Beside the pointer that asked, then kept on the screen.  Anchoring
+     it to the square meant working out where that square is drawn, and
+     that has to agree with the camera down to the drag and the pan; the
+     pointer is simply where it is. */
+  var sq = mouseTile();
+  var atx = (m.px !== undefined) ? m.px : (sq ? sq.px : VIEW_PX);
+  var aty = (m.py !== undefined) ? m.py : (sq ? sq.py : VIEW_PY);
+  var ax = clamp(atx + 3, 2, SW - w - 2);
+  var ay = clamp(aty + 3, 2, SH - 2 - h);
+  rect(ax, ay, w, h, '#0b0d1c');
+  frame(ax, ay, w, h, '#fad039');
+  for (i = 0; i < m.opts.length; i++) {
+    var ty = ay + 2 + i * LH;
+    hit(ax, ty - 1, w, LH, 'ctx', i);
+    if (i === m.i) {
+      rect(ax + 1, ty - 1, w - 2, LH, '#1b2a3d');
+      spr('point', ax, ty - 2, 1);
+    }
+    text(m.opts[i][1], ax + 9, ty, i === m.i ? 'w' : '6');
+  }
+}
+/* The pack screen: a square, a button, or a row of the item menu. */
+function invClick(h, right) {
+  if (!h) { if (G.menu) closeItemMenu(); return; }
+  if (h.what === 'menu') { G.menu.i = h.i; menuKey('Enter'); return; }
+  if (G.menu) { closeItemMenu(); return; }
+  if (h.what === 'btn') {
+    (G.pouch ? G.pcur : G.cur).r = btnRow();
+    (G.pouch ? G.pcur : G.cur).c = h.i;
+    BTN_FLASH.i = h.i; BTN_FLASH.t = Date.now();
+    pressInvButton(invButtons()[h.i][0]);
+    return;
+  }
+  if (h.what === 'cell') {
+    var cur = G.pouch ? G.pcur : G.cur;
+    cur.r = h.i.r; cur.c = h.i.c;
+    /* Either button asks what you want done with it.  A click used to
+       act on the thing straight away, which made a stone fly the moment
+       you touched it and gave a potion no way to be anything but drunk. */
+    invSpace();
+    return;
+  }
 }
 
 /* ---------------------------------------------------------- draw prims */
@@ -12236,9 +13425,268 @@ function resumeMode() {
   G.mode = G.invOpen ? 'inv' : 'play';
 }
 
+/* ------------------------------------------------------ the camera
+   Drag the map and the view sits where you left it, to the pixel.  The
+   view never shoves itself back afterwards: it comes home because you
+   walk it home.
+
+   Two numbers do it.  G.drag is where the view is, counted in whole
+   tiles, and it is what everything that asks "which square is that?"
+   uses.  CAM_AT is where the drawing has actually got to, in tiles and
+   fractions of one.  The gap between them is drawn as a shift of the
+   whole map by that fraction of a tile, so the picture can sit anywhere
+   the hand puts it while the squares underneath stay on their grid. */
+var CAM_AT = { x: 0, y: 0 };
+function camTarget() {
+  return { x: (G.drag ? G.drag.dx : 0) + (G.pan ? G.pan.dx : 0),
+           y: (G.drag ? G.drag.dy : 0) + (G.pan ? G.pan.dy : 0) };
+}
+/* How far, in pixels, to shift the whole map from where its tiles say it
+   is, so that it appears at CAM_AT rather than at the whole-tile offset
+   it is drawn on.
+
+   The map is drawn with the offset in camTarget: a bigger offset puts
+   the map further left.  To show it at CAM_AT instead, the shift is
+   (target - CAM_AT) tiles' worth - that way round.  It was the other way
+   round, which threw the map the wrong way by the whole distance of
+   every slide before easing it back, and that is what made a dragged map
+   look as though it were being torn about. */
+function camSlip() {
+  var w = camTarget();
+  return { x: Math.round((w.x - CAM_AT.x) * TS),
+           y: Math.round((w.y - CAM_AT.y) * TS) };
+}
+/* Is the hand pushing the map about this instant?  While it is, the view
+   is wherever the hand has put it and nothing else may move it. */
+function camDragging() {
+  return !!(MOUSE.held && MOUSE.held.drag) ||
+         (typeof wheeling === 'function' && wheeling());
+}
+/* Chase the target.  A fixed share of the remaining distance each frame:
+   quick to start, easy at the end, and it always arrives. */
+function camEase() {
+  if (camDragging()) return;          /* the hand is holding it */
+  var w = camTarget();
+  var dx = w.x - CAM_AT.x, dy = w.y - CAM_AT.y;
+  if (Math.abs(dx) < 0.02 && Math.abs(dy) < 0.02) {
+    CAM_AT.x = w.x; CAM_AT.y = w.y;
+    return;
+  }
+  /* A share of what is left, but never more than a fraction of a tile in
+     one frame: over a long shove a quarter of the distance is most of a
+     tile a frame, which is a jump rather than a glide. */
+  var sx = clamp(dx * CAM_CHASE, -CAM_MAX_STEP, CAM_MAX_STEP);
+  var sy = clamp(dy * CAM_CHASE, -CAM_MAX_STEP, CAM_MAX_STEP);
+  CAM_AT.x += sx;
+  CAM_AT.y += sy;
+}
+/* Is the player inside the view, given an offset in tiles? */
+function playerShown(dx, dy) {
+  var vx = (VIEW_W >> 1) - dx, vy = (VIEW_H >> 1) - dy;
+  /* Anywhere on the screen counts, the outermost row and column
+     included.  It used to want him CAM_EDGE squares clear of the edge,
+     so shoving the map until he sat against the border had the next
+     order haul the whole view back to centre - which is the one thing
+     the view is not supposed to do while you can see him. */
+  return vx >= 0 && vy >= 0 && vx < VIEW_W && vy < VIEW_H;
+}
+/* You have shoved the map so far that you cannot see yourself.  The
+   first order you give is spent on getting the view back: it slides home
+   and nothing else happens, and the order after that is the one you
+   walk on.  Moving a player you cannot see is how you walk into a troll
+   you had no way of knowing was there.
+
+   Returns true if it took the order. */
+function camHomeFirst() {
+  if (!G.drag) return false;
+  if (playerShown(G.drag.dx, G.drag.dy)) return false;
+  G.drag = null;                    /* CAM_AT is left out there, so it slides */
+  camSaw();
+  stopWalk(null);
+  return true;
+}
+/* The order that is waiting for the view to arrive.  Nothing happens
+   until the picture has stopped travelling, and then it happens as
+   though you had clicked that square just now. */
+function camWaiting() {
+  if (!G.waiting) return;
+  if (G.mode !== 'play' || G.dead || G.ask || G.walk) { G.waiting = null; return; }
+  var s = camSlip();
+  if (s.x || s.y) return;                 /* still on its way */
+  var job = G.waiting;
+  G.waiting = null;
+  if (job.x < 0 || job.y < 0 || job.x >= MAP_W || job.y >= MAP_H) return;
+  mapOrder(job.x, job.y);
+}
+/* Where the player was standing when the view last had a look at him. */
+var CAM_SEEN = null;
+function camSaw() { CAM_SEEN = { x: P.x, y: P.y }; }
+/* What the view does about a turn you have just taken.
+
+   It never drags itself back a square at a time.  That was a shove of
+   the whole map every turn, which is a jump however smoothly it is
+   drawn, and it happened whether you were walking towards the middle or
+   away from it or standing still.
+
+   Instead: a step that carries you towards the middle of the screen is
+   one the map sits still for, so you cross the screen and centre
+   yourself.  A step the other way the map follows as it always has.
+   Walk about for a while and you end up in the middle, and the picture
+   never moves under you except when you are moving.
+
+   The one time it does bring itself home is when you have pushed the map
+   so far that you are off the screen altogether.  Then the first order
+   you give slides it the whole way back to centred - you cannot play
+   looking at a square you are not on. */
+function camFollow() {
+  var was = CAM_SEEN;
+  camSaw();
+  if (!G.drag) return;
+  if (!playerShown(G.drag.dx, G.drag.dy)) { G.drag = null; return; }
+  if (!was) return;
+  /* only a step counts: a fall or a teleport is not walking across the
+     screen, and the view simply goes with you */
+  var sdx = P.x - was.x, sdy = P.y - was.y;
+  var hx = 0, hy = 0;
+  if (Math.abs(sdx) === 1 && sdx === Math.sign(G.drag.dx)) hx = sdx;
+  if (Math.abs(sdy) === 1 && sdy === Math.sign(G.drag.dy)) hy = sdy;
+  if (!hx && !hy) return;
+  /* Hold the map exactly where it is.  The tile offset shrinks by the
+     step, which leaves every square drawn on the pixel it was already
+     on - and CAM_AT has to shrink with it, or the drawing is suddenly a
+     whole tile from its target and slides back over the next few frames.
+     That slide was the jerk: the offset was right and the picture was
+     lurching a square and crawling back every time you stepped towards
+     the middle.
+
+     What the world is drawn at comes to (P + CAM_AT) tiles; holding both
+     ends of that sum steady is what "the map does not move" means. */
+  G.drag.dx -= hx; G.drag.dy -= hy;
+  CAM_AT.x -= hx; CAM_AT.y -= hy;
+  if (!G.drag.dx && !G.drag.dy) G.drag = null;
+}
+
+/* ------------------------------------------------------- walking there
+   A click sets a walk going and the loop takes one step per beat, so you
+   watch yourself cross the room rather than arriving in one frame.  Any
+   of the things below ends it - and none of them lose you anything, you
+   simply click again. */
+function walkTo(tx, ty, job) {
+  var stopShort = !!(job && (job.foe || job.door));
+  var path = findPath(tx, ty, { stopShort: stopShort });
+  if (!path) { msg("You can't go there.", '6'); finishMsgs(); return false; }
+  if (!path.length) {
+    /* already standing where you clicked, or beside what you clicked */
+    if (job) return doWalkJob(job);
+    return false;
+  }
+  /* Whoever is already watching you when you set off does not stop you:
+     once a fight has started you are free to walk about in it, and
+     backing away from a troll or closing on one is half of fighting.
+     Anything that spots you *during* the walk still ends it. */
+  G.walk = { path: path, at: 0, job: job || null, hp: P.hp,
+             hunger: G.hungerState, known: watchingNow() };
+  return true;
+}
+function stopWalk(why) {
+  if (!G.walk) return;
+  G.walk = null;
+  if (why) { msg(why, '6'); finishMsgs(); }
+}
+/* Whatever the walk was for, once you are there. */
+function doWalkJob(job) {
+  if (!job) return false;
+  if (job.foe) {
+    if (L.mons.indexOf(job.foe) < 0) return false;
+    if (mdist(job.foe) !== 1) return false;
+    beginAction();
+    playerAttack(job.foe);
+    tick(true);
+    return true;
+  }
+  /* You walked over to try the door.  Pushing into it is what opens it,
+     or what tells you which key you are missing - the same as walking
+     into it would have done. */
+  if (job.door) {
+    var dx = job.door.x - P.x, dy = job.door.y - P.y;
+    if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
+    if (tileAt(job.door.x, job.door.y) !== LOCKED) return false;
+    beginAction();
+    var opened = playerMove(dx, dy);
+    tick(opened);
+    return true;
+  }
+  /* walked over to the stairs: now go down them */
+  if (job.stairs) {
+    if (tileAt(P.x, P.y) !== STAIR && tileAt(P.x, P.y) !== STAIR_UP) return false;
+    beginAction();
+    tick(useStairs());
+    return true;
+  }
+  if (job.what === 'get' || job.what === 'open') {
+    beginAction();
+    var got = handPickup();
+    tick(got);
+    return true;
+  }
+  return false;
+}
+/* One step of a walk, if the beat has caught up and nothing has
+   happened that you ought to be looking at. */
+function walkTick() {
+  if (!G.walk) return;
+  if (G.dead || G.mode !== 'play') { G.walk = null; return; }
+  if (Date.now() < G.walk.at) return;
+  var w = G.walk;
+  /* the reasons to stop, all of them checked before the step */
+  if (heldFast()) { stopWalk('You cannot move.'); return; }
+  if (G.perkPick) { G.walk = null; return; }
+  if (P.hp < w.hp) { stopWalk(null); return; }
+  if (G.hungerState >= 2 && G.hungerState > w.hunger) { stopWalk(null); return; }
+  var foe = watchedByFoe(w.known);
+  if (foe) { stopWalk(cap(monShort(foe)) + ' has seen you.'); return; }
+  if (!w.path.length) {
+    var job = w.job;
+    G.walk = null;
+    if (job) doWalkJob(job);
+    return;
+  }
+  var next = w.path[0];
+  var dx = next.x - P.x, dy = next.y - P.y;
+  if (Math.abs(dx) + Math.abs(dy) !== 1 || !stepCost(next.x, next.y) ||
+      monAt(L, next.x, next.y)) {
+    stopWalk('The way is blocked.');
+    return;
+  }
+  w.path.shift();
+  beginAction();
+  var moved = playerMove(dx, dy);
+  if (G.ask) { G.walk = null; resumeMode(); return; }
+  tick(moved);
+  if (!G.walk) return;                     /* something ended it mid-step */
+  w.hp = P.hp; w.hunger = G.hungerState;
+  /* the beat has already been squeezed by beatScale, so what is left is
+     how long this square actually takes */
+  w.at = Date.now() + Math.max(20, G.beat);
+  if (G.mode !== 'play') { G.walk = null; return; }
+}
+
+/* Picking a thing up by hand, which is what a click on it means.  With
+   the keyboard, walking onto a square still does it for you. */
+function handPickup() {
+  var it = itemAt(L, P.x, P.y);
+  if (!it) { msg('There is nothing here.', '6'); finishMsgs(); return false; }
+  autoPickup();
+  finishMsgs();
+  return true;
+}
+
 /* ---------------------------------------------------------- turn */
 function tick(took) {
   if (!took) { finishMsgs(); return; }
+  /* You have moved, so the view starts coming back to you: a dragged map
+     is for looking about, not a camera you have to put back by hand. */
+  camFollow();
   /* A trap door drops you the same way a hole in the floor does: some
      number of floors, and it hurts.  This used to step you down exactly
      one level with no damage and nothing said, which is why falling
@@ -12281,6 +13729,9 @@ function onKeyUp(e) {
 function onBlur() { panSet(0); }
 
 function onKey(e) {
+  LAST_INPUT = 'key';
+  /* a walk is yours to interrupt: any key ends it */
+  if (G.walk) { G.walk = null; }
   if (!ready) return;
   var k = e.key;
   if (k === 'F5' || (e.ctrlKey && k === 'r')) return;
@@ -12309,6 +13760,7 @@ function onKey(e) {
 
   switch (G.mode) {
     case 'ask': askKey(k); return;
+    case 'ctx': ctxKey(k); return;
     /* The first key opens the menu over the splash rather than starting
        a run: LOAD has to be reachable without playing a turn first. */
     case 'title':
@@ -12348,6 +13800,11 @@ function playKey(k) {
   G.msgq = []; G.msgIdx = 0; G.beat = 0;
   var d = keyDir(k);
   if (d) {
+    /* A step of your own overrules a square you clicked a moment ago
+       and have not arrived at yet. */
+    G.waiting = null;
+    /* the view comes back before you take a step you cannot watch */
+    if (camHomeFirst()) return;
     /* only a step through the water can be a wade - swinging at
        something while you stand in it is not */
     var before = { x: P.x, y: P.y };
@@ -12496,6 +13953,7 @@ function drawAsk() {
   for (i = 0; i < 2; i++) {
     var bw = 30, bx = x + 5 + i * (bw + 6), by = y + 16;
     var cur = G.ask.i === i;
+    hit(bx, by, bw, 10, 'ask', i);
     rect(bx, by, bw, 10, cur ? '#2b3352' : '#141829');
     frame(bx, by, bw, 10, cur ? '#fad039' : '#3f4966');
     textIn(btn[i], bx, bw, by + 2, cur ? 'w' : '4');
@@ -12540,7 +13998,7 @@ function pauseKey(k) {
   if (k !== 'Enter' && k !== ' ') return;
   var pick = PAUSE_OPTS[G.pause.i][0];
   if (pick === 'save' || pick === 'load') { openSlots(pick, 'pause'); return; }
-  if (pick === 'hints') { openHints(); return; }
+  if (pick === 'hints') { openHints('pause'); return; }
   G.pause = null;
   if (pick === 'help') { G.mode = 'help'; return; }
   if (pick === 'restart') { newGame(false); return; }
@@ -12558,6 +14016,7 @@ function drawPause() {
     var cur = G.pause && G.pause.i === i;
     if (cur) rect(x + 2, y + 13 + i * 10, w - 4, 10, '#2b3352');
     text((cur ? '>' : ' ') + ' ' + PAUSE_OPTS[i][1], x + 5, y + 15 + i * 10, cur ? 'w' : '4');
+    hit(x + 2, y + 13 + i * 10, w - 4, 10, 'pause', i);
   }
 }
 
@@ -12575,7 +14034,7 @@ function titleKey(k) {
   var pick = TITLE_OPTS[G.titleMenu.i][0];
   if (pick === 'start') { G.titleMenu = null; newGame(false); return; }
   if (pick === 'load') { openSlots('load', 'title'); return; }
-  if (pick === 'hints') { openHints(); return; }
+  if (pick === 'hints') { openHints('title'); return; }
   if (pick === 'help') { G.mode = 'help'; return; }
   if (pick === 'exit') { G.titleMenu = null; return; }
 }
@@ -12589,6 +14048,7 @@ function drawTitleMenu() {
     var cur = G.titleMenu && G.titleMenu.i === i;
     if (cur) rect(x + 2, y + 13 + i * 10, w - 4, 10, '#2b3352');
     text((cur ? '>' : ' ') + ' ' + TITLE_OPTS[i][1], x + 5, y + 15 + i * 10, cur ? 'w' : '4');
+    hit(x + 2, y + 13 + i * 10, w - 4, 10, 'title', i);
   }
 }
 
@@ -12649,8 +14109,10 @@ function drawSlots() {
     if (cur) rect(x + 2, y + 14 + i * 10, w - 4, 10, '#2b3352');
     text((cur ? '>' : ' ') + ' ' + (i + 1) + '. ' + rows[i], x + 5, y + 16 + i * 10,
       cur ? 'w' : (rows[i] === 'empty' ? '4' : '3'));
+    hit(x + 2, y + 14 + i * 10, w - 4, 10, 'slot', i);
   }
   var by = y + 14 + SAVE_SLOTS * 10;
+  hit(x + 2, by, w - 4, 10, 'slot', SAVE_SLOTS);
   if (G.slots.i === SAVE_SLOTS) rect(x + 2, by, w - 4, 10, '#2b3352');
   text((G.slots.i === SAVE_SLOTS ? '>' : ' ') + ' BACK', x + 5, by + 2,
     G.slots.i === SAVE_SLOTS ? 'w' : '4');
@@ -12660,7 +14122,14 @@ function drawSlots() {
 /* ------------------------------------------------------------- hints
    One at a time, in no order you can predict, and never the same one
    twice in a row. */
-function openHints() { G.hint = { i: rnd(HINTS.length) }; G.mode = 'hint'; }
+/* Hints are read from the pause menu mid-run and from the title screen
+   before one, and ESC has to go back to whichever it was.  Opened from
+   the title it used to return to a pause menu that did not exist, and
+   the next key pressed fell over. */
+function openHints(from) {
+  G.hint = { i: rnd(HINTS.length), from: from || 'pause' };
+  G.mode = 'hint';
+}
 function nextHint() {
   if (HINTS.length < 2) return;
   var j = rnd(HINTS.length - 1);
@@ -12669,7 +14138,12 @@ function nextHint() {
 }
 function hintKey(k) {
   if (k === ' ') { nextHint(); return; }
-  if (k === 'Escape' || k === 'Enter' || k === 'Tab') { G.hint = null; G.mode = 'pause'; return; }
+  if (k === 'Escape' || k === 'Enter' || k === 'Tab') {
+    var back = (G.hint && G.hint.from) || 'pause';
+    G.hint = null;
+    G.mode = back;
+    return;
+  }
 }
 function hintLines() { return wrap(HINTS[G.hint.i], HINT_W - 10); }
 var HINT_W = 150;
@@ -12694,6 +14168,9 @@ function drawHints() {
   frame(x, y, w, h, '#636d85');
   text('HINT', x + 5, y + 4, 'y');
   for (i = 0; i < lines.length; i++) textMarked(lines[i], x + 5, y + 15 + i * 9, 'w', 'R', '?!');
+  /* click the box for another, click the bottom line to be done */
+  hit(x, y, w, h - 12, 'hint', 0);
+  hit(x, y + h - 12, w, 12, 'hint', 1);
   text('SPACE another   ESC back', x + 5, y + h - 10, '4');
 }
 
@@ -13215,9 +14692,18 @@ function invEnter() {
 }
 
 /* ---------------------------------------------------------- render */
-function loop() { render(); requestAnimationFrame(loop); }
+function loop() { walkTick(); touchHold(); camEase(); camWaiting(); render(); requestAnimationFrame(loop); }
 
 function render() {
+  /* The hit list is rebuilt every frame by the things that draw
+     themselves, so a click can never act on a button that is no longer
+     on the screen. */
+  HITS = [];
+  drawFrame();
+  drawHoverTile();
+  drawPointer();
+}
+function drawFrame() {
   rect(0, 0, SW, SH, '#0b0d1c');
   if (G.mode === 'title') { drawTitle(); return; }
   if (G.mode === 'win') { drawWin(); return; }
@@ -13228,6 +14714,9 @@ function render() {
      are and what is coming while you answer it */
   if (G.mode === 'ask' && G.ask) {
     drawMap(); drawKeyBelt(); drawSidePanel(); drawAsk(); return;
+  }
+  if (G.mode === 'ctx' && G.ctx) {
+    drawMap(); drawKeyBelt(); drawSidePanel(); drawCtxMenu(); return;
   }
   /* the last words have been read; raise the stone */
   if (G.mode === 'dying' && Date.now() >= G.deadAt) G.mode = 'dead';
@@ -13315,6 +14804,35 @@ function drawWarpFlash(x, y, camx, camy, cols, age) {
   spr(WARP_FRAMES[f], VIEW_PX + vx * TS, VIEW_PY + vy * TS, 1);
 }
 
+/* The two squares a creature is between at this instant of the playback:
+   the one it is leaving and the one it is walking onto, or the same
+   square twice when it is standing still.
+
+   A turn is worked out all at once and played back over the next few
+   hundred milliseconds, so by the time the stone you threw is still in
+   the air the creature has already, as far as the game is concerned,
+   walked out of sight.  Asking whether you can see the square it ended
+   on made it vanish before the stone landed.  Asking about the squares
+   it is between right now keeps it there until it has actually gone. */
+function monBetween(m) {
+  var here = [m.x, m.y, m.x, m.y];
+  if (!m.anim || !m.anim.length) return here;
+  var now = Date.now(), i;
+  for (i = 0; i < m.anim.length; i++) {
+    var a = m.anim[i], t0 = a[4];
+    if (now < t0) return [a[0], a[1], a[0], a[1]];      /* not started yet */
+    if (now < t0 + (a[5] || MOVE_ANIM_MS)) return [a[0], a[1], a[2], a[3]];  /* crossing */
+    if (i + 1 < m.anim.length && now < m.anim[i + 1][4])
+      return [a[2], a[3], a[2], a[3]];                  /* arrived, waiting */
+  }
+  return here;
+}
+/* Drawn if you can see either end of the step it is taking, so you watch
+   it walk out of sight and walk into view rather than having it pop. */
+function monShown(m) {
+  var b = monBetween(m);
+  return canSeeMonAt(m, b[0], b[1]) || canSeeMonAt(m, b[2], b[3]);
+}
 function monPixel(m, camx, camy) {
   var px = VIEW_PX + (m.x - camx) * TS, py = VIEW_PY + (m.y - camy) * TS;
   if (!m.anim || !m.anim.length) return [px, py];
@@ -13324,8 +14842,9 @@ function monPixel(m, camx, camy) {
     if (now < t0) {                      /* this step has not happened yet */
       return [VIEW_PX + (a[0] - camx) * TS, VIEW_PY + (a[1] - camy) * TS];
     }
-    if (now < t0 + MOVE_ANIM_MS) {
-      var f = (now - t0) / MOVE_ANIM_MS;
+    var span = a[5] || MOVE_ANIM_MS;
+    if (now < t0 + span) {
+      var f = (now - t0) / span;
       var fx = VIEW_PX + (a[0] - camx) * TS, fy = VIEW_PY + (a[1] - camy) * TS;
       var tx2 = VIEW_PX + (a[2] - camx) * TS, ty2 = VIEW_PY + (a[3] - camy) * TS;
       return [Math.round(fx + (tx2 - fx) * f), Math.round(fy + (ty2 - fy) * f)];
@@ -13397,13 +14916,13 @@ function cornerFrom(name, px, py, corner, a) {
 }
 
 /* the sprite a square would show if it were plain floor */
-/* Three flagstones rather than two, scattered by the same cheap hash so
-   the same square always draws the same one. */
+/* Three flagstones, scattered evenly over the floor by a cheap hash so
+   the same square always draws the same one.  Two of the three used to
+   turn up once in eight squares each, which read as one flagstone with
+   the odd blemish rather than three kinds of stone. */
 function floorSprite(mx, my) {
-  var h = (mx * 3 + my * 5) & 7;
-  if (h === 0) return 'floor2';
-  if (h === 4) return 'floor3';
-  return 'floor';
+  var h = tileHash(mx, my) % 3;
+  return h === 1 ? 'floor2' : h === 2 ? 'floor3' : 'floor';
 }
 function liquidSprite(t, mx, my) {
   if (t === HOLE) return 'hole';
@@ -13714,9 +15233,11 @@ function sprHurt(name, px, py, alpha, ent) {
   return ph;
 }
 
-/* wallVariant lives in part1 now: which wall a square wears is decided by
-   its coordinates alone, and the floor builder needs to know too - moss
-   gathers thicker along a wall that has moss growing on it. */
+/* wallVariant and tileHash live in part1: which face a square wears is
+   decided by where it is and nothing else, and the floor builder needs
+   the answer too - moss gathers thicker along a wall that has moss
+   growing on it.  A copy of wallVariant was left here for a while and
+   quietly went stale; there is one of it now. */
 
 /* ================================================== the panel steps aside
    Hold SHIFT and the left panel slides off to the left, uncovering the
@@ -13766,18 +15287,42 @@ function shadeAt(x, y) {
 }
 
 function drawMap() {
+  /* Sliding: the whole map is drawn off its own grid, with the map area
+     clipped so nothing spills onto the panel, and enough extra tiles
+     drawn beyond the edges to fill the space the shift opens up.
+
+     One extra row and column used to be all it drew.  A slide of half a
+     screen shifts the picture by far more than that, so most of the
+     screen had nothing drawn on it and the map went black exactly when
+     you wanted to watch it travel. */
+  var slip = camSlip();
+  if (slip.x || slip.y) {
+    cx.save();
+    cx.beginPath();
+    cx.rect(0, 0, SW, SH);
+    cx.clip();
+    cx.translate(slip.x, slip.y);
+    drawMapAt(Math.ceil(Math.abs(slip.x) / TS) + 1,
+              Math.ceil(Math.abs(slip.y) / TS) + 1);
+    cx.restore();
+    return;
+  }
+  drawMapAt(0, 0);
+}
+function drawMapAt(overX, overY) {
   /* Never clamped: you sit in the middle of the screen wherever you are,
      so the edge of the map never gives away which way is out. */
   var shift = panShift();
   /* how many columns of map the retreating panel has uncovered */
   var pcols = Math.ceil(shift / TS);
-  var pdx = G.pan ? G.pan.dx : 0, pdy = G.pan ? G.pan.dy : 0;
+  var pdx = (G.pan ? G.pan.dx : 0) + (G.drag ? G.drag.dx : 0);
+  var pdy = (G.pan ? G.pan.dy : 0) + (G.drag ? G.drag.dy : 0);
   var camx = P.x - (VIEW_W >> 1) + pdx;
   var camy = P.y - (VIEW_H >> 1) + pdy;
   var vx, vy, i;
 
-  for (vy = 0; vy < VIEW_H; vy++) {
-    for (vx = -pcols; vx < VIEW_W; vx++) {
+  for (vy = -overY; vy < VIEW_H + overY; vy++) {
+    for (vx = -pcols - overX; vx < VIEW_W + overX; vx++) {
       var mx = camx + vx, my = camy + vy;
       if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
       var idx = my * MAP_W + mx;
@@ -13800,7 +15345,11 @@ function drawMap() {
           drawWallEdging(mx, my, px, py, a);
           break;
         case FLOOR:
-          spr(((mx * 3 + my * 5) & 7) === 0 ? 'floor2' : 'floor', px, py, a);
+          /* the three flagstones, dealt by the same hash the rest of the
+             drawing uses.  This line had its own pattern - two of the
+             three stones, one of them every eighth square, in stripes -
+             so floor3 was never laid at all. */
+          spr(floorSprite(mx, my), px, py, a);
           drawWallEdging(mx, my, px, py, a);
           drawEdging(mx, my, px, py, a);
           if (L.decor[idx] && !(L.showAt && L.showAt[idx] && Date.now() < L.showAt[idx]))
@@ -13840,8 +15389,13 @@ function drawMap() {
     var it = L.items[i];
     var fl = L.flags[it.y * MAP_W + it.x];
     if (!(fl & F_SEEN)) continue;
+    /* A square you only know from a map shows what is built into the
+       floor - a chest stands there like furniture - but not the loose
+       things lying on it, which no map ever recorded. */
+    if ((fl & F_MAP) && it.t !== 'chest') continue;
     var ivx = it.x - camx, ivy = it.y - camy;
-    if (ivx < -pcols || ivy < 0 || ivx >= VIEW_W || ivy >= VIEW_H) continue;
+    if (ivx < -pcols - overX || ivy < -overY ||
+        ivx >= VIEW_W + overX || ivy >= VIEW_H + overY) continue;
     spr(itemSprite(it), VIEW_PX + ivx * TS, VIEW_PY + ivy * TS,
       (fl & F_VIS) ? shadeAt(it.x, it.y) : 0.45);
   }
@@ -13851,7 +15405,8 @@ function drawMap() {
     var age = Date.now() - co.t;
     if (age > 620) { L.corpses.splice(i, 1); continue; }
     var cvx = co.x - camx, cvy = co.y - camy;
-    if (cvx < -pcols || cvy < 0 || cvx >= VIEW_W || cvy >= VIEW_H) continue;
+    if (cvx < -pcols - overX || cvy < -overY ||
+        cvx >= VIEW_W + overX || cvy >= VIEW_H + overY) continue;
     if (age < 0) { spr(co.spr, VIEW_PX + cvx * TS, VIEW_PY + cvy * TS, 1); continue; }
     if (((age / 90) | 0) % 2 === 0)
       spr(co.spr, VIEW_PX + cvx * TS, VIEW_PY + cvy * TS, 1);
@@ -13860,12 +15415,20 @@ function drawMap() {
   var markers = [];
   for (i = 0; i < L.mons.length; i++) {
     var m = L.mons[i];
-    var see = canSeeMon(m), det = P.detmon > 0;
+    var see = monShown(m), det = sensedMon(m);
     if (!see && !det) continue;
     /* conjured a moment ago and not there yet */
     if (m.showAt && Date.now() < m.showAt) continue;
-    var mvx = m.x - camx, mvy = m.y - camy;
-    if (mvx < -pcols - 1 || mvy < -1 || mvx > VIEW_W || mvy > VIEW_H) continue;
+    /* Both ends of the step it is taking, because it is drawn somewhere
+       between them.  This used to throw it out on the square it ends on:
+       one that walks a long way out of the view - or is picked up and
+       put down somewhere else - was dropped before the drawing had a
+       chance to show it still standing where you last saw it. */
+    var mb = monBetween(m);
+    var mvx = Math.min(mb[0], mb[2]) - camx, mvy = Math.min(mb[1], mb[3]) - camy;
+    var mvx2 = Math.max(mb[0], mb[2]) - camx, mvy2 = Math.max(mb[1], mb[3]) - camy;
+    if (mvx2 < -pcols - 1 - overX || mvy2 < -1 - overY ||
+        mvx > VIEW_W + overX || mvy > VIEW_H + overY) continue;
     var pos = monPixel(m, camx, camy);
     /* on its way somewhere else, or arriving */
     var wp = warpPhase(m.warp);
@@ -13933,7 +15496,8 @@ function drawMap() {
       var fx2 = mr.x + 0.5 + (mr.w - 1) * (((q * 0.7548 + swirl * 0.22) % 1));
       var fy2 = mr.y + mr.h - 0.5 - (mr.h - 1) * rise;
       var mvx = fx2 - camx, mvy = fy2 - camy;
-      if (mvx < -pcols || mvy < 0 || mvx >= VIEW_W || mvy >= VIEW_H) continue;
+      if (mvx < -pcols - overX || mvy < -overY ||
+          mvx >= VIEW_W + overX || mvy >= VIEW_H + overY) continue;
       var mj = ((fy2 | 0) * MAP_W + (fx2 | 0));
       if (!(L.flags[mj] & F_VIS)) continue;
       /* brightest in the middle of its climb, so they wink in and out */
@@ -13951,7 +15515,8 @@ function drawMap() {
   for (var fk in (L.fuses || {})) {
     var fj = fk | 0, fbx = fj % MAP_W, fby = (fj / MAP_W) | 0;
     var fcx = fbx - camx, fcy = fby - camy;
-    if (fcx < -pcols || fcy < 0 || fcx >= VIEW_W || fcy >= VIEW_H) continue;
+    if (fcx < -pcols - overX || fcy < -overY ||
+        fcx >= VIEW_W + overX || fcy >= VIEW_H + overY) continue;
     if (!(L.flags[fj] & F_VIS)) continue;
     var fz = ((Date.now() / 90 + fbx * 3 + fby * 5) | 0) % 2;
     spr(fz ? 'flame' : 'fire_wall', VIEW_PX + fcx * TS, VIEW_PY + fcy * TS, 1);
@@ -13960,7 +15525,8 @@ function drawMap() {
   for (i = 0; i < L.clouds.length; i++) {
     var cl = L.clouds[i];
     var clx = cl.x - camx, cly = cl.y - camy;
-    if (clx < -pcols || cly < 0 || clx >= VIEW_W || cly >= VIEW_H) continue;
+    if (clx < -pcols - overX || cly < -overY ||
+        clx >= VIEW_W + overX || cly >= VIEW_H + overY) continue;
     if (!(L.flags[cl.y * MAP_W + cl.x] & F_VIS)) continue;
     /* thrown fire is worked out at once and arrives a beat later */
     if (cl.at && Date.now() < cl.at) continue;
@@ -14069,7 +15635,8 @@ function drawMap() {
     var ring = fireShieldCells(), ri;
     for (ri = 0; ri < ring.length; ri++) {
       var rvx = ring[ri][0] - camx, rvy = ring[ri][1] - camy;
-      if (rvx < -pcols || rvy < 0 || rvx >= VIEW_W || rvy >= VIEW_H) continue;
+      if (rvx < -pcols - overX || rvy < -overY ||
+          rvx >= VIEW_W + overX || rvy >= VIEW_H + overY) continue;
       /* flicker, so it reads as flame rather than a painted tile */
       var fa = 0.7 + 0.3 * Math.sin((Date.now() / 90) + ri);
       spr('flame', VIEW_PX + rvx * TS, VIEW_PY + rvy * TS, fa);
@@ -14322,8 +15889,19 @@ function drawStats() {
   if (P.frozen) fl.push('Stuck');
   if (P.scare) fl.push('Scare');
   if (P.amulet) fl.push('AMULET');
-  var s = clipTo(fl.join(' '), LOG_W);
-  if (s) text(s, PX0, FLAG_Y, G.hungerState >= 2 ? 'R' : 'O');
+  /* The pack, in the corner, where a mouse can reach it without knowing
+     that TAB opens it.  The flags shuffle along to make room. */
+  var px2 = PX0, fx2 = PX0;
+  if (usingPointer()) {
+    /* flush with the floor of the screen: the flags line is the last one
+       there is, so the icon sits in it rather than under it */
+    var py2 = SH - TS;
+    spr('pouch', px2, py2, 1);
+    hit(px2, py2, TS + 1, TS, 'pack', 0);
+    fx2 = px2 + TS + 2;
+  }
+  var s = clipTo(fl.join(' '), LOG_W - (fx2 - PX0));
+  if (s) text(s, fx2, FLAG_Y, G.hungerState >= 2 ? 'R' : 'O');
 }
 
 /* Your keys, in the top corner of the map.  Nothing important happens
@@ -14355,8 +15933,12 @@ function crossOut(x, y) {
 }
 
 function slotBox(x, y, it, hi, sel, dim) {
-  rect(x, y, SL, SL, sel ? '#1b2a3d' : '#12172c');
-  frame(x, y, SL, SL, hi ? '#fad039' : sel ? '#74d6e8' : '#3f4966');
+  /* under the pointer: the square lifts a little, so it is plain which
+     one a click would land on without moving the keyboard cursor */
+  var over = usingMouse() && MOUSE.on &&
+    MOUSE.x >= x && MOUSE.y >= y && MOUSE.x < x + SL && MOUSE.y < y + SL;
+  rect(x, y, SL, SL, sel ? '#1b2a3d' : over ? '#1b2140' : '#12172c');
+  frame(x, y, SL, SL, hi ? '#fad039' : sel ? '#74d6e8' : over ? '#636d85' : '#3f4966');
   if (it) {
     sprS(itemSprite(it), x + 1, y + 1, 2);
     if (it.cnt > 1) {
@@ -14428,6 +16010,7 @@ function drawInv() {
   /* equip row */
   for (c = 0; c < 5; c++) {
     x = GX + c * PITCH;
+    hit(x, GY_EQ, SL, SL, 'cell', { r: 0, c: c });
     var key = EQ_ORDER[c];
     var isCur = G.pouch ? (G.pcur.r < 0 && G.pcur.c === c)
                         : (G.cur.r === 0 && G.cur.c === c);
@@ -14448,6 +16031,10 @@ function drawInv() {
         var bi = rr * 5 + cc;
         var cu = !G.pouch && G.cur.r === rr + 1 && G.cur.c === cc;
         var se = G.sel && G.sel.ref.kind === 'slot' && G.sel.ref.i === bi;
+        /* the squares are only clickable while the pack is the thing on
+           screen - mid-slide they are on their way out */
+        if (!G.pouch && ph === 0)
+          hit(GX + cc * PITCH, GY_BAG + rr * PITCH, SL, SL, 'cell', { r: rr + 1, c: cc });
         slotBox(GX + cc * PITCH, GY_BAG + rr * PITCH - lift, P.slots[bi], cu, se, false);
       }
     });
@@ -14459,7 +16046,11 @@ function drawInv() {
   /* The two keys that always work, at the top where they are out of the
      way of the thing you are reading about. */
   var ly = TITLE_Y;
-  text(picking ? 'SPACE picks  ESC stop' : 'SPACE menu  TAB/ESC close',
+  /* With a chest open at your feet, ENTER on one of its squares takes
+     the thing out, so the line says so. */
+  text(picking ? 'SPACE picks  ESC stop'
+     : inBox() ? 'SPACE menu-ESC close-ENTER take'
+     : 'SPACE menu  TAB/ESC close',
     IXX, ly, '4');
 
   /* The name sits with what it says about itself rather than five lines
@@ -14587,10 +16178,16 @@ function drawInvButtons() {
     /* the last one takes up whatever the division left over */
     if (i === b.length - 1) w = full - (bx - GX);
     var cur = onButtons() && (G.pouch ? G.pcur : G.cur).c === i;
-    rect(bx, BTN_Y, w, BTN_H, cur ? '#2b3352' : '#141829');
-    frame(bx, BTN_Y, w, BTN_H, cur ? '#fad039' : '#3f4966');
+    var over = usingMouse() && MOUSE.on &&
+      MOUSE.x >= bx && MOUSE.y >= BTN_Y && MOUSE.x < bx + w && MOUSE.y < BTN_Y + BTN_H;
+    /* pressed a moment ago: the whole button goes yellow, so a press
+       that opens nothing still shows it was heard */
+    var lit = BTN_FLASH.i === i && Date.now() - BTN_FLASH.t < BTN_FLASH_MS;
+    rect(bx, BTN_Y, w, BTN_H, lit ? '#fad039' : cur ? '#2b3352' : over ? '#1b2140' : '#141829');
+    frame(bx, BTN_Y, w, BTN_H, lit ? '#fad039' : cur ? '#fad039' : over ? '#636d85' : '#3f4966');
     var tw = textW(b[i][1]);
-    text(b[i][1], bx + ((w - tw) >> 1), BTN_Y + 2, cur ? 'y' : '6');
+    text(b[i][1], bx + ((w - tw) >> 1), BTN_Y + 2, lit ? 'n' : cur ? 'y' : '6');
+    hit(bx, BTN_Y, w, BTN_H, 'btn', i);
   }
 }
 
@@ -14652,12 +16249,18 @@ function drawItemMenu() {
   var w = 9 + wide + 2;
   var h = m.opts.length * LH + 4;
 
-  /* anchor under the square it belongs to, then keep it on screen */
+  /* Beside the square it belongs to, level with its top, then kept on
+     the screen.  It used to sit under the square - and for a bag slot it
+     sat a whole square too low as well, because the bag rows are drawn
+     from row one while the cursor counts the equip row as row zero. */
   var cur = G.pouch ? G.pcur : G.cur;
-  var ax, ay;
-  if (m.ref.kind === 'pouch') { ax = POU.x + cur.c * PITCH; ay = POU.y + cur.r * PITCH + SL; }
-  else if (m.ref.kind === 'eq') { ax = GX + cur.c * PITCH; ay = GY_EQ + SL; }
-  else { ax = GX + cur.c * PITCH; ay = GY_BAG + cur.r * PITCH + SL; }
+  var cellX, cellY;
+  if (m.ref.kind === 'pouch') { cellX = POU.x + cur.c * PITCH; cellY = POU.y + cur.r * PITCH; }
+  else if (m.ref.kind === 'eq') { cellX = GX + cur.c * PITCH; cellY = GY_EQ; }
+  else { cellX = GX + cur.c * PITCH; cellY = GY_BAG + (cur.r - 1) * PITCH; }
+  var ax = cellX + SL + 1, ay = cellY;
+  /* if there is no room to its right, put it to its left instead */
+  if (ax + w > SW - 2) ax = cellX - w - 1;
   ax = clamp(ax, 2, SW - w - 2);
   ay = clamp(ay, 2, SH - 2 - h);
 
@@ -14665,6 +16268,7 @@ function drawItemMenu() {
   frame(ax, ay, w, h, '#fad039');
   for (i = 0; i < m.opts.length; i++) {
     var ty = ay + 2 + i * LH;
+    hit(ax, ty - 1, w, LH, 'menu', i);
     if (i === m.i) {
       rect(ax + 1, ty - 1, w - 2, LH, '#1b2a3d');
       spr('point', ax, ty - 2, 1);
@@ -14711,6 +16315,8 @@ function drawPouch(ph) {
       var cu = G.pouch && G.pcur.r === r2 && G.pcur.c === c2;
       var se = G.sel && G.sel.ref.kind === 'pouch' && G.sel.ref.i === i &&
                G.sel.ref.pouch === pouch;
+      if (G.pouch && ph === 1)
+        hit(POU.x + c2 * PITCH, POU.y + r2 * PITCH, SL, SL, 'cell', { r: r2, c: c2 });
       slotBox(POU.x + c2 * PITCH, gy + r2 * PITCH, pouch.items[i], cu, se, false);
     }
   });
@@ -14746,6 +16352,7 @@ function drawChoice() {
   text('ENTER means:', x + 5, y + 3, 'y');
   for (i = 0; i < opts.length; i++) {
     var cur = G.choice && G.choice.i === i;
+    hit(x + 2, y + 11 + i * 9, w - 4, 9, 'choice', i);
     if (cur) rect(x + 2, y + 11 + i * 9, w - 4, 9, '#2b3352');
     text((cur ? '>' : ' ') + ' ' + opts[i][1], x + 5, y + 12 + i * 9,
       cur ? 'w' : '4');
@@ -14786,6 +16393,7 @@ function drawPerkPick() {
   y = 26;
   for (i = 0; i < rows.length; i++) {
     var cur = G.perkPick && G.perkPick.i === i;
+    hit(4, y - 2, SW - 8, 17, 'perk', i);
     if (cur) rect(4, y - 2, SW - 8, 17, '#2b3352');
     text(cur ? '>' : ' ', 7, y, 'y');
     text(rows[i].n, 14, y, rows[i].id === 'hp' ? 'G' : 'c');

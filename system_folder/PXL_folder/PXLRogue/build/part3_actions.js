@@ -69,8 +69,9 @@ function playerMove(dx, dy) {
   /* With a fight on, five steps in a row without striking anything and
      you are running.  The step is still spent, but you spend it on the
      floor.  Away from a fight none of this applies: walking across an
-     empty floor is just walking. */
-  if (playerStumbles()) return true;
+     empty floor is just walking - and neither does a step that carries
+     you towards something, which is advancing, not fleeing. */
+  if (playerStumbles(dx, dy)) return true;
   P.runSteps = battleNear() ? (P.runSteps || 0) + 1 : 0;
   P.x = nx; P.y = ny;
   P.walkT = Date.now();
@@ -137,7 +138,12 @@ function afterStep() {
      trap off - which is the opposite of the point of the stone. */
   var tr = trapAt(P.x, P.y);
   var pinned = trapPinned(tr);
-  autoPickup();
+  /* With a mouse in your hand, a thing on the floor is picked up by
+     clicking it and a chest is opened by clicking it - walking over
+     something does not help itself to it.  With the keyboard there is
+     nothing to click with, so walking on is what picking up is. */
+  if (typeof usingPointer !== 'function' || !usingPointer()) autoPickup();
+  else noteUnderfoot();
   if (tr && pinned) {
     tr.found = 1;
     msgTrap('You lift it clear of the plate.', 'c', 'held', 'G');
@@ -181,6 +187,15 @@ function announceRoom() {
 }
 
 /* ---------------------------------------------------------- pickup */
+/* Mouse in hand: say what you are standing on rather than taking it. */
+function noteUnderfoot() {
+  var it = itemAt(L, P.x, P.y);
+  if (!it) return;
+  if (it.t === 'chest')
+    msg(it.seen ? 'An open chest. Click it to look.' : 'A chest. Click it to open it.', 'k');
+  else if (it.t === 'gold') msg('Gold on the floor. Click it to take it.', 'y');
+  else msg(cap(itemName(it)) + ' lies here. Click it to take it.', 'c');
+}
 function autoPickup() {
   var it = itemAt(L, P.x, P.y);
   if (!it) return;
@@ -384,7 +399,8 @@ function spawnFire(fx, fy) {
   seen[fy * MAP_W + fx] = 1;
   while (open.length && made < FIRE_MAX_CELLS) {
     var c = open.shift();
-    if (!walkable(c[0], c[1])) continue;
+    /* fire crosses the floor, not the water: a pool stops it dead */
+    if (!walkable(c[0], c[1]) || inWater(c[0], c[1])) continue;
     if (barrelAt(c[0], c[1])) { lightBarrel(c[0], c[1]); continue; }
     L.clouds.push({ x: c[0], y: c[1], kind: 'fire',
                     turns: FIRE_TURNS_MIN + rnd(FIRE_TURNS_MAX - FIRE_TURNS_MIN + 1) });
@@ -935,16 +951,23 @@ function quaff(it) {
       hurtPlayer(fd, 'a flask of liquid fire', 'fire');
       break;
     }
-    case 'monster detection':
-      if (L.mons.length) { P.detmon = 30; msg('You sense the presence of monsters.', 'P'); }
-      else { msg('You have a strange feeling for a moment.', '6'); id = 0; }
+    /* Not a roll-call of the floor - a sense of what is moving close by.
+       It reaches through stone, but only as far as MONSIGHT_RANGE, and it
+       shows creatures and nothing else: no chest, no scroll, no square of
+       floor you have not walked. */
+    case 'monster sight':
+      P.monsight = Math.max(P.monsight || 0, MONSIGHT_TURNS);
+      msg('You feel every living thing that moves nearby.', 'P');
       break;
     case 'magic detection': {
       var any = false;
       for (var i = 0; i < L.items.length; i++) {
         var o = L.items[i];
         if (o.t === 'potion' || o.t === 'scroll' || o.t === 'wand' || o.t === 'amulet' || o.t === 'chest') {
-          L.flags[o.y * MAP_W + o.x] |= F_SEEN; any = true;
+          /* this one is about the things themselves, so the square stops
+             being a bare line on a map and shows what is on it */
+          var mj = o.y * MAP_W + o.x;
+          L.flags[mj] = (L.flags[mj] | F_SEEN) & ~F_MAP; any = true;
         }
       }
       if (any) msg('You sense the presence of magic.', 'P');
@@ -1011,13 +1034,28 @@ function readScroll(it) {
   if (!used) msg('The words fade but the parchment holds.', 'c');
   switch (n) {
     case 'monster confusion': P.confuseTouch = 1; msg('Your hands begin to glow red.', 'R'); break;
-    case 'magic mapping':
+    /* A map of the floor as the people who built it knew it.  What was
+       walled up on purpose is not on it - a vault with no door and the
+       chamber behind a secret door are secrets the map does not tell,
+       and it leaves the seam in the wall a seam.  Nor does it list what
+       is lying about: you learn the shape of the rooms and where the
+       chests stand, and find the rest by walking. */
+    case 'magic mapping': {
       msg('This scroll has a map on it.', 'c');
+      var hush = {}, ri, rf;
+      for (ri = 0; ri < L.rooms.length; ri++) {
+        var rm = L.rooms[ri];
+        if (rm.gone || !rm.sealed) continue;
+        for (rf = 0; rf < rm.floors.length; rf++)
+          hush[rm.floors[rf][1] * MAP_W + rm.floors[rf][0]] = 1;
+      }
       for (i = 0; i < L.tiles.length; i++) {
-        if (L.tiles[i] === SDOOR) L.tiles[i] = DOOR;
-        if (L.tiles[i] !== ROCK) L.flags[i] |= F_SEEN;
+        if (L.tiles[i] === ROCK || L.tiles[i] === SDOOR) continue;
+        if (hush[i] || (L.sealed && L.sealed[i])) continue;
+        L.flags[i] |= F_SEEN | F_MAP;
       }
       break;
+    }
     case 'hold monster': {
       /* It used to reach a diamond five squares across, which is a good
          deal smaller than a room: read it with three spiders across the
@@ -1813,6 +1851,10 @@ function fireAt(best) {
   else spendUse(am);
 
   var thrown = !!kit.thrown;
+  /* A bow of fire lights the shaft as it leaves the string.  What it
+     hits catches; what it comes down on catches; and it is the bow that
+     does it, so an arrow out of any other bow is only an arrow. */
+  var aflame = !thrown && lw && activeRune(lw) && activeRune(lw).n === 'fire';
   /* A crossbow sends it flatter and faster than a bow does.  They share
      the same arrows now, so it is the launcher that decides, not what is
      loaded into it. */
@@ -1864,6 +1906,14 @@ function fireAt(best) {
     if (isHurlWeapon(am)) keepPct = 100;
     if (!W.rune && !flyHome(am, best.x, best.y, flight) && rnd(100) < keepPct)
       dropNear(best.x, best.y, likeItem(am));
+    if (aflame) {
+      /* the square first: it burns whether or not the shot killed it */
+      var bx0 = best.x, by0 = best.y;
+      if (best.hp <= 0) { killMonster(best, true, fx, flight); dropEmber(bx0, by0); return true; }
+      igniteMon(best, 'The burning shaft sets it alight.');
+      dropEmber(bx0, by0);
+      if (best.hp <= 0) { killMonster(best, true, 'burnt', flight); return true; }
+    }
     if (best.hp <= 0) { killMonster(best, true, fx, flight); return true; }
     msgFight(fightLine(ammoName + ' hits ', name, '.'), 'y', fx, 'O', best);
     if (!best.flee && best.hp * 4 < best.mhp && rnd(100) < 30) best.flee = 1;
@@ -1890,6 +1940,7 @@ function fireAt(best) {
        sailing on past and one already flying home. */
     beatWait(sail);
     landed = { x: fx, y: fy };
+    if (aflame) dropEmber(fx, fy);
     if (W.rune !== 'return' && !flyHome(am, fx, fy, flight))
       dropNear(fx, fy, likeItem(am));
   }

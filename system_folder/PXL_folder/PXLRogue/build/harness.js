@@ -21,6 +21,82 @@ function bootTest(seed){
   addItem(mkItem('scroll', scrollIndex('identify')));
   addItem(mkItem('feet',0));
   enterLevel(1);
+  snapFloor();
+}
+
+/* ------------------------------------------- a reset without a dungeon
+
+   bootTest costs about a third of a second, and nearly all of that is
+   enterLevel building a floor: it generates candidate levels over and
+   over until one has a secret door, a lock worth a key and a way to
+   reach both, then populates it.
+
+   A great many probes throw that floor away on the very next line -
+   L.mons.length=0, L.items.length=0 - and stand two things on it by
+   hand.  For those, all that was ever wanted was fresh dice and a fresh
+   player.  Three hundred of them cost a hundred seconds and used none
+   of it.
+
+   bootRoll gives exactly that: it keeps the floor already under it,
+   sweeps it back to bare generated ground, and rolls a new player onto
+   it.  One bootTest then serves a hundred trials.
+
+   What it does NOT do is give you a differently-shaped dungeon.  If the
+   probe is measuring anything about generation - how many crystals a
+   floor carries, how many dead ends, where the stairs land - it needs
+   real bootTest calls and there is no saving to be had.  Use bootRoll
+   only where the floor is scenery. */
+var FLOOR_SNAP = null;
+function snapFloor(){
+  /* tiles and flags are typed arrays, so slice() is a real copy and
+     nothing aliases back into the level.  Barrels and decor are part of
+     the generated ground too - a probe that stands a barrel somewhere
+     must not leave it there for the next trial to walk into. */
+  var b={}, d={}, k;
+  for(k in (L.barrels||{})) b[k]=L.barrels[k];
+  for(k in (L.decor||{})) d[k]=L.decor[k];
+  FLOOR_SNAP = { lv:L, tiles:L.tiles.slice(), flags:L.flags.slice(),
+                 barrels:b, decor:d };
+}
+function bootRoll(seed){
+  if(!L || !FLOOR_SNAP || FLOOR_SNAP.lv !== L)
+    throw new Error('bootRoll with no floor under it - call bootTest first. '
+                    + 'A probe on an empty world passes for the wrong reason.');
+  srand(seed);
+  makeAppearances();
+  var floors = G.floors, level = G.level, depth = G.depth;
+  G = freshG();
+  G.floors = floors; G.level = level; G.depth = depth;
+  G.maxDepth = Math.max(1, depth);
+
+  /* back to bare ground: the shape the generator made, with nothing
+     standing, burning, webbed or lying on it */
+  L.tiles.set(FLOOR_SNAP.tiles);
+  L.flags.set(FLOOR_SNAP.flags);
+  L.mons.length = 0; L.items.length = 0; L.traps.length = 0;
+  L.corpses.length = 0; L.clouds.length = 0;
+  L.burning = {}; L.fuses = {}; L.webs = {}; L.temp = {}; L.under = {};
+  var bk={}, dk={}, k;
+  for(k in FLOOR_SNAP.barrels) bk[k]=FLOOR_SNAP.barrels[k];
+  for(k in FLOOR_SNAP.decor) dk[k]=FLOOR_SNAP.decor[k];
+  L.barrels = bk; L.decor = dk;
+
+  P = newPlayer();
+  var dagger = mkItem('weapon',2); dagger.known=1;
+  var body = mkItem('armor',0); body.known=1;
+  P.eq.rh=dagger; P.eq.body=body;
+  addItem(mkItem('food',0));
+  var st = mkItem('weapon', weaponIndex('stone')); st.cnt=3; st.known=1; addItem(st);
+  addItem(mkItem('scroll', scrollIndex('identify')));
+  addItem(mkItem('feet',0));
+
+  /* somewhere to stand, and a fresh one each trial - a probe that always
+     started on the same square would only ever test that square */
+  var sp = randSpot(L, randRoom(L));
+  P.x = sp.x; P.y = sp.y;
+  /* bootTest ends inside enterLevel with the player's sight worked out;
+     a probe that reads visibility must not see the last trial's instead */
+  computeVis();
 }
 function tickT(){
   if(G.pendingFall){ G.pendingFall=0; fallDown(); }
@@ -729,9 +805,16 @@ function runeReport(){
   w.brKnown=1;
   if(itemName(w).indexOf('fire')<0) bad.push('a known rune is missing from the name');
 
-  /* how often loot carries one */
+  /* How often loot carries one, and that every rune can turn up at all.
+
+     The count is set by the rarest of them.  'the spider' only goes onto
+     a bow, and a bow is about one item in eighty: at twelve thousand
+     items it averaged three or four appearances, so one run in thirty
+     saw none and the suite called it missing.  Sixty thousand puts the
+     average near twenty, which fails by chance about once in fifty
+     million runs.  The rate measured alongside it only gets steadier. */
   var runed=0, tot=0;
-  for(i=0;i<12000;i++){
+  for(i=0;i<60000;i++){
     var it=newItem(6);
     if(it.t==='weapon'||isGear(it)){ tot++; if(it.br) runed++; }
     if(it.br) seen[it.br]=1;
@@ -1150,9 +1233,13 @@ function afarCrossfireOK(){
     /* stand on the line the shot actually takes, not on a midpoint: the
        nozzle can fall back to the square above the plate, and half of
        that is one of the two ends */
+    /* Walk from the nozzle to the plate looking for somewhere to stand.
+       The two are not always in line - the nozzle can fall back to the
+       square above the plate - so stepping one square of each towards it
+       may pass straight by and never land on it.  Counted, not trusted. */
     var mid = null, sx2 = Math.sign(plate.x - src[0]), sy2 = Math.sign(plate.y - src[1]);
-    var wx = src[0] + sx2, wy = src[1] + sy2;
-    while (!(wx === plate.x && wy === plate.y)) {
+    var wx = src[0] + sx2, wy = src[1] + sy2, guard2 = 0;
+    while (!(wx === plate.x && wy === plate.y) && guard2++ < MAP_W + MAP_H) {
       if (walkable(wx, wy)) { mid = { x: wx, y: wy }; break; }
       wx += sx2; wy += sy2;
       if (!sx2 && !sy2) break;
@@ -1311,6 +1398,122 @@ function mossSidesReport(){
   }
   return counts;
 }
+/* A thrown thing that lands where another of its kind is lying joins it
+   rather than disappearing. */
+function stonePileOK(){
+  var bad=[], i, r=null;
+  for (i = 0; i < L.rooms.length; i++)
+    if (!L.rooms[i].gone && L.rooms[i].floors.length > 10) { r = L.rooms[i]; break; }
+  if (!r) return ['no room to test in'];
+  P.x = r.cx; P.y = r.cy;
+  L.items.length = 0; L.mons.length = 0;
+  var k = weaponIndex('stone');
+  /* one already on the floor beside you */
+  var lying = mkItem('weapon', k); lying.cnt = 1; lying.known = 1;
+  var spot = null;
+  for (i = 0; i < DIR4.length; i++) {
+    var sx = P.x + DIR4[i][0] * 2, sy = P.y + DIR4[i][1] * 2;
+    if (walkable(sx, sy) && !itemAt(L, sx, sy)) { spot = { x: sx, y: sy }; break; }
+  }
+  if (!spot) return ['nowhere to lay a stone'];
+  lying.x = spot.x; lying.y = spot.y; L.items.push(lying);
+  /* and another thrown on top of it */
+  var flying = mkItem('weapon', k); flying.cnt = 1; flying.known = 1;
+  dropNear(spot.x, spot.y, flying);
+  var here = itemAt(L, spot.x, spot.y);
+  var total = 0;
+  for (i = 0; i < L.items.length; i++)
+    if (L.items[i].t === 'weapon' && L.items[i].k === k) total += (L.items[i].cnt || 1);
+  if (total !== 2) bad.push('two stones on one square came to ' + total);
+  if (!here || (here.cnt || 1) !== 2)
+    bad.push('the square holds ' + (here ? (here.cnt || 1) : 0) + ', not a pile of two');
+  L.items.length = 0;
+  return bad;
+}
+/* Something caught flat footed does not shoot. */
+function surprisedHoldsFireOK(){
+  var bad=[], i, r=null;
+  for (i = 0; i < L.rooms.length; i++)
+    if (!L.rooms[i].gone && L.rooms[i].floors.length > 14) { r = L.rooms[i]; break; }
+  if (!r) return ['no room to test in'];
+  L.mons.length = 0;
+  P.x = r.cx; P.y = r.cy; P.hp = P.mhp = 900; G.dead = 0;
+  var spot = null;
+  for (i = 0; i < r.floors.length; i++) {
+    var f = r.floors[i];
+    if (f[1] !== P.y) continue;
+    var d = Math.abs(f[0] - P.x);
+    /* not with its feet in the water: one standing in a pool cannot
+       breathe fire at all, which is the rule and not the bug */
+    if (isWater(f[0], f[1])) continue;
+    if (d >= 3 && d <= 5 && shotClear(f[0], f[1], P.x, P.y)) { spot = f; break; }
+  }
+  if (!spot) return ['no clear line for a fireball'];
+  var m = mkMonster('h', 4, spot[0], spot[1]);
+  m.state = 2; m.disguise = 0; m.hp = m.mhp = 900; m.cast = 0; m.doused = 0;
+  L.mons.push(m);
+  computeVis();
+  /* surprised: it holds its fire, every time */
+  var shots = 0, tries = 0;
+  for (i = 0; i < 40; i++) {
+    m.surprised = 1; m.cast = 0;
+    tries++;
+    if (monRanged(m)) shots++;
+  }
+  if (shots) bad.push('a surprised half dragon shot ' + shots + ' times out of ' + tries);
+  /* and once it has its wits back it does */
+  var after = 0;
+  for (i = 0; i < 40; i++) {
+    m.surprised = 0; m.cast = 0;
+    if (monRanged(m)) after++;
+  }
+  if (!after) bad.push('it never shoots even with its wits about it');
+  L.mons.length = 0;
+  return bad;
+}
+/* Fire and water: neither the pool nor anything standing in it burns,
+   and stepping into water puts a burning creature out. */
+function fireAndWaterOK(){
+  var bad=[], i, wet=null;
+  for (i = 0; i < L.tiles.length; i++)
+    if (L.tiles[i] === WATER) { wet = { x: i % MAP_W, y: (i / MAP_W) | 0 }; break; }
+  if (!wet) return ['no water on this floor'];
+  L.clouds.length = 0; L.mons.length = 0;
+  /* a fire lit on the water is no fire at all */
+  dropEmber(wet.x, wet.y, 5, 0);
+  for (i = 0; i < L.clouds.length; i++)
+    if (L.clouds[i].kind === 'fire' && L.clouds[i].x === wet.x && L.clouds[i].y === wet.y)
+      bad.push('a fire is burning on the water');
+  /* nor does it spread onto it */
+  var dry = null;
+  for (i = 0; i < DIR4.length; i++) {
+    var nx = wet.x + DIR4[i][0], ny = wet.y + DIR4[i][1];
+    if (walkable(nx, ny) && !inWater(nx, ny)) { dry = { x: nx, y: ny }; break; }
+  }
+  if (dry) {
+    L.clouds.length = 0;
+    spawnFire(dry.x, dry.y);
+    for (i = 0; i < L.clouds.length; i++) {
+      var c = L.clouds[i];
+      if (c.kind === 'fire' && inWater(c.x, c.y))
+        bad.push('fire spread onto the water');
+    }
+  }
+  L.clouds.length = 0;
+  /* a creature standing in it does not catch */
+  var m = mkMonster('K', 1, wet.x, wet.y);
+  m.state = 2; m.disguise = 0; m.hp = m.mhp = 90; m.burn = 0;
+  L.mons.push(m);
+  igniteMon(m, 'It catches fire.');
+  if (m.burn) bad.push('something standing in water caught fire');
+  /* and one already alight that steps in goes out */
+  m.burn = 5;
+  var died = burnTick(m);
+  if (died) bad.push('a burning creature in water burned to death');
+  if (m.burn) bad.push('a burning creature in water is still alight');
+  L.mons.length = 0;
+  return bad;
+}
 function flinchFirstOK(){
   var bad=[], i, r=null, gaps=[];
   for(i=0;i<L.rooms.length;i++) if(!L.rooms[i].gone&&L.rooms[i].floors.length>12){ r=L.rooms[i]; break; }
@@ -1395,7 +1598,7 @@ function turnPacingOK(){
   if(!r) return ['no room to test pacing in'];
   L.mons.length=0;
   P.x=r.cx; P.y=r.cy; P.hp=P.mhp=400; G.dead=0;
-  P.blind=0; P.hallu=0; P.detmon=0;
+  P.blind=0; P.hallu=0; P.monsight=0;
   computeVis();
   var spots=[];
   for(i=0;i<r.floors.length && spots.length<4;i++){
@@ -4138,8 +4341,10 @@ function dexterousOK(){
 
   /* --- and what he is carrying ------------------------------------ */
   var rings=0, extras=0, purses=0, kills=0;
+  /* One floor, four hundred deaths: what is being counted is what falls
+     out of his pockets, and that does not depend on the room he is in. */
   for(s=0;s<400;s++){
-    bootTest(87300+s);
+    if(s % 25 === 0) bootTest(87300+s); else srand(87300+s);
     L.items.length=0; L.mons.length=0;
     var spot=null;
     for(i=0;i<4 && !spot;i++){
@@ -5519,12 +5724,14 @@ function stealthCurve(){
 }
 function effectsWidth(){
   P.conf=9; P.blind=4; P.hallu=1; P.haste=3; P.frozen=2; P.scare=7;
-  P.seeinv=12; P.detmon=5; P.confuseTouch=1; P.amulet=1;
+  /* the widest each label ever gets: monster sight runs to three
+     figures, so that is the one to measure */
+  P.seeinv=12; P.monsight=MONSIGHT_TURNS; P.confuseTouch=1; P.amulet=1;
   G.hungerState=2;
   var e = playerEffects(), w=0;
   for(var i=0;i<e.length;i++) if(e[i][0].length>w) w=e[i][0].length;
   P.conf=P.blind=P.hallu=P.haste=P.frozen=P.scare=0;
-  P.seeinv=P.detmon=P.confuseTouch=P.amulet=0; G.hungerState=0;
+  P.seeinv=P.monsight=P.confuseTouch=P.amulet=0; G.hungerState=0;
   return w;
 }
 function waterStats(){
@@ -6441,7 +6648,8 @@ function halfDragonOK(){
   /* it spits, and then waits */
   var shots=0, gaps=[], tries=0;
   for(i=0;i<25;i++){
-    bootTest(88100+i);
+    if(i%10===0) bootTest(88100+i);
+    else bootRoll(88100+i);
     P.hp=P.mhp=9000;
     var line=straightLine();
     if(!line) continue;
@@ -6579,7 +6787,8 @@ function halfDragonSpawnOK(runs){
 function huntTrailOK(runs){
   var bad=[], took=0, stood=0, casts=[], turns=[], onward=0, backward=0, tried=0;
   for(var s=0;s<runs;s++){
-    bootTest(96000+s);
+    if(s%10===0) bootTest(96000+s);
+    else bootRoll(96000+s);
     P.hp=P.mhp=9000;
     var spot=null, r, d;
     for(r=3;r<7&&!spot;r++) for(d=0;d<DIR4.length;d++){
@@ -6591,6 +6800,9 @@ function huntTrailOK(runs){
     var m=mkMonster('O',3,spot.x,spot.y);
     m.hp=m.mhp=9000; m.state=2; m.lost=0; m.blindTo=0;
     L.mons.push(m);
+    /* a hunter that was watching you has to have been able to see you:
+       a spot behind a wall or off in the dark sets up nothing to lose */
+    if(!monSeesPlayer(m)) continue;
     /* two turns of being watched, walking one way, so it has a heading */
     var hx=0, hy=0;
     for(d=0;d<DIR4.length;d++){
@@ -6695,7 +6907,8 @@ function alertedByOK(){
   for(var w=0;w<kinds.length;w++){
     var kind=kinds[w], second=0, tried=0;
     for(i=0;i<40;i++){
-      bootTest(98000+w*100+i);
+      if(i%10===0) bootTest(98000+w*100+i);
+      else bootRoll(98000+w*100+i);
       P.hp=P.mhp=9000;
       var line=longLine(kind==='melee'?1:6);
       if(!line) continue;
@@ -6783,7 +6996,8 @@ function lostTurnsCountOK(){
   for(var w=0;w<kinds.length;w++){
     var kind=kinds[w], caught=0, tried=0;
     for(i=0;i<24;i++){
-      bootTest(99100+w*40+i);
+      if(i%10===0) bootTest(99100+w*40+i);
+      else bootRoll(99100+w*40+i);
       P.hp=P.mhp=9000;
       /* somewhere it can stand and see you, and somewhere you can hide */
       var spot=null, q;
@@ -6796,6 +7010,10 @@ function lostTurnsCountOK(){
       var m=mkMonster('E',5,spot.x,spot.y);
       m.hp=m.mhp=9000; m.state=2; m.blindTo=0; m.surprised=0; m.lost=0;
       L.mons.push(m);
+      /* "somewhere it can stand and see you" has to mean the game's own
+         idea of seeing: a spot behind a wall or off in the dark leaves
+         nothing to catch out */
+      if(!monSeesPlayer(m)) continue;
       /* out of its sight entirely */
       var hide=null, y2, x2;
       for(y2=1;y2<MAP_H-1&&!hide;y2++) for(x2=1;x2<MAP_W-1;x2++)
@@ -6828,7 +7046,9 @@ function lostTurnsCountOK(){
         bad.push('after '+SURPRISE_AFTER+' rounds '+kind+' it had counted only '+m.blindTo);
       /* step back into view and it should be caught out */
       P.x=home.x; P.y=home.y; computeVis();
-      m.slowed=0; m.stuck=0; m.held=0; G.turn=0;
+      /* its catch-out move must actually happen: not spent slowed, held,
+         or getting through the water it happens to be standing in */
+      m.slowed=0; m.stuck=0; m.held=0; m.wade=0; G.turn=0;
       monstersMove();
       if(L.mons.indexOf(m)<0){ tried--; continue; }
       if(surpriseHit(m)===SURPRISE_HIT_BONUS || m.state<2) caught++;
@@ -6932,7 +7152,9 @@ function breathOK(){
 function breathStaysInsideOK(seeds){
   var bad=[], s, i, jets=0, stone=0, floor=0, reached=0;
   for(s=0;s<seeds;s++){
-    bootTest(76000+s);
+    /* the floor is scenery: dragon and target are stood up by hand */
+    if(s%10===0) bootTest(76000+s);
+    else bootRoll(76000+s);
     P.hp=P.mhp=9000;
     L.mons.length=0; L.clouds.length=0;
     var r=null;
@@ -6967,7 +7189,8 @@ function breathStaysInsideOK(seeds){
   /* powder standing on the line catches; powder behind the wall does not */
   var hits=0, lit=0, past=0, pastLit=0;
   for(s=0;s<seeds;s++){
-    bootTest(76500+s);
+    if(s%10===0) bootTest(76500+s);
+    else bootRoll(76500+s);
     P.hp=P.mhp=9000; L.mons.length=0; L.clouds.length=0; L.fuses={};
     var row=null, rr=null;
     for(i=0;i<L.rooms.length;i++){
@@ -6975,7 +7198,11 @@ function breathStaysInsideOK(seeds){
       if(rm.gone||rm.special||rm.floors.length<25) continue;
       for(var k=0;k<rm.floors.length;k++){
         var g=rm.floors[k];
-        if(walkable(g[0]+1,g[1])&&walkable(g[0]+2,g[1])&&walkable(g[0]+3,g[1])){
+        /* four squares of dry floor in a row: a barrel standing in
+           water is wet powder and will not light, which is the rule */
+        if(walkable(g[0]+1,g[1])&&walkable(g[0]+2,g[1])&&walkable(g[0]+3,g[1])&&
+           !inWater(g[0],g[1])&&!inWater(g[0]+1,g[1])&&
+           !inWater(g[0]+2,g[1])&&!inWater(g[0]+3,g[1])){
           row=g; rr=rm; break;
         }
       }
@@ -7493,7 +7720,8 @@ function webSpinnerOK(seeds){
     (mine/2000).toFixed(1)+' against '+(theirs/2000).toFixed(1));
 
   for(s=0;s<seeds;s++){
-    bootTest(52000+s);
+    if(s%10===0) bootTest(52000+s);
+    else bootRoll(52000+s);
     P.hp=P.mhp=9000;
     var line=straightLine4();
     if(!line) continue;
@@ -7818,7 +8046,8 @@ var FIGHT_PHRASES = [
 function doorAmbushOK(seeds){
   var bad=[], tried=0, caught=0, sawThrough=0, s, i, t2;
   for(s=0;s<seeds;s++){
-    bootTest(60000+s);
+    if(s%10===0) bootTest(60000+s);
+    else bootRoll(60000+s);
     P.hp=P.mhp=9000;
     var door=null;
     for(i=0;i<L.tiles.length && !door;i++){
@@ -8002,6 +8231,84 @@ function curseNamedOK(){
   return { bad:bad, kinds:kinds.length };
 }
 
+/* -------------------------------------------- stumbling is for fleeing
+   You trip over your own feet when you turn your back on a fight.  With
+   something on either side of you, a step away from one is a step
+   towards the other, and walking into a creature's reach is not fleeing
+   from anything - so it cannot make you fall over.
+
+   Both trials stand you between two hostiles and hold you at a dead run;
+   the only difference is whether the second one is there. */
+function stumbleFleeingOnlyOK(){
+  var bad=[], out=[];
+  function said(){
+    for(var i=0;i<G.msgq.length;i++) if(/stumble/.test(G.msgq[i].s||'')) return 1;
+    return 0;
+  }
+  /* a run of floor with room on both sides of you */
+  function laneAt(){
+    for(var d=0;d<DIR4.length;d++){
+      var dx=DIR4[d][0], dy=DIR4[d][1], ok=1, n;
+      for(n=1;n<=4;n++){
+        if(!walkable(P.x+dx*n,P.y+dy*n)||!walkable(P.x-dx*n,P.y-dy*n)){ ok=0; break; }
+        if(inWater(P.x+dx*n,P.y+dy*n)||inWater(P.x-dx*n,P.y-dy*n)){ ok=0; break; }
+      }
+      if(ok && !inWater(P.x,P.y)) return { dx:dx, dy:dy };
+    }
+    return null;
+  }
+  function trial(penned){
+    var steps=0, fell=0, tried=0, s, t;
+    for(s=0;s<600 && steps<300;s++){
+      if(s%25===0) bootTest(36500+s); else bootRoll(36500+s);
+      var lane=laneAt();
+      if(!lane) continue;
+      var hx=P.x-lane.dx*2, hy=P.y-lane.dy*2;      /* the one you back away from */
+      var ax=P.x+lane.dx*2, ay=P.y+lane.dy*2;      /* the one you back into */
+      L.mons.length=0;
+      var back=mkMonster('E',5,hx,hy);
+      back.hp=back.mhp=90000; back.state=2; back.still=1; L.mons.push(back);
+      var ahead=null;
+      if(penned){
+        ahead=mkMonster('E',5,ax,ay);
+        ahead.hp=ahead.mhp=90000; ahead.state=2; ahead.still=1; L.mons.push(ahead);
+      }
+      P.hp=P.mhp=90000; P.dex=P.mdex=3; P.conf=0; P.blind=0;
+      computeVis();
+      /* both of them have to count as a fight, or the trial proves
+         nothing about fleeing one way or the other */
+      if(!battleNear()) continue;
+      if(penned && !(monSeesPlayer(ahead) && canSeeMon(ahead))) continue;
+      if(!(monSeesPlayer(back) && canSeeMon(back))) continue;
+      tried++;
+      for(t=0;t<3 && steps<300;t++){
+        /* held at a dead run, and the creatures stand still, so the only
+           thing under test is the direction of the step */
+        P.runSteps=RUN_AFTER+5;
+        back.x=hx; back.y=hy;
+        if(ahead){ ahead.x=ax; ahead.y=ay; }
+        var px=P.x, py=P.y;
+        G.msgq=[]; G.beat=0;
+        playerMove(lane.dx, lane.dy);     /* away from `back`, towards `ahead` */
+        steps++;
+        if(said()) fell++;
+        P.x=px; P.y=py;                   /* back to the middle for the next one */
+      }
+    }
+    return { steps:steps, fell:fell, tried:tried };
+  }
+  var alone=trial(0), penned=trial(1);
+  if(!alone.steps || !penned.steps){ bad.push('never got the two of them stood up'); return { bad:bad }; }
+  if(!alone.fell)
+    bad.push('backing away from one creature never made you stumble, so the check proves nothing');
+  if(penned.fell)
+    bad.push('you stumbled '+penned.fell+' times of '+penned.steps+
+             ' stepping towards a second creature, which is not fleeing');
+  out.push('backing off '+alone.fell+'/'+alone.steps+' stumbles');
+  out.push('hemmed in '+penned.fell+'/'+penned.steps);
+  return { bad:bad, ways:out.join('; ') };
+}
+
 /* ----------------------------------------------------------- stumbling
    Five steps without striking anything and you are running.  After that
    there is a chance of going over, and it falls as your dexterity
@@ -8022,7 +8329,8 @@ function stumbleOK(){
   var early=0, late=0, steps=0, falls=0, quiet=0, quietSteps=0;
   for(i=0;i<20;i++){
     for(var mode=0;mode<3;mode++){
-      bootTest(35000+i);
+      if(mode===0 && i%8===0) bootTest(35000+i);
+      bootRoll(35000+i);   /* same seed all three modes, same dice */
       P.hp=P.mhp=9000; P.dex=P.mdex=10; P.conf=0;
       L.mons.length=0; L.traps.length=0;
       var dir=null, q;
@@ -8121,6 +8429,165 @@ function stumbleOK(){
            scared:stumbleChance(12,1), calm:stumbleChance(12,0) };
 }
 /* the ring of the seer */
+/* ------------------------------------------------------ monster sight
+   A sense of what moves near you, not a roll-call of the floor.  It
+   reaches through stone but only MONSIGHT_RANGE squares, it runs for
+   MONSIGHT_TURNS, and it finds creatures and nothing whatever else. */
+function monsterSightOK(){
+  var bad=[], i, near=0, far=0, walled=0, tried=0;
+  var pi=-1;
+  for(i=0;i<POTIONS.length;i++) if(POTIONS[i].n==='monster sight') pi=i;
+  if(pi<0) return { bad:['there is no potion of monster sight'] };
+
+  for(var s=0;s<40;s++){
+    if(s%10===0) bootTest(37000+s); else bootRoll(37000+s);
+    L.mons.length=0; L.items.length=0;
+    P.monsight=0; P.blind=0; P.seeinv=0; P.perks={};
+    var seen0=0;
+    for(i=0;i<L.flags.length;i++) if(L.flags[i]&F_SEEN) seen0++;
+    var items0=L.items.length;
+
+    /* one just inside the range and one well outside it, both of them
+       out of sight - the whole point is that stone is no object */
+    var in1=null, out1=null, x, y;
+    for(y=1;y<MAP_H-1 && !(in1&&out1);y++) for(x=1;x<MAP_W-1;x++){
+      if(!walkable(x,y)||monAt(L,x,y)) continue;
+      var cheb=Math.max(Math.abs(x-P.x),Math.abs(y-P.y));
+      if(cheb<1) continue;
+      if(!in1 && cheb<=MONSIGHT_RANGE && !sightClear(P.x,P.y,x,y)) in1={x:x,y:y};
+      if(!out1 && cheb>MONSIGHT_RANGE+2 && !sightClear(P.x,P.y,x,y)) out1={x:x,y:y};
+      if(in1&&out1) break;
+    }
+    if(!in1||!out1) continue;
+    tried++;
+    var mi=mkMonster('E',5,in1.x,in1.y); mi.hp=mi.mhp=90; L.mons.push(mi);
+    var mo=mkMonster('E',5,out1.x,out1.y); mo.hp=mo.mhp=90; L.mons.push(mo);
+    computeVis();
+    if(canSeeMon(mi)||canSeeMon(mo)) continue;   /* not actually hidden */
+
+    if(sensedMon(mi)||sensedMon(mo)) bad.push('you sensed something with no potion in you');
+    quaff(mkItem('potion',pi));
+    if(P.monsight!==MONSIGHT_TURNS)
+      bad.push('the potion ran for '+P.monsight+' turns, not '+MONSIGHT_TURNS);
+    if(sensedMon(mi)) near++; else bad.push('the near one went unfelt through the wall');
+    if(sensedMon(mo)) far++;
+    walled++;
+
+    /* and it told you nothing else at all */
+    var seen1=0;
+    for(i=0;i<L.flags.length;i++) if(L.flags[i]&F_SEEN) seen1++;
+    if(seen1!==seen0) bad.push('monster sight put '+(seen1-seen0)+' squares on your map');
+    if(L.items.length!==items0) bad.push('monster sight moved the loot about');
+    P.monsight=0;
+  }
+  if(!tried) bad.push('never got two creatures hidden at the right distances');
+  if(far) bad.push('you felt something '+far+' times beyond '+MONSIGHT_RANGE+' squares');
+
+  /* it runs down, and stops when it does */
+  bootTest(37500);
+  L.mons.length=0; P.monsight=0;
+  /* asleep and harmless: a spider that kills you stops the turns, and
+     then nothing runs down at all */
+  var m2=mkMonster('E',5,P.x+1,P.y); m2.hp=m2.mhp=90; m2.state=0; m2.still=1;
+  L.mons.push(m2);
+  P.hp=P.mhp=90000;
+  quaff(mkItem('potion',pi));
+  var ran=0;
+  while(P.monsight>0 && ran<MONSIGHT_TURNS+50 && !G.dead){ tickT(); ran++; }
+  if(ran!==MONSIGHT_TURNS) bad.push('it lasted '+ran+' turns, not '+MONSIGHT_TURNS);
+  if(sensedMon(m2)) bad.push('you still felt it after it wore off');
+  return { bad:bad, tried:tried, near:near, walled:walled };
+}
+
+/* ------------------------------------------------------- the map scroll
+   A drawing of the floor: its shape and what is built into it.  Not the
+   things lying on the flagstones, and not what was walled up on purpose. */
+function mapScrollOK(){
+  var bad=[], i, s, floors=0, hidden=0, loose=0, chests=0, tried=0;
+  var ki=scrollIndex('magic mapping');
+  for(s=0;s<25;s++){
+    if(s%10===0) bootTest(37800+s); else bootRoll(37800+s);
+    P.blind=0; P.perks={};
+    /* strip the curse that makes a scroll fizzle, or nothing is proved */
+    liftCurse(P.eq.body);
+    var seams=0;
+    for(i=0;i<L.tiles.length;i++) if(L.tiles[i]===SDOOR) seams++;
+    /* something loose and something built in, both far from you */
+    var spot=null, x, y;
+    var hushed=hushSquares();
+    for(y=1;y<MAP_H-1 && !spot;y++) for(x=1;x<MAP_W-1;x++){
+      if(!walkable(x,y)) continue;
+      if(Math.max(Math.abs(x-P.x),Math.abs(y-P.y))<8) continue;
+      if(L.flags[y*MAP_W+x]&F_SEEN) continue;
+      /* ordinary floor, not a room the map is supposed to keep quiet
+         about - the map rightly leaves those off, and a chest standing
+         in one proves nothing about chests */
+      if(L.sealed&&L.sealed[y*MAP_W+x]) continue;
+      if(hushed[y*MAP_W+x]) continue;
+      spot={x:x,y:y}; break;
+    }
+    if(!spot) continue;
+    tried++;
+    var pot=mkItem('potion',0); pot.x=spot.x; pot.y=spot.y; L.items.push(pot);
+    var box=mkItem('chest',0); box.x=spot.x; box.y=spot.y; L.items.push(box);
+    var hush0=hushSeen();
+
+    readScroll(mkItem('scroll',ki));
+
+    if(!(L.flags[spot.y*MAP_W+spot.x]&F_SEEN)) bad.push('the map left plain floor off it');
+    else floors++;
+    if(!drawnOnMap(pot)) loose++; else bad.push('the map showed a potion lying on the floor');
+    if(drawnOnMap(box)) chests++; else bad.push('the map left out a chest');
+
+    /* nothing that was walled up on purpose, and no seam given away.
+       What counts is what the scroll added: a roll that stood you inside
+       a vault had you seeing it before you read anything. */
+    var told=hushSeen()-hush0;
+    if(told) bad.push(told+' squares of a room that was walled up on purpose went onto the map');
+    else hidden++;
+    var seams2=0;
+    for(i=0;i<L.tiles.length;i++) if(L.tiles[i]===SDOOR) seams2++;
+    if(seams2<seams) bad.push('the map turned '+(seams-seams2)+' seams into doorways');
+
+    /* and once you stand there yourself, the loose thing is there */
+    var was={x:P.x,y:P.y};
+    P.x=spot.x; P.y=spot.y; computeVis();
+    if(!drawnOnMap(pot)) bad.push('walking onto the square still hid the potion');
+    P.x=was.x; P.y=was.y;
+  }
+  if(!tried) bad.push('never found a far square to draw on the map');
+  return { bad:bad, tried:tried, floors:floors, hidden:hidden, loose:loose, chests:chests };
+}
+/* the squares of every room that was walled up on purpose */
+function hushSquares(){
+  var out={}, i, f;
+  for(i=0;i<L.rooms.length;i++){
+    var r=L.rooms[i];
+    if(r.gone||!r.sealed) continue;
+    for(f=0;f<r.floors.length;f++) out[r.floors[f][1]*MAP_W+r.floors[f][0]]=1;
+  }
+  return out;
+}
+/* how many squares of the rooms that were walled up on purpose you have
+   on your map at this moment */
+function hushSeen(){
+  var n=0, i, f;
+  for(i=0;i<L.rooms.length;i++){
+    var r=L.rooms[i];
+    if(r.gone||!r.sealed) continue;
+    for(f=0;f<r.floors.length;f++)
+      if(L.flags[r.floors[f][1]*MAP_W+r.floors[f][0]]&F_SEEN) n++;
+  }
+  return n;
+}
+/* what the item pass would actually put on the screen for this thing */
+function drawnOnMap(it){
+  var fl=L.flags[it.y*MAP_W+it.x];
+  if(!(fl&F_SEEN)) return 0;
+  if((fl&F_MAP) && it.t!=='chest') return 0;
+  return 1;
+}
+
 function seerOK(){
   var bad=[], i, doors=0, traps=0, tried=0;
   var si=ringIndex('the seer');
@@ -8343,12 +8810,16 @@ function fireSourcesOK(seeds){
   function zapAt(wand, barrelAtDist, tableAtDist, want){
     var tried=0, fused=0, burnt=0, s;
     for(s=0;s<seeds*8 && tried<30;s++){
-      bootTest(72000+s);
+      if(s%10===0) bootTest(72000+s);
+      else bootRoll(72000+s);
       var line=straightLine();
       if(!line) continue;
       var bx=P.x+line.dx*barrelAtDist, by=P.y+line.dy*barrelAtDist, j=by*MAP_W+bx;
       var tx=P.x+line.dx*tableAtDist, ty=P.y+line.dy*tableAtDist, tj=ty*MAP_W+tx;
+      /* dry ground: powder in a pool is wet powder, and wet powder is
+         meant not to light */
       if(!walkable(bx,by)||!walkable(tx,ty)||j===tj) continue;
+      if(inWater(bx,by)||inWater(tx,ty)) continue;
       L.barrels[j]=1; L.decor[j]='barrel'; L.decor[tj]='table';
       L.clouds.length=0; L.fuses={}; L.burning={}; P.hp=P.mhp=9000;
       tried++;
@@ -8379,7 +8850,7 @@ function fireSourcesOK(seeds){
     var l2=straightLine();
     if(!l2) continue;
     var mx=P.x+l2.dx*2, my=P.y+l2.dy*2, mj=my*MAP_W+mx;
-    if(!walkable(mx,my)) continue;
+    if(!walkable(mx,my)||inWater(mx,my)) continue;
     L.barrels[mj]=1; L.decor[mj]='barrel';
     L.clouds.length=0; L.fuses={}; L.burning={}; P.hp=P.mhp=9000;
     mtried++;
@@ -8403,7 +8874,7 @@ function fireSourcesOK(seeds){
     var l3=straightLine();
     if(!l3) continue;
     var dx2=P.x+l3.dx*2, dy2=P.y+l3.dy*2, dj=dy2*MAP_W+dx2;
-    if(!walkable(dx2,dy2)) continue;
+    if(!walkable(dx2,dy2)||inWater(dx2,dy2)) continue;
     L.decor[dj]='table';
     L.clouds.length=0; L.fuses={}; L.burning={}; P.hp=P.mhp=9000;
     dtried++;
@@ -8690,7 +9161,8 @@ function barrelsAreSolidOK(seeds){
 
   /* and neither you nor anything else walks onto one */
   for(s=0;s<seeds*10 && tried<30;s++){
-    bootTest(96000+s);
+    if(s%10===0) bootTest(96000+s);
+    else bootRoll(96000+s);
     var line=straightLine4();
     if(!line) continue;
     var bx=P.x+(line.dx||0), by=P.y+(line.dy||0), j=by*MAP_W+bx;
@@ -8729,11 +9201,17 @@ function stumbleOnlyWalkingOK(){
   function trial(dist){
     var turns=0, trip=0, swing=0, s, t;
     for(s=0;s<600 && turns<200;s++){
-      bootTest(97000+s+dist*1000);
+      /* the floor is scenery here - a fresh dungeon every seed paid for
+         600 generations and threw most away on the guards below */
+      if(s%25===0) bootTest(97000+s+dist*1000);
+      else bootRoll(97000+s+dist*1000);
       var line=straightLine4();
       if(!line) continue;
       var sx=P.x+(line.dx||0)*dist, sy=P.y+(line.dy||0)*dist;
       if(!walkable(sx,sy)) continue;
+      /* dry ground only: a creature thigh deep in water spends every
+         other turn wading, which is not the stumbling being tested */
+      if(inWater(sx,sy)||inWater(P.x,P.y)) continue;
       L.mons.length=0;
       var m=mkMonster('O',6,sx,sy);
       m.hp=m.mhp=90000; m.state=2; m.ar=12;
@@ -8760,7 +9238,8 @@ function stumbleOnlyWalkingOK(){
   /* and you, swinging at something under your nose */
   var mine=0, myTrip=0, myHits=0, s2, t2;
   for(s2=0;s2<600 && mine<200;s2++){
-    bootTest(98000+s2);
+    if(s2%25===0) bootTest(98000+s2);
+    else bootRoll(98000+s2);
     var l2=straightLine4();
     if(!l2) continue;
     var ax=P.x+(l2.dx||0), ay=P.y+(l2.dy||0);
@@ -8792,7 +9271,7 @@ function stumbleOnlyWalkingOK(){
    is a blast, so it leaves the place burning. */
 function blastStoneOK(seeds){
   var bad=[], s, i, tried=0, cells=0, inStone=0, unseen=0, burnt=0, lit=0,
-      waited=0, offSplash=0;
+      waited=0, offSplash=0, barrels=0;
   for(s=0;s<seeds*40 && tried<40;s++){
     bootTest(93000+s);
     var r=null;
@@ -8814,8 +9293,9 @@ function blastStoneOK(seeds){
     var bj=null;
     for(var d2=0;d2<DIR4.length;d2++){
       var nx=spot[0]+DIR4[d2][0], ny=spot[1]+DIR4[d2][1];
-      if(!walkable(nx,ny)) continue;
-      bj=ny*MAP_W+nx; L.barrels[bj]=1; L.decor[bj]='barrel'; break;
+      /* on dry ground: a barrel standing in water is wet powder */
+      if(!walkable(nx,ny)||inWater(nx,ny)) continue;
+      bj=ny*MAP_W+nx; L.barrels[bj]=1; L.decor[bj]='barrel'; barrels++; break;
     }
     /* and a creature on every square around it, so anything caught
        through a wall shows up */
@@ -8854,9 +9334,16 @@ function blastStoneOK(seeds){
   if(unseen) bad.push(unseen+' squares of the blast were behind a wall');
   if(offSplash) bad.push(offSplash+' creatures were caught outside the blast');
   if(burnt<tried) bad.push('only '+burnt+' of '+tried+' left anything burning');
-  if(lit<tried) bad.push('only '+lit+' of '+tried+' lit the barrel beside them');
+  /* Not every square with a wall beside it has anywhere dry left to
+     stand a barrel - hard against the rock in a flooded room there may
+     be nothing.  Those trials have no barrel to light, so they are not
+     evidence either way; what must hold is that every barrel that was
+     stood up caught. */
+  if(lit<barrels) bad.push('only '+lit+' of '+barrels+' lit the barrel beside them');
+  if(barrels<tried*0.9)
+    bad.push('only '+barrels+' of '+tried+' trials could stand a barrel at all');
   if(waited<tried) bad.push('the fire started before the stone landed '+(tried-waited)+' times');
-  return { bad:bad, tried:tried, cells:cells, burnt:burnt, lit:lit };
+  return { bad:bad, tried:tried, cells:cells, burnt:burnt, lit:lit, barrels:barrels };
 }
 
 /* ------------------------------------------------------------ the witch
@@ -8870,7 +9357,9 @@ function witchOK(seeds){
   var turns=0, melee=0, blinks=0, flasks=0, rocks=0, spiders=0, most=0,
       adjacent=0, gaps=[], witches=0;
   for(s=0;s<seeds*20 && witches<40;s++){
-    bootTest(31000+s);
+    /* the floor is scenery: she is stood up by hand in a big room */
+    if(s%10===0) bootTest(31000+s);
+    else bootRoll(31000+s);
     var r=null;
     for(i=0;i<L.rooms.length && !r;i++)
       if(!L.rooms[i].gone && L.rooms[i].floors.length>25) r=L.rooms[i];
@@ -8933,7 +9422,8 @@ function witchOK(seeds){
   /* she calls another two turns after the last one dies, and not before */
   var reWait=[], tried=0;
   for(s=0;s<seeds*20 && tried<20;s++){
-    bootTest(32500+s);
+    if(s%10===0) bootTest(32500+s);
+    else bootRoll(32500+s);
     var r2=null;
     for(i=0;i<L.rooms.length && !r2;i++)
       if(!L.rooms[i].gone && L.rooms[i].floors.length>25) r2=L.rooms[i];
@@ -8948,6 +9438,10 @@ function witchOK(seeds){
     if(!sp2) continue;
     var w2=mkMonster('k',6,sp2[0],sp2[1]);
     w2.hp=w2.mhp=900000; w2.state=2; L.mons.push(w2);
+    /* no flasks: the flask comes before the spider in her order, so with
+       one in hand she only summoned when the throw happened to be blocked
+       - which is not the recall wait this probe is about */
+    w2.flasks=0;
     G.msgq=[]; G.beat=0;
     monOneMove(w2);                      /* she calls one up */
     var pet=null;
@@ -8994,7 +9488,8 @@ function witchRingOK(seeds){
   if(ri < 0){ bad.push('there is no ring of the witch'); return { bad:bad }; }
   /* she leaves it now and then, and nothing else in the game does */
   for(s=0;s<seeds*4;s++){
-    bootTest(33000+s);
+    if(s%10===0) bootTest(33000+s);
+    else bootRoll(33000+s);
     var w=mkMonster('k',6,P.x+2,P.y);
     w.hp=1; L.mons.push(w);
     var before=L.items.length;
@@ -9047,7 +9542,8 @@ function effectsWaitOK(seeds){
   /* the witch's flask */
   var tried=0, ok=0, span=[];
   for(s=0;s<seeds*40 && tried<25;s++){
-    bootTest(41000+s);
+    if(s%10===0) bootTest(41000+s);
+    else bootRoll(41000+s);
     var line=straightLine4();
     if(!line) continue;
     var sx=P.x+(line.dx||0)*4, sy=P.y+(line.dy||0)*4;
@@ -9075,7 +9571,8 @@ function effectsWaitOK(seeds){
   /* the web spinner's web */
   var wtried=0, wok=0;
   for(s=0;s<seeds*40 && wtried<25;s++){
-    bootTest(41800+s);
+    if(s%10===0) bootTest(41800+s);
+    else bootRoll(41800+s);
     var l2=straightLine4();
     if(!l2) continue;
     var wx=P.x+(l2.dx||0)*3, wy=P.y+(l2.dy||0)*3;
@@ -9130,7 +9627,9 @@ function warpOK(seeds){
   var bad=[], s, i;
   var tried=0, failed=0, drew=0, moved=0;
   for(s=0;s<seeds*30 && tried<300;s++){
-    bootTest(42000+s);
+    /* scenery floors from here down: everything is stood up by hand */
+    if(s%10===0) bootTest(42000+s);
+    else bootRoll(42000+s);
     var r=null;
     for(i=0;i<L.rooms.length && !r;i++)
       if(!L.rooms[i].gone && L.rooms[i].floors.length>25) r=L.rooms[i];
@@ -9158,7 +9657,8 @@ function warpOK(seeds){
   /* and with you standing over her she cannot slip away at all */
   var pinned=0, pinTried=0;
   for(s=0;s<seeds*30 && pinTried<20;s++){
-    bootTest(44000+s);
+    if(s%10===0) bootTest(44000+s);
+    else bootRoll(44000+s);
     var l5=straightLine4();
     if(!l5) continue;
     var ax=P.x+(l5.dx||0), ay=P.y+(l5.dy||0);
@@ -9192,7 +9692,8 @@ function warpOK(seeds){
   /* and the spider she calls up is thrown there, not simply there */
   var stried=0, spell=0, aimed=0, held=0;
   for(s=0;s<seeds*30 && stried<25;s++){
-    bootTest(43000+s);
+    if(s%10===0) bootTest(43000+s);
+    else bootRoll(43000+s);
     var r2=null;
     for(i=0;i<L.rooms.length && !r2;i++)
       if(!L.rooms[i].gone && L.rooms[i].floors.length>25) r2=L.rooms[i];
@@ -9224,7 +9725,8 @@ function warpOK(seeds){
      and never on the spider or next to it. */
   var near=0, threw=0, kept=0, wellAimed=0, onYou=0;
   for(s=0;s<seeds*40 && near<25;s++){
-    bootTest(43600+s);
+    if(s%10===0) bootTest(43600+s);
+    else bootRoll(43600+s);
     var l4=straightLine4();
     if(!l4) continue;
     var wx4=P.x+(l4.dx||0)*4, wy4=P.y+(l4.dy||0)*4;
@@ -9288,7 +9790,8 @@ function hurtShowsOK(seeds){
   function tryOne(name, place, fire){
     var s2, done=0, flinched=0, aimed=0;
     for(s2=0;s2<seeds*40 && done<20;s2++){
-      bootTest(45000+s2);
+      if(s2%10===0) bootTest(45000+s2);
+      else bootRoll(45000+s2);
       var line=straightLine4();
       if(!line) continue;
       var mx=P.x+(line.dx||0)*4, my=P.y+(line.dy||0)*4;
@@ -9334,8 +9837,11 @@ function hurtShowsOK(seeds){
    damage done, and whatever it hits is stuck where it stands. */
 function spiderBowOK(seeds){
   var bad=[], s, shots=0, webs=0, arrowsSpent=0, stuck=0, hurt=0, holds=[];
+  /* One floor serves ten shots.  Building a floor is by far the most
+     expensive thing in the suite and this used to build a fresh one for
+     every arrow, which on its own took eight minutes. */
   for(s=0;s<seeds*20 && shots<200;s++){
-    bootTest(46000+s);
+    if(s % 10 === 0) bootTest(46000+s);
     var line=straightLine4();
     if(!line) continue;
     var tx=P.x+(line.dx||0)*3, ty=P.y+(line.dy||0)*3;
@@ -9379,7 +9885,7 @@ function spiderBowOK(seeds){
   /* and one you have not identified does nothing at all */
   var blind=0, blindWebs=0;
   for(s=0;s<seeds*20 && blind<40;s++){
-    bootTest(46200+s);
+    if(s % 10 === 0) bootTest(46200+s);
     var l9=straightLine4();
     if(!l9) continue;
     var qx=P.x+(l9.dx||0)*3, qy=P.y+(l9.dy||0)*3;
@@ -9401,9 +9907,12 @@ function spiderBowOK(seeds){
   if(blindWebs) bad.push('an unidentified bow of the spider loosed web '+blindWebs+' times');
 
   /* it only goes on a bow, and a plain weapon never gets it */
+  /* Rolling a rune needs a fresh number, not a fresh dungeon.  This used
+     to build four hundred complete floors to do it, which was two and a
+     half minutes of the suite on its own. */
   var onBow=0, onBlade=0, tries=0;
   for(s=0;s<400;s++){
-    bootTest(46500+s);
+    srand(46500+s);
     var b2=mkItem('weapon',weaponIndex('short bow'));
     addRune(b2,'wb',100);
     if(b2.br==='the spider') onBow++;
@@ -9416,8 +9925,9 @@ function spiderBowOK(seeds){
   if(onBlade) bad.push('a sword took the bow rune '+onBlade+' times');
   /* and a scroll of enchantment can cut it in */
   var cut=0, scrolls=0;
+  /* likewise: cutting a rune wants a fresh roll, not a fresh floor */
   for(s=0;s<300;s++){
-    bootTest(46900+s);
+    srand(46900+s);
     var b3=mkItem('weapon',weaponIndex('short bow'));
     b3.br=0;
     scrolls++;
@@ -9564,8 +10074,103 @@ function doorsAreDoorsOK(seeds){
 /* ------------------------------------------------------------ the bows
    Three launchers, all eating the same arrows, and the long one reaching
    further than the other two. */
+/* --------------------------------------------------------- a bow of fire
+   The shaft is alight as it leaves the string.  What it hits catches,
+   the square it hits burns, and a shot that goes wide sets light to
+   whatever it comes down on instead.  A plain bow does none of it, and
+   neither does one whose enchantment you have not yet learned. */
+function bowOfFireOK(seeds){
+  var bad=[], s, i;
+  var hits=0, lit=0, hitFires=0, misses=0, missFires=0, plain=0, plainFires=0, unknown=0;
+  function armed(kind){
+    /* a bow in the off hand, arrows in the pack, and a clear line */
+    var bow=mkItem('weapon',weaponIndex('long bow'));
+    bow.known=1; bow.hp=bow.dp=0;
+    if(kind!=='plain'){ bow.br='fire'; bow.brKnown = kind==='known' ? 1 : 0; }
+    P.eq.lh=bow;
+    var q=mkItem('weapon',weaponIndex('arrow')); q.cnt=40; q.known=1;
+    P.slots=new Array(N_SLOTS).fill(null); P.slots[0]=q;
+    return bow;
+  }
+  function fireOn(x,y){
+    for(var c=0;c<L.clouds.length;c++)
+      if(L.clouds[c].x===x&&L.clouds[c].y===y&&L.clouds[c].kind==='fire') return 1;
+    return 0;
+  }
+  for(s=0;s<seeds*40 && (hits<25||misses<25||plain<25);s++){
+    if(s%10===0) bootTest(38200+s); else bootRoll(38200+s);
+    var line=straightLine4();
+    if(!line) continue;
+    var tx=P.x+(line.dx||0)*3, ty=P.y+(line.dy||0)*3;
+    if(!walkable(tx,ty)||inWater(tx,ty)||inWater(P.x,P.y)) continue;
+    P.hp=P.mhp=90000; P.perks={}; P.conf=0; P.blind=0;
+
+    /* three shots off the same square: a hit, a miss, and a plain bow */
+    var want = hits<25 ? 'hit' : (misses<25 ? 'miss' : 'plain');
+    L.mons.length=0; L.clouds.length=0; L.burning={}; L.fuses={};
+    var m=mkMonster('O',6,tx,ty);
+    m.hp=m.mhp=90000; m.burn=0;
+    /* armour decides it: nothing can hit a wall of iron, and nothing can
+       miss a target that cannot dodge */
+    m.ar = want==='miss' ? -400 : 400;
+    L.mons.push(m);
+    armed(want==='plain' ? 'plain' : 'known');
+    G.msgq=[]; G.beat=0;
+    var before=m.burn;
+    if(!fireAt(m)) continue;
+    var burnt = (m.burn||0)>before;
+    if(want==='hit'){
+      if(m.hp>=90000) continue;                   /* it missed after all */
+      hits++;
+      if(burnt) lit++; else bad.push('a hit from a bow of fire did not light it');
+      if(fireOn(tx,ty)) hitFires++; else bad.push('the square it was hit on did not catch');
+    } else if(want==='miss'){
+      if(m.hp<90000) continue;                    /* it hit after all */
+      misses++;
+      /* It sails past and comes down somewhere along the line; the shot
+         itself says where.  A shaft that fell in water is out, which is
+         the rule everywhere else too, so it proves nothing. */
+      var fell = G.shot ? { x:G.shot.ex, y:G.shot.ey } : null;
+      if(!fell || inWater(fell.x,fell.y)){ misses--; continue; }
+      if(fireOn(fell.x,fell.y)) missFires++;
+      else bad.push('a missed fire arrow set nothing alight where it fell');
+      if((m.burn||0)>before) bad.push('a shot that missed still set it alight');
+    } else {
+      if(m.hp>=90000) continue;
+      plain++;
+      if((m.burn||0)>before) bad.push('a plain bow set something alight');
+      if(fireOn(tx,ty)) bad.push('a plain bow left the floor burning');
+      else plainFires++;
+    }
+  }
+  /* and an enchantment you have not learned does nothing, as with the rest */
+  for(s=0;s<200 && unknown<12;s++){
+    if(s%10===0) bootTest(38900+s); else bootRoll(38900+s);
+    var l2=straightLine4();
+    if(!l2) continue;
+    var ux=P.x+(l2.dx||0)*3, uy=P.y+(l2.dy||0)*3;
+    if(!walkable(ux,uy)||inWater(ux,uy)) continue;
+    L.mons.length=0; L.clouds.length=0;
+    var m2=mkMonster('O',6,ux,uy); m2.hp=m2.mhp=90000; m2.ar=400; m2.burn=0;
+    L.mons.push(m2);
+    P.hp=P.mhp=90000; P.perks={};
+    armed('secret');
+    G.msgq=[];
+    if(!fireAt(m2)) continue;
+    if(m2.hp>=90000) continue;
+    unknown++;
+    if(m2.burn) bad.push('a bow whose enchantment you have not learned set something alight');
+  }
+  if(hits<5) bad.push('only landed '+hits+' shots with a bow of fire');
+  if(misses<5) bad.push('only missed '+misses+' times with a bow of fire');
+  if(plain<5) bad.push('only landed '+plain+' shots with a plain bow');
+  if(unknown<5) bad.push('never shot an unlearned bow of fire');
+  return { bad:bad, hits:hits, lit:lit, hitFires:hitFires,
+           misses:misses, missFires:missFires, plain:plain, unknown:unknown };
+}
+
 function bowsOK(){
-  var bad=[], out=[], names=['short bow','long bow','crossbow'], i;
+  var bad=[], out=[], names=['short bow','long bow','crossbow','great bow'], i;
   bootTest(1);
   for(i=0;i<names.length;i++){
     var k=weaponIndex(names[i]);
@@ -9580,23 +10185,34 @@ function bowsOK(){
     if(!kit || !kit.ammo) bad.push(names[i]+' cannot find an arrow to shoot');
     out.push(names[i]+' '+shotRange()+' squares, '+W.s);
   }
-  /* each has its own picture */
+  /* Every one of them is drawn by something that is on the sheet, and
+     the three that are meant to look different do.  The great bow is a
+     long bow to the eye on purpose, so it is the one exception and is
+     named here rather than left to slip through. */
   var seen={};
   for(i=0;i<names.length;i++){
     var k2=weaponIndex(names[i]);
     if(k2<0) continue;
     var sp=WEAPONS[k2].s;
-    if(seen[sp]) bad.push(names[i]+' shares a sprite with '+seen[sp]);
-    seen[sp]=names[i];
     if(ATLAS.index[sp]===undefined) bad.push('there is no '+sp+' on the sheet');
+    if(seen[sp] && !(names[i]==='great bow' && seen[sp]==='long bow'))
+      bad.push(names[i]+' shares a sprite with '+seen[sp]);
+    if(!seen[sp]) seen[sp]=names[i];
   }
-  /* and the long one carries further */
+  if(WEAPONS[weaponIndex('great bow')].s!==WEAPONS[weaponIndex('long bow')].s)
+    bad.push('the great bow no longer borrows the long bow picture - give it its own');
+  /* and each longer stave carries further than the last */
   function reachOf(n){
     var b2=mkItem('weapon',weaponIndex(n)); P.eq.lh=b2; return shotRange();
   }
   P.perks={};
-  var shortR=reachOf('short bow'), longR=reachOf('long bow');
+  var shortR=reachOf('short bow'), longR=reachOf('long bow'), greatR=reachOf('great bow');
   if(longR<=shortR) bad.push('a long bow reaches '+longR+', no further than a short bow');
+  if(greatR<=longR) bad.push('a great bow reaches '+greatR+', no further than a long bow');
+  /* and hits harder than the long bow it outgrew */
+  var gd=WEAPONS[weaponIndex('great bow')].shot, ld=WEAPONS[weaponIndex('long bow')].shot;
+  if(gd[0]*gd[1]<=ld[0]*ld[1]) bad.push('a great bow hits no harder than a long bow');
+  out.push('great bow '+greatR+' squares');
   return { bad:bad, ways:out.join('; ') };
 }
 
@@ -9741,8 +10357,15 @@ function mossIsSafeOK(seeds){
    of if you do not know it is there. */
 function runeSecretOK(){
   var bad=[], i;
+  /* Each try gets its own seed.  This used to reseed with the same
+     number every time, so sixty tries were one trial repeated sixty
+     times: whether it passed came down to a single roll. */
+  var freshN = 0;
   function fresh(){
-    bootTest(56000);
+    /* the floor never matters here at all - only the dice and the item */
+    var fn = freshN++;
+    if(fn%10===0) bootTest(56000 + fn);
+    else bootRoll(56000 + fn);
     var w=mkItem('weapon', weaponIndex('long sword'));
     w.br='fire'; w.hp=1; w.dp=1;
     P.eq.rh=null; P.eq.lh=null;
@@ -9878,8 +10501,10 @@ function carriedRingsOK(seeds){
   /* and the shafts come back */
   function recover(withRing){
     var kept=0, shots=0;
+    /* One floor, twenty shots.  Six hundred floors were being built to
+       count arrows, twice over, and that alone was seven minutes. */
     for(s=0;s<seeds*30 && shots<120;s++){
-      bootTest(57900+s);
+      if(s % 20 === 0) bootTest(57900+s);
       var line=straightLine4();
       if(!line) continue;
       var tx=P.x+(line.dx||0)*3, ty=P.y+(line.dy||0)*3;
