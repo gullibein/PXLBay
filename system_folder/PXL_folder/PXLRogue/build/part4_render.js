@@ -41,14 +41,14 @@ var COLS = {
 };
 
 /* inventory geometry */
-var SL = 17, GAP = 2, PITCH = SL + GAP;
+var SL = INV_SL, GAP = INV_GAP, PITCH = INV_PITCH;
 /* The squares sit one pixel higher than the labels above them would
    suggest.  There were two spare pixels under RH BD LH HD FT, so the
    whole grid comes up one without the labels moving and without any of
    it looking any different - and the pixel that buys, together with the
    one spare row at the very bottom, makes the buttons two pixels taller
    so their text can sit squarely in the middle of them. */
-var GX = 2, MSG_Y = 1, TITLE_Y = 12, LABEL_Y = 12, GY_EQ = 20, GY_BAG = 42;
+var GX = INV_GX, MSG_Y = 1, TITLE_Y = 12, LABEL_Y = 12, GY_EQ = 20, GY_BAG = 42;
 /* The wide, short buttons under the four rows of the bag.  The last row
    of squares ends at 117 and the screen is 128 tall, so there are ten
    pixels to work with and the buttons are shorter than a square. */
@@ -66,6 +66,8 @@ var STAT_H = 39, HP_BAR_H = 7;
    from there: flags on the very bottom line, three rows of numbers above
    them, then whatever is currently trying to kill you, then the log. */
 var FLAG_Y = 0, STAT_Y = 0;        /* both fixed up from the font at boot */
+/* the row of buttons along the floor of the panel, likewise */
+var PANEL_BTN_H = 0, PANEL_BTN_Y = 0;
 var BATTLE_ROW = 9;
 var LOG_W = 0;                     /* worked out from the font at boot */
 
@@ -556,9 +558,21 @@ function onMouseUp(e) {
 }
 function clickAt(mx, my, right) {
   var h = hitAt(mx, my);
+  /* A room box has the screen until it is dismissed, and anywhere at all
+     dismisses it - either button, a finger, the panel, the map.  It is
+     ahead of the panel buttons on purpose: a click meant to put the box
+     away should not also open the pack behind it. */
+  if (G.mode === 'room') { roomKey('Enter'); return; }
   /* the pack, wherever you are */
   if (h && h.what === 'pack' && !right) {
+    PANEL_FLASH = { what: 'pack', t: Date.now() };
     if (G.mode === 'inv') closeInv(); else openInv();
+    return;
+  }
+  /* and waiting a turn, which SPACE does and a finger otherwise cannot */
+  if (h && h.what === 'wait' && !right) {
+    PANEL_FLASH = { what: 'wait', t: Date.now() };
+    if (G.mode === 'play') waitTurn();
     return;
   }
   switch (G.mode) {
@@ -599,6 +613,8 @@ function clickAt(mx, my, right) {
       else G.ctx = null, G.mode = 'play';
       return;
     case 'play':
+      /* in mid-jump there is nobody to give the order to */
+      if (warping()) return;
       mapClick(mx, my, right);
       return;
     /* Aiming with the mouse: the square you click is the square you meant,
@@ -709,6 +725,20 @@ function mapOrder(mx2, my2) {
       return;
     }
     walkTo(m.x, m.y, { door: { x: m.x, y: m.y } });
+    return;
+  }
+  /* A wall is a thing to walk up to and put your hands on.  Pushing into
+     stone is how a hidden door gives itself away, and with the keyboard
+     that is simply walking at it; a click used to answer "You can't go
+     there" and leave you standing where you were, so a whole way of
+     playing was shut to the mouse. */
+  if (isWallish(m.x, m.y)) {
+    if (mdist({ x: m.x, y: m.y }) === 1) {
+      var wm = playerMove(m.x - P.x, m.y - P.y);
+      tick(wm);
+      return;
+    }
+    walkTo(m.x, m.y, { feel: { x: m.x, y: m.y } });
     return;
   }
   var foe = monAt(L, m.x, m.y);
@@ -923,6 +953,13 @@ function textC(s, py, col, scale) {
   text(s, ((SW - textW(s, scale)) / 2) | 0, py, col, scale);
 }
 function textR(s, rx, py, col) { text(s, rx - textW(s), py, col); }
+/* Centred on the map rather than on the whole screen.  Anything centred
+   on the screen starts inside the panel and is written over whatever the
+   panel has there. */
+function textM(s, py, col, scale) {
+  scale = scale || 1;
+  text(s, VIEW_PX + (((VIEW_W * TS) - textW(s, scale)) >> 1), py, col, scale);
+}
 /* the longest leading part of s that fits in w pixels */
 function clipTo(s, w) {
   s = String(s);
@@ -1060,6 +1097,10 @@ function resumeMode() {
     G.invMode = 'pick'; G.sel = null; setPouch(null);
     G.invOpen = 1; G.mode = 'inv'; return;
   }
+  /* You have just walked into a room somebody built.  It goes up once
+     the turn has finished playing out, and it takes the screen until it
+     is dismissed - which is the point of it. */
+  if (G.roomBox) { G.mode = 'room'; return; }
   if (G.ask) { G.mode = 'ask'; return; }
   if (G.aim) { G.mode = 'dir'; return; }
   G.mode = G.invOpen ? 'inv' : 'play';
@@ -1081,6 +1122,34 @@ function camTarget() {
   return { x: (G.drag ? G.drag.dx : 0) + (G.pan ? G.pan.dx : 0),
            y: (G.drag ? G.drag.dy : 0) + (G.pan ? G.pan.dy : 0) };
 }
+/* Where the view has got to, following you about: your position, but
+   arrived at smoothly rather than a square at a time.  Null until the
+   first frame, and snapped whenever you are somewhere else entirely -
+   a new floor, a fall, a teleport. */
+var WALK_AT = null;
+function camWalkTo() {
+  if (typeof P === 'undefined' || !P) return;
+  if (!WALK_AT) { WALK_AT = { x: P.x, y: P.y }; return; }
+  var dx = P.x - WALK_AT.x, dy = P.y - WALK_AT.y;
+  /* In a fight, or a long way off, the view is simply where you are. */
+  if (Math.abs(dx) > WALK_LAG_MAX + 2 || Math.abs(dy) > WALK_LAG_MAX + 2 ||
+      (typeof battleNear === 'function' && battleNear())) {
+    WALK_AT.x = P.x; WALK_AT.y = P.y; return;
+  }
+  if (Math.abs(dx) < WALK_LAG_SNAP && Math.abs(dy) < WALK_LAG_SNAP) {
+    WALK_AT.x = P.x; WALK_AT.y = P.y; return;
+  }
+  WALK_AT.x += dx * WALK_CHASE;
+  WALK_AT.y += dy * WALK_CHASE;
+  /* never so far behind that you are looking at the wrong room */
+  WALK_AT.x = clamp(WALK_AT.x, P.x - WALK_LAG_MAX, P.x + WALK_LAG_MAX);
+  WALK_AT.y = clamp(WALK_AT.y, P.y - WALK_LAG_MAX, P.y + WALK_LAG_MAX);
+}
+/* how far behind you the view is, in tiles */
+function walkLag() {
+  if (!WALK_AT || typeof P === 'undefined' || !P) return { x: 0, y: 0 };
+  return { x: P.x - WALK_AT.x, y: P.y - WALK_AT.y };
+}
 /* How far, in pixels, to shift the whole map from where its tiles say it
    is, so that it appears at CAM_AT rather than at the whole-tile offset
    it is drawn on.
@@ -1092,9 +1161,17 @@ function camTarget() {
    every slide before easing it back, and that is what made a dragged map
    look as though it were being torn about. */
 function camSlip() {
+  var w = camTarget(), g = walkLag();
+  return { x: Math.round((w.x - CAM_AT.x + g.x) * TS),
+           y: Math.round((w.y - CAM_AT.y + g.y) * TS) };
+}
+/* The same question without the following: has the view arrived where
+   the tiles say it should be?  An order waiting on the view asks this
+   one, or a walk in progress would hold it up for ever. */
+function camSettled() {
   var w = camTarget();
-  return { x: Math.round((w.x - CAM_AT.x) * TS),
-           y: Math.round((w.y - CAM_AT.y) * TS) };
+  return Math.round((w.x - CAM_AT.x) * TS) === 0 &&
+         Math.round((w.y - CAM_AT.y) * TS) === 0;
 }
 /* Is the hand pushing the map about this instant?  While it is, the view
    is wherever the hand has put it and nothing else may move it. */
@@ -1151,8 +1228,7 @@ function camHomeFirst() {
 function camWaiting() {
   if (!G.waiting) return;
   if (G.mode !== 'play' || G.dead || G.ask || G.walk) { G.waiting = null; return; }
-  var s = camSlip();
-  if (s.x || s.y) return;                 /* still on its way */
+  if (!camSettled()) return;              /* still on its way */
   var job = G.waiting;
   G.waiting = null;
   if (job.x < 0 || job.y < 0 || job.x >= MAP_W || job.y >= MAP_H) return;
@@ -1212,7 +1288,7 @@ function camFollow() {
    of the things below ends it - and none of them lose you anything, you
    simply click again. */
 function walkTo(tx, ty, job) {
-  var stopShort = !!(job && (job.foe || job.door));
+  var stopShort = !!(job && (job.foe || job.door || job.feel));
   var path = findPath(tx, ty, { stopShort: stopShort });
   if (!path) { msg("You can't go there.", '6'); finishMsgs(); return false; }
   if (!path.length) {
@@ -1256,6 +1332,15 @@ function doWalkJob(job) {
     tick(opened);
     return true;
   }
+  /* walked over to the wall: now put your hands on it */
+  if (job.feel) {
+    var fdx = job.feel.x - P.x, fdy = job.feel.y - P.y;
+    if (Math.abs(fdx) + Math.abs(fdy) !== 1) return false;
+    if (!isWallish(job.feel.x, job.feel.y)) return false;
+    beginAction();
+    tick(playerMove(fdx, fdy));
+    return true;
+  }
   /* walked over to the stairs: now go down them */
   if (job.stairs) {
     if (tileAt(P.x, P.y) !== STAIR && tileAt(P.x, P.y) !== STAIR_UP) return false;
@@ -1277,6 +1362,8 @@ function walkTick() {
   if (!G.walk) return;
   if (G.dead || G.mode !== 'play') { G.walk = null; return; }
   if (Date.now() < G.walk.at) return;
+  /* and a walk under way holds its breath until you have landed */
+  if (warping()) return;
   var w = G.walk;
   /* the reasons to stop, all of them checked before the step */
   if (heldFast()) { stopWalk('You cannot move.'); return; }
@@ -1420,6 +1507,7 @@ function onKey(e) {
     case 'pause': pauseKey(k); return;
     case 'slots': slotsKey(k); return;
     case 'hint': hintKey(k); return;
+    case 'room': roomKey(k); return;
     case 'look': lookKey(k); return;
     case 'inv': invKey(k); return;
     case 'dir': dirKey(k); return;
@@ -1431,6 +1519,9 @@ function onKey(e) {
 }
 
 function playKey(k) {
+  /* nothing at all while you are in mid-jump: you are not standing
+     anywhere to act from */
+  if (warping()) return;
   /* the chest is open only while you are standing on it */
   if (G.box && !(G.box.x === P.x && G.box.y === P.y &&
       L.items.indexOf(G.box) >= 0)) G.box = null;
@@ -1490,14 +1581,7 @@ function playKey(k) {
      something is.  Help lives on the ESC menu now. */
   if (k === '?' || k === '/') { openLook(); return; }
   if (k === 'Escape') { openPause(); return; }
-  if (k === ' ') {
-    /* SPACE waits a turn, and only that.  Looking in a chest is ENTER,
-       which is what opens everything else in the game. */
-    var before = G.msgq.length;
-    tick(true);
-    if (!G.dead && G.msgq.length === before) { msg('You wait.', '4'); finishMsgs(); }
-    return;
-  }
+  if (k === ' ') { waitTurn(); return; }
   G.msgq = [];
 }
 
@@ -1631,13 +1715,32 @@ var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['load', 'LOAD'], ['hints', 'HINTS'
 var TITLE_OPTS = [['start', 'START'], ['load', 'LOAD'], ['hints', 'HINTS'],
                   ['help', 'HELP'], ['exit', 'EXIT']];
 function openPause() { G.pause = { i: 0 }; G.titleMenu = null; G.mode = 'pause'; }
+/* Out of the run and back to the splash, with nothing of the menus left
+   standing behind it. */
+function quitToTitle() {
+  G.slots = null; G.pause = null; G.titleMenu = null;
+  G.msgq = [];
+  G.mode = 'title';
+}
 function pauseKey(k) {
   var d = keyDir(k);
   if (k === 'Escape' || k === 'Tab') { G.pause = null; G.mode = 'play'; return; }
   if (d && d[1]) { G.pause.i = (G.pause.i + d[1] + PAUSE_OPTS.length) % PAUSE_OPTS.length; return; }
   if (k !== 'Enter' && k !== ' ') return;
   var pick = PAUSE_OPTS[G.pause.i][0];
-  if (pick === 'save' || pick === 'load') { openSlots(pick, 'pause'); return; }
+  /* Save and quit means both.  It used to open the slot picker, write
+     the file, print "Saved." and sit there with the run still going -
+     which is neither saving and quitting nor anything else you asked
+     for.  The slot is asked for once; after that the run knows which
+     one it lives in. */
+  if (pick === 'save') {
+    if (G.slot === null || G.slot === undefined) { openSlots('save', 'pause'); return; }
+    var serr = saveInto(G.slot);
+    if (serr) { openSlots('save', 'pause'); G.slots.msg = serr; return; }
+    quitToTitle();
+    return;
+  }
+  if (pick === 'load') { openSlots(pick, 'pause'); return; }
   if (pick === 'hints') { openHints('pause'); return; }
   G.pause = null;
   if (pick === 'help') { G.mode = 'help'; return; }
@@ -1725,7 +1828,8 @@ function slotsKey(k) {
   var err;
   if (G.slots.what === 'save') {
     err = saveInto(G.slots.i);
-    G.slots.msg = err || 'Saved.';
+    if (err) { G.slots.msg = err; return; }
+    quitToTitle();                     /* save AND quit */
     return;
   }
   err = loadFrom(G.slots.i);
@@ -1814,6 +1918,42 @@ function drawHints() {
   text('SPACE another   ESC back', x + 5, y + h - 10, '4');
 }
 
+/* -------------------------------------------------- a room announced
+   Walking into a room somebody built stops the game and says so, in a
+   box over the middle of the map with the room's own picture in it.  Any
+   of the four keys that mean "done" anywhere else in the game closes it,
+   and so does a click or a touch anywhere at all. */
+var ROOM_BOX_W = 148;
+function roomLines() {
+  var lines = ROOM_ENTRY[G.roomBox.kind] || [];
+  return wrap(lines.join(' '), ROOM_BOX_W - 10);
+}
+function roomKey(k) {
+  if (k !== 'Enter' && k !== ' ' && k !== 'Tab' && k !== 'Escape') return;
+  G.roomBox = null;
+  G.mode = 'play';
+}
+function drawRoomBox() {
+  if (!G.roomBox) return;
+  var kind = G.roomBox.kind, lines = roomLines(), i;
+  var icon = ROOM_ICON[kind], title = ROOM_TITLE[kind] || '';
+  var w = ROOM_BOX_W;
+  var head = icon ? TS * 2 : LH;                    /* the picture's row */
+  /* No "ENTER to go on" along the bottom.  Half the people playing this
+     are holding a telephone and have no such key, and anybody can work
+     out that a box in the way goes away when you touch it. */
+  var h = 5 + head + 4 + lines.length * 9 + 5;
+  var x = VIEW_PX + ((VIEW_W * TS - w) >> 1);
+  var y = VIEW_PY + ((VIEW_H * TS - h) >> 1);
+  rect(x, y, w, h, '#0b0d1c');
+  frame(x, y, w, h, '#636d85');
+  if (icon) sprS(icon, x + 6, y + 5, 2);
+  text(title, x + (icon ? 6 + TS * 2 + 6 : 6), y + 5 + ((head - LH) >> 1), 'y');
+  var ty = y + 5 + head + 4;
+  for (i = 0; i < lines.length; i++) text(lines[i], x + 6, ty + i * 9, 'w');
+  hit(x, y, w, h, 'room', 0);
+}
+
 /* ------------------------------------------------------- looking about
    A cursor you walk over the map.  ENTER or SPACE reads out whatever is
    on the square it is sitting on. */
@@ -1851,7 +1991,10 @@ function drawLook(camx, camy) {
     else frame(px - 1, py - 1, TS + 2, TS + 2, '#c3ccd9');
   }
   if (!G.look.lines) {
-    textC('ARROWS look around, ENTER reads', SH - 8, '6');
+    /* centred on the map, not on the whole screen: centred on the screen
+       it began inside the panel and was laid across whatever was written
+       there.  What it is about is on the map, so that is where it goes. */
+    textM('ARROWS look around, ENTER reads', SH - 8, '6');
     return;
   }
   /* the box of words, kept clear of the square it is talking about */
@@ -2332,7 +2475,7 @@ function invEnter() {
 }
 
 /* ---------------------------------------------------------- render */
-function loop() { walkTick(); touchHold(); camEase(); camWaiting(); render(); requestAnimationFrame(loop); }
+function loop() { walkTick(); touchHold(); camEase(); camWalkTo(); camWaiting(); render(); requestAnimationFrame(loop); }
 
 function render() {
   /* The hit list is rebuilt every frame by the things that draw
@@ -2423,6 +2566,15 @@ function warpPhase(w) {
   if (age < WARP_SHAKE + WARP_FLASH) return { part: 'flash', age: age - WARP_SHAKE };
   return null;
 }
+/* You are still in the air.  The jump is drawn over WARP_SHAKE +
+   WARP_FLASH milliseconds, and for that long there is no man on the
+   screen to give an order to - he is shivering on the square he is
+   leaving, or he is nowhere at all.  Orders given in that window used to
+   go through, so you could walk out of the far end of a teleport before
+   you had arrived at it. */
+function warping() {
+  return !!(typeof P !== 'undefined' && P && P.warp && warpPhase(P.warp));
+}
 function warpJitter(w, age) {
   var n = (age / WARP_SHAKE_STEP) | 0;
   var h = (n * 2654435761 + w.fx * 40507 + w.fy * 12289) >>> 0;
@@ -2461,7 +2613,7 @@ function monBetween(m) {
   for (i = 0; i < m.anim.length; i++) {
     var a = m.anim[i], t0 = a[4];
     if (now < t0) return [a[0], a[1], a[0], a[1]];      /* not started yet */
-    if (now < t0 + (a[5] || MOVE_ANIM_MS)) return [a[0], a[1], a[2], a[3]];  /* crossing */
+    if (now < t0 + MOVE_ANIM_MS) return [a[0], a[1], a[2], a[3]];  /* crossing */
     if (i + 1 < m.anim.length && now < m.anim[i + 1][4])
       return [a[2], a[3], a[2], a[3]];                  /* arrived, waiting */
   }
@@ -2482,9 +2634,8 @@ function monPixel(m, camx, camy) {
     if (now < t0) {                      /* this step has not happened yet */
       return [VIEW_PX + (a[0] - camx) * TS, VIEW_PY + (a[1] - camy) * TS];
     }
-    var span = a[5] || MOVE_ANIM_MS;
-    if (now < t0 + span) {
-      var f = (now - t0) / span;
+    if (now < t0 + MOVE_ANIM_MS) {
+      var f = (now - t0) / MOVE_ANIM_MS;
       var fx = VIEW_PX + (a[0] - camx) * TS, fy = VIEW_PY + (a[1] - camy) * TS;
       var tx2 = VIEW_PX + (a[2] - camx) * TS, ty2 = VIEW_PY + (a[3] - camy) * TS;
       return [Math.round(fx + (tx2 - fx) * f), Math.round(fy + (ty2 - fy) * f)];
@@ -2555,6 +2706,22 @@ function cornerFrom(name, px, py, corner, a) {
     sx + ox, sy + oy, 2, 2, px + ox, py + oy, 2, 2);
 }
 
+/* The same trick, three pixels instead of four: the corner pixel and the
+   one either side of it along the two edges.  That is the smallest cut
+   that reads as a bevel rather than as a bite. */
+function cornerNib(name, px, py, corner, a) {
+  var i = IX[name];
+  if (i === undefined) return;
+  var sx = (i % ATLAS.cols) * TS, sy = ((i / ATLAS.cols) | 0) * TS;
+  var qx = (corner & 1) ? TS - 1 : 0, qy = (corner > 1) ? TS - 1 : 0;
+  var dx = (corner & 1) ? -1 : 1, dy = (corner > 1) ? -1 : 1;
+  var sheet = (a === undefined || a >= 1) ? atlasImg : fadedSheet(a);
+  var pts = [[qx, qy], [qx + dx, qy], [qx, qy + dy]], k;
+  for (k = 0; k < 3; k++)
+    cx.drawImage(sheet || atlasImg,
+      sx + pts[k][0], sy + pts[k][1], 1, 1, px + pts[k][0], py + pts[k][1], 1, 1);
+}
+
 /* the sprite a square would show if it were plain floor */
 /* Three flagstones, scattered evenly over the floor by a cheap hash so
    the same square always draws the same one.  Two of the three used to
@@ -2610,6 +2777,24 @@ function drawEdging(mx, my, px, py, a) {
             isEdgeTile(mx, my + ((i > 1) ? 1 : -1));
     if (!t) continue;
     cornerFrom(liquidSprite(t, mx, my), px, py, i, a);
+    drew++;
+  }
+  return drew;
+}
+
+/* A hole sticking out into the room gets the same treatment as a pool,
+   but taken off diagonally rather than squarely: three pixels, the
+   corner and the one either side of it.
+   A square 2x2 bite leaves the floor with a right angle of its own
+   pointing back into the drop - the step is still there, it has only
+   moved two pixels - and four of those round one hole is what made a
+   pit read as a plus sign.  Water keeps the square bite: a pool is a
+   bigger, softer shape and nobody has complained of it. */
+function drawHoleCorners(mx, my, px, py, a) {
+  var c = edgeCorners(mx, my), i, drew = 0;
+  for (i = 0; i < 4; i++) {
+    if (!c[i]) continue;
+    cornerNib(floorSprite(mx, my), px, py, i, a);
     drew++;
   }
   return drew;
@@ -3004,7 +3189,7 @@ function drawMapAt(overX, overY) {
           break;
         case HOLE:
           drawHole(mx, my, px, py, a);
-          drawLiquidCorners(mx, my, px, py, a);
+          drawHoleCorners(mx, my, px, py, a);
           break;
         case CORR: spr('corr', px, py, a); break;
         case BRIDGE: drawBridge(mx, my, px, py, a); break;
@@ -3347,6 +3532,7 @@ function drawMapAt(overX, overY) {
   if (G.mode === 'pause') drawPause();
   if (G.mode === 'slots') drawSlots();
   if (G.mode === 'hint') drawHints();
+  if (G.mode === 'room') drawRoomBox();
 
   /* choosing what to shoot at */
   if (G.mode === 'target' && G.targets.length) {
@@ -3382,7 +3568,12 @@ function fitBars() {
   LOG_LINE = LH;
   TPAD = 0;
   LOG_W = PANEL_W - PX0 - 2;         /* the panel measures in pixels now */
-  FLAG_Y = SH - LH;                  /* the last line, flush with the floor */
+  /* The floor of the panel is a row of buttons, so that everything the
+     game asks of you can be done with a finger.  Waiting a turn had no
+     way in at all without a keyboard. */
+  PANEL_BTN_H = LH + 4;
+  PANEL_BTN_Y = SH - PANEL_BTN_H;
+  FLAG_Y = PANEL_BTN_Y - LH;         /* the flags sit on top of them */
   STAT_Y = FLAG_Y - 2 - STAT_H;
 }
 
@@ -3528,20 +3719,50 @@ function drawStats() {
   if (P.haste) fl.push('Fast');
   if (P.frozen) fl.push('Stuck');
   if (P.scare) fl.push('Scare');
+  /* A curse costs you hit points in circumstances you have to work out
+     for yourself, so it is worth a word on the line that is always on
+     the screen.  The pack says which curse and what is carrying it. */
+  if (cursesOnYou().length) fl.push('CURSED');
   if (P.amulet) fl.push('AMULET');
-  /* The pack, in the corner, where a mouse can reach it without knowing
-     that TAB opens it.  The flags shuffle along to make room. */
-  var px2 = PX0, fx2 = PX0;
-  if (usingPointer()) {
-    /* flush with the floor of the screen: the flags line is the last one
-       there is, so the icon sits in it rather than under it */
-    var py2 = SH - TS;
-    spr('pouch', px2, py2, 1);
-    hit(px2, py2, TS + 1, TS, 'pack', 0);
-    fx2 = px2 + TS + 2;
+  /* The pack used to be a small picture squeezed onto this line.  It is
+     a button of its own now, on the row below, so the flags have the
+     line to themselves. */
+  var s = clipTo(fl.join(' '), LOG_W);
+  if (s) text(s, PX0, FLAG_Y, G.hungerState >= 2 ? 'R' : 'O');
+  drawPanelButtons();
+}
+
+/* ------------------------------------------------- the panel's buttons
+   Two, along the floor of the panel: the pack, and waiting a turn.  Both
+   have keys - TAB and SPACE - but a finger has no keys, and waiting is
+   not something you can otherwise ask for at all without one. */
+var PANEL_BTNS = [['pack', 'Pack'], ['wait', 'Wait']];
+function drawPanelButtons() {
+  var full = PANEL_W - PX0 * 2, gap = 2;
+  var w = ((full - gap * (PANEL_BTNS.length - 1)) / PANEL_BTNS.length) | 0;
+  for (var i = 0; i < PANEL_BTNS.length; i++) {
+    var bx = PX0 + i * (w + gap);
+    if (i === PANEL_BTNS.length - 1) w = full - (bx - PX0);
+    var over = usingMouse() && MOUSE.on &&
+      MOUSE.x >= bx && MOUSE.y >= PANEL_BTN_Y &&
+      MOUSE.x < bx + w && MOUSE.y < PANEL_BTN_Y + PANEL_BTN_H;
+    var lit = PANEL_FLASH.what === PANEL_BTNS[i][0] &&
+      Date.now() - PANEL_FLASH.t < BTN_FLASH_MS;
+    rect(bx, PANEL_BTN_Y, w, PANEL_BTN_H, lit ? '#fad039' : over ? '#1b2140' : '#141829');
+    frame(bx, PANEL_BTN_Y, w, PANEL_BTN_H, lit ? '#fad039' : over ? '#636d85' : '#3f4966');
+    var tw = textW(PANEL_BTNS[i][1]);
+    text(PANEL_BTNS[i][1], bx + ((w - tw) >> 1), PANEL_BTN_Y + 2, lit ? 'n' : '6');
+    hit(bx, PANEL_BTN_Y, w, PANEL_BTN_H, PANEL_BTNS[i][0], i);
   }
-  var s = clipTo(fl.join(' '), LOG_W - (fx2 - PX0));
-  if (s) text(s, fx2, FLAG_Y, G.hungerState >= 2 ? 'R' : 'O');
+}
+var PANEL_FLASH = { what: '', t: 0 };
+/* Standing still for a turn.  SPACE does it, and so does the button -
+   the same one thing, so they cannot drift apart.  Looking in a chest is
+   ENTER, which is what opens everything else in the game. */
+function waitTurn() {
+  var before = G.msgq.length;
+  tick(true);
+  if (!G.dead && G.msgq.length === before) { msg('You wait.', '4'); finishMsgs(); }
 }
 
 /* Your keys, in the top corner of the map.  Nothing important happens
@@ -3681,7 +3902,7 @@ function drawInv() {
   }
 
   /* -------- right hand column: the keys, the item, then you -------- */
-  var IXX = GX + 5 * PITCH + 3, IW = SW - IXX - 2;
+  var IXX = INV_TXT_X, IW = INV_COL_W;
   var colW = IW;
   /* The two keys that always work, at the top where they are out of the
      way of the thing you are reading about. */
@@ -3757,9 +3978,18 @@ function drawInv() {
   text('Gold ' + P.gold, IXX + 52, ly, 'y'); ly += LH;
   text('sneak ' + stealthWord() + '  dodge ' + dodgeChance() + '%', IXX, ly, 'c'); ly += LH;
 
-  ly = 107;
+  /* The list used to start at 107, which left room for two lines and no
+     more - so a two line entry was cut in half and anything after the
+     hunger was never seen at all.  There were ten spare pixels above it
+     doing nothing: the stats end at 96.  It starts at 100 now, which is
+     a third line. */
+  ly = 100;
   rect(IXX, ly - 3, IW, 1, '#2b3352');
-  var ef = playerEffects(), room = 2;
+  var ef = playerEffects();
+  /* as many lines as there is screen left below the heading, keeping one
+     back for the thing in your hand if you are carrying one */
+  var room = (((SH - (ly + LH)) / LH) | 0) - (G.sel ? 1 : 0);
+  if (room < 1) room = 1;
   /* the overflow count rides on the heading, which costs no line */
   text('EFFECTS' + (ef.length > room ? '  +' + (ef.length - room) : ''), IXX, ly, 'y');
   ly += LH;

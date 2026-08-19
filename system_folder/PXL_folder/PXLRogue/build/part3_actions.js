@@ -77,9 +77,8 @@ function playerMove(dx, dy) {
   P.walkT = Date.now();
   /* web on the floor holds the first thing into it, and comes away */
   if (webCatches(nx, ny)) {
-    P.frozen += WEB_FLOOR_HOLD;
-    P.webbed = Math.max(P.webbed || 0, WEB_FLOOR_HOLD);
-    msgTrap('You walk into a web.', 'c', 'stuck ' + WEB_FLOOR_HOLD, 'O');
+    var whold = stickPlayer(webHold());
+    msgTrap('You walk into a web.', 'c', 'stuck ' + whold, 'O');
   }
   computeVis();
   afterStep();
@@ -160,6 +159,12 @@ function noteDarkness() {
   var now = darkAt(P.x, P.y) ? 1 : 0;
   if (now === G.wasDark) return;
   G.wasDark = now;
+  /* Blind is blind.  Walking from a lit room into a pitch dark one is
+     not a thing you notice with your eyes shut, and being told about it
+     is the game telling you something your character cannot know.  The
+     crossing is still recorded, so the line comes at the right moment if
+     your sight is back before you cross again. */
+  if (P.blind) return;
   /* Coming out of the dark is only worth remarking on if the dark was
      costing you something.  Night eyes make it a change of scenery. */
   if (!now) {
@@ -175,15 +180,43 @@ function noteDarkness() {
 /* The first time you set foot in a room somebody built on purpose, the
    game says what sort of room it is.  Once only, and only for the rooms
    that are worth remarking on. */
-function announceRoom() {
+/* Which room is being walked into.  Ordinarily that is the room you are
+   standing in - but a doorway belongs to no room, and standing in one is
+   the moment you have opened the door and can see what is on the other
+   side.  So from a doorway it looks through to the rooms it joins and
+   takes the one that has something to say.  That is a turn earlier than
+   setting foot inside, which is when the news is actually news. */
+function roomToAnnounce() {
   var ri = roomIndexAt(P.x, P.y);
+  if (ri >= 0) return ri;
+  if (!isDoorish(P.x, P.y)) return -1;
+  for (var d = 0; d < DIR4.length; d++) {
+    var k = roomIndexAt(P.x + DIR4[d][0], P.y + DIR4[d][1]);
+    if (k < 0) continue;
+    var rr = L.rooms[k];
+    if (rr && !rr.gone && rr.special && !rr.told && ROOM_ENTRY[rr.special]) return k;
+  }
+  return -1;
+}
+function announceRoom() {
+  var ri = roomToAnnounce();
   if (ri < 0) return;
   var r = L.rooms[ri];
   if (!r || !r.special || r.told) return;
+  /* Every word of it is something you can see: moss on the floor, flasks
+     on the shelves, gold behind bars.  Blind you walk in and know
+     nothing, and the room keeps its secret until you can look at it -
+     which is why `told` is not set here. */
+  if (P.blind) return;
   r.told = 1;
   var lines = ROOM_ENTRY[r.special];
   if (!lines) return;
   for (var i = 0; i < lines.length; i++) msg(lines[i], i ? 'c' : 'y');
+  /* and the same thing said properly, in a box over the middle of the
+     map with the room's own picture beside it.  It is put up rather than
+     shown here, so it waits for the turn to finish playing out - see
+     resumeMode. */
+  G.roomBox = { kind: r.special };
 }
 
 /* ---------------------------------------------------------- pickup */
@@ -1334,11 +1367,25 @@ function faceTheRock(cells) {
 }
 
 /* ---------------------------------------------------------- wands */
+/* The last charge has gone.  A stick of dead wood is not a thing to
+   carry: it is a slot in the pack you have to notice is useless and
+   clear out yourself.  Called after the zap has been resolved, so the
+   charge you paid for still does its work. */
+function wandSpent(it, spent) {
+  if (!spent || !it || it.ch > 0) return;
+  msg(cap(itemName(it)) + ' crumbles to dust.', '6');
+  removeItem(it, 1);
+}
 function zapWand(it, dx, dy) {
   breakClearwater('You give yourself away.');
   if (squibbed('wand')) return true;          /* the turn is spent trying */
   if (it.ch <= 0) { msg('Nothing happens.', '6'); return true; }
   if (!keepsCharge(it)) it.ch--;
+  /* Nothing is left in it.  A stick of dead wood is not an item, it is
+     a slot in your pack you have to notice and clear yourself, so it
+     goes - but only once the zap it just paid for has been resolved,
+     which is why this is a note and not a removal. */
+  var spent = it.ch <= 0;
   var k = it.k, n = WANDS[k].n, id = 1, i;
   var path = [], x = P.x, y = P.y;
   var pierce = (n === 'lightning' || n === 'fire' || n === 'cold');
@@ -1380,6 +1427,7 @@ function zapWand(it, dx, dy) {
     }
     else msg('You twitch and stay put.', '6');
     KNOWN.wand[k] = 1;
+    wandSpent(it, spent);
     return true;
   }
   switch (n) {
@@ -1532,6 +1580,7 @@ function zapWand(it, dx, dy) {
     }
   }
   if (id) KNOWN.wand[k] = 1;
+  wandSpent(it, spent);
   computeVis();
   return true;
 }
@@ -1667,7 +1716,10 @@ function throwAtSquare(it, tx, ty) {
   sound('shoot');
   G.shot = { sx: P.x, sy: P.y, ex: tx, ey: ty, t: beatNow(),
              dur: flight, tail: 4,
-             spr: (it.t === 'weapon') ? WEAPONS[it.k].s : null,
+             /* what the thing looks like, not what it is: a runed
+                stone wears whichever carving this run dealt it, and it
+                must wear the same one in the air */
+             spr: (it.t === 'weapon') ? itemSprite(it) : null,
              col: boom ? '#d82b2b' : isFlask(it) ? '#f59e0b' : null };
   beatWait(flight);
   removeItem(it, 1);
@@ -1788,7 +1840,7 @@ function likeItem(am) {
 function flyHome(am, fx, fy, flight) {
   if (!am.homing) return false;
   G.ret = { fx: fx, fy: fy, tx: P.x, ty: P.y,
-            t: beatNow(), dur: RETURN_MS, spr: WEAPONS[am.k].s };
+            t: beatNow(), dur: RETURN_MS, spr: itemSprite(am) };
   beatWait(RETURN_MS);
   var back = likeItem(am);
   if (addItem(back)) msg(cap(WEAPONS[am.k].n) + ' flies back to your hand.', 'G');
@@ -1872,7 +1924,7 @@ function fireAt(best) {
      stone arrived before it had been thrown. */
   G.shot = { sx: P.x, sy: P.y, ex: best.x, ey: best.y, t: beatNow(), dur: flight,
              tail: isBolt ? 3 : 6,
-             spr: thrown ? WEAPONS[am.k].s : null };
+             spr: thrown ? itemSprite(am) : null };
 
   /* everything waits for the arrow to arrive */
   beatWait(flight);
@@ -2045,7 +2097,7 @@ function stoneRune(rune, target, am, flight) {
          worn out before the second is touched. */
       var left = (am.ret === undefined ? RETURN_USES : am.ret) - 1;
       G.ret = { fx: target.x, fy: target.y, tx: P.x, ty: P.y,
-                t: beatNow(), dur: RETURN_MS, spr: WEAPONS[am.k].s };
+                t: beatNow(), dur: RETURN_MS, spr: itemSprite(am) };
       beatWait(RETURN_MS);
       /* You have just watched it come back to your hand.  Whatever else
          it may be carrying, there is no longer any question about what
@@ -2181,7 +2233,7 @@ function pinOnto(it) {
       it.ap += 1;
       msg('It is already spoken for. ' + cap(itemName(it)) + '.', 'c');
     } else {
-      addRune(it, it.t === 'head' ? 'gh' : 'g', 100);
+      addRune(it, gearRuneKind(it), 100);
       learnRune(it);             /* you watched it go in */
       var rn = runeDef(it);
       if (rn && rn.bad) msg('The pin blackens. ' + cap(itemName(it)) + '.', 'R');
@@ -2519,7 +2571,7 @@ function itemNotes(it) {
       break;
     case 'weapon':
       out.push(['damage ' + d.d[0] + 'd' + d.d[1], '6']);
-      if (d.launch) out.push(['fires ' + d.ammo + 's', 'c']);
+      if (d.launch) out.push(['shoots ' + d.ammo + 's', 'c']);
       if (d.ammoFor)
         out.push([d.ammoText || ('for a ' + d.ammoFor + (d.alsoFor ? ' or ' + d.alsoFor : '')), 'c']);
       if (d.hurl) out.push(['wield or throw it; never lost', 'c']);
@@ -2573,7 +2625,14 @@ function itemNotes(it) {
     case 'amulet': out.push(['carry it out to win', 'y']); break;
   }
   /* the weight in your hand tells you this much, name or no name */
-  if (it.cursed && numbersKnown(it)) out.push(['CURSED - cannot be removed', 'R']);
+  if (it.cursed && numbersKnown(it)) {
+    out.push(['CURSED - cannot be removed', 'R']);
+    /* and which curse, once it is on you and has therefore been settled.
+       "Cursed" on its own does not tell you why you are losing hit
+       points in every puddle. */
+    var cdn = it.curse ? curseDef(it.curse) : null;
+    if (cdn) out.push([cdn.txt, 'R']);
+  }
   return out;
 }
 

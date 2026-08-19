@@ -395,11 +395,73 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
     ' of their own doors drawn and ' + sr2.holes + ' gaps in the outline');
   check(sr2.bad.length === 0, 'sight reach: ' + [...new Set(sr2.bad)].slice(0, 3).join('; '));
 
-  const ws = ctx.webSpinnerOK(60);
-  console.log('web spinners : ' + ws.shots + ' shots over ' + ws.tries + ' set ups, one every ' +
-    ws.gap.toFixed(1) + ' turns - ' + ws.stuck + ' stuck you where you stood, ' +
-    ws.laid + ' left web on the floor');
+  const ws = ctx.webSpinnerOK(30);
+  console.log('web spinners : ' + ws.shots + ' shots over ' + ws.tries + ' set ups - ' +
+    ws.stuck + ' landed on your square and held you there, ' +
+    ws.laid + ' left web on the ground between you');
+  console.log('             : a round of ' + ws.round + ' turns - ' + ctx.WEB_SPIT_TURNS +
+    ' spitting then ' + ctx.WEB_RUSH_TURNS + ' closing with you; over ' + ws.nearRounds +
+    ' set ups beside you that came to ' + ws.spits + ' spits and ' + ws.melee +
+    ' turns of teeth, and over ' + ws.farRounds + ' out of reach it spat once more and ' +
+    'gave up ' + ws.idle + ' turns');
+  console.log('             : web costs ' + ws.held.toFixed(1) + ' turns on average (' +
+    ctx.WEB_HOLD_MIN + '-' + ctx.WEB_HOLD_MAX + '), spat or walked into, and ' +
+    ws.weavers + ' creatures walk their own silk without sticking to it');
   check(ws.bad.length === 0, 'web spinner: ' + [...new Set(ws.bad)].slice(0, 4).join('; '));
+
+  const sdo = ctx.slowDigestionOK();
+  if (sdo.bare) console.log('you eat little : hungry after ' + sdo.bare + ' turns barefoot, ' +
+    sdo.shod + ' in wanderer boots (' + sdo.pct + '% longer), ' + sdo.both +
+    ' with the perk as well; still starving by ' + sdo.starve);
+  check(sdo.bad.length === 0, 'slow digestion: ' + [...new Set(sdo.bad)].slice(0, 4).join('; '));
+
+  const wb = ctx.webBurnsOK();
+  if (wb.squares) console.log('web burns    : fire ran through ' + wb.squares +
+    ' squares of web in ' + wb.turns + ' turns and left none of it; a table beside a fire ' +
+    'is still a table');
+  check(wb.bad.length === 0, 'web burns: ' + [...new Set(wb.bad)].slice(0, 4).join('; '));
+
+  const sn = ctx.spinNestOK(40);
+  console.log('spinner nests: ' + sn.nested + ' of ' + sn.spinners + ' spinners over ' +
+    sn.floors + ' floors sat in a corner nest (' + sn.pct + '%), ' + sn.avg.toFixed(1) +
+    ' squares of web each, and the web does not rot');
+  check(sn.bad.length === 0, 'spinner nests: ' + [...new Set(sn.bad)].slice(0, 4).join('; '));
+
+  const kbc = ctx.knockBackClubOK();
+  if (kbc.landed) console.log('knock back   : a club can be dealt one, and ' + kbc.shoved +
+    ' of ' + kbc.landed + ' landed blows shoved the thing back a square (' +
+    ctx.KNOCKBACK_PCT + '% is the rule)');
+  check(kbc.bad.length === 0, 'knock back: ' + [...new Set(kbc.bad)].slice(0, 3).join('; '));
+
+  const sfo = ctx.sureFootedOK();
+  /* the numbers only exist if the trial got far enough to gather them;
+     the complaint below says why if it did not */
+  if (sfo.bare) console.log('sure footed  : barefoot you went over ' + sfo.bare.fell + '/' +
+    sfo.bare.steps + ' steps, in the boots ' + sfo.shod.fell + '/' + sfo.shod.steps +
+    '; a centaur ' + sfo.cen.fell + '/' + sfo.cen.tries +
+    ' against an orc ' + sfo.orc.fell + '/' + sfo.orc.tries);
+  check(sfo.bad.length === 0, 'sure footed: ' + [...new Set(sfo.bad)].slice(0, 4).join('; '));
+
+  const swg = ctx.spentWandGoesOK();
+  console.log('spent wands  : all ' + swg.checked + ' kinds crumble to dust on the zap that ' +
+    'empties them; one with charges left stays');
+  check(swg.bad.length === 0, 'spent wands: ' + [...new Set(swg.bad)].slice(0, 4).join('; '));
+
+  const bq = ctx.blindQuietOK();
+  console.log('blind        : nothing said about the light going out or coming back; ' +
+    bq.rooms + ' built rooms kept their secret until you could look at them');
+  check(bq.bad.length === 0, 'blind: ' + [...new Set(bq.bad)].slice(0, 4).join('; '));
+
+  const cp = ctx.cursePlainOK();
+  console.log('curses       : all ' + cp.curses + ' of them say so in the first two lines of ' +
+    'the pack and name what is carrying them; the water burn explains itself once');
+  check(cp.bad.length === 0, 'curses: ' + [...new Set(cp.bad)].slice(0, 4).join('; '));
+
+  const wordsOK = ctx.effectWordsOK();
+  console.log('panel wording: every worn rune names the armour rather than saying "it", ' +
+    'inside the ' + wordsOK.room + 'px column; a bow shoots');
+  check(wordsOK.bad.length === 0, 'panel wording: ' +
+    [...new Set(wordsOK.bad)].slice(0, 4).join('; '));
 
   const br = ctx.barrelsOK(30);
   console.log('powder rooms : ' + br.chains + '/' + br.rooms +
@@ -609,6 +671,13 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
     ctx.MONSIGHT_TURNS + ' turns - and put not one square on your map');
   check(ms.bad.length === 0, 'monster sight: ' + [...new Set(ms.bad)].slice(0, 3).join('; '));
 
+  const rb = ctx.roomBoxOK(14);
+  console.log('room boxes   : ' + rb.tried + ' rooms announced themselves once each in a ' +
+    'box, ' + rb.kinds + ' of the ' + rb.of + ' kinds, every one with a heading and a ' +
+    'picture the sheet has; ' + rb.atDoor + ' of ' + rb.doors +
+    ' said so from the doorway, before you had set foot inside');
+  check(rb.bad.length === 0, 'room boxes: ' + [...new Set(rb.bad)].slice(0, 3).join('; '));
+
   const mp = ctx.mapScrollOK();
   console.log('the map      : over ' + mp.tried + ' floors it drew the shape of the place ' +
     'and every chest, left every loose thing off, and told nothing of the rooms ' +
@@ -727,7 +796,8 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
 {
   const sl = ctx.stoneLooksOK(12);
   console.log('runed stones : ' + (sl.length ? sl.length + ' problems' :
-    'the five looks are dealt afresh each run, no two alike'));
+    'the five looks are dealt afresh each run, no two alike, and each one ' +
+    'flies and comes home wearing the carving it wore in your hand'));
   check(sl.length === 0, 'runestone looks: ' + [...new Set(sl)].slice(0, 3).join('; '));
 }
 

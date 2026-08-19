@@ -6,6 +6,14 @@
 
 /* ---------------------------------------------------------- constants */
 var TS = 8, SW = 230, SH = 128;
+/* The pack's grid of slots, and from it the width of the column of words
+   beside it.  These live here rather than in the drawing because the
+   rules suite has to know how wide a line of text may be without loading
+   the renderer - a line that runs off the panel is a rule about words,
+   not about pixels being pushed. */
+var INV_SL = 17, INV_GAP = 2, INV_PITCH = INV_SL + INV_GAP, INV_GX = 2;
+var INV_TXT_X = INV_GX + 5 * INV_PITCH + 3;
+var INV_COL_W = SW - INV_TXT_X - 2;
 /* The left hand panel keeps the text and your stats where they stay put;
    the map fills everything to the right of it. */
 var PANEL_W = 78;
@@ -213,6 +221,11 @@ var RIVER_FREE_EVERY = 2;
    which is ten units of food where it used to be thirteen - so a ration
    carries you thirty per cent further. */
 var ABSTEMIOUS_CYCLE = 13, ABSTEMIOUS_FREE = 3;
+/* Wanderer boots, and the same arithmetic: three turns in thirteen cost
+   you nothing, so a ration goes about thirty per cent further.  They
+   used to stop hunger altogether - the meter sat at 100% for a whole
+   run, which is not "you eat little", it is "you never eat". */
+var SLOW_DIGEST_CYCLE = 13, SLOW_DIGEST_FREE = 3;
 
 var E_LEVELS = [
   15, 37, 128, 292, 529, 857, 1319, 2127, 3216, 4640, 7459, 11784, 18582,
@@ -263,10 +276,12 @@ var HUNTRESS_ARROW_PCT = 78, HUNTRESS_CHEST_PCT = 30;
 var ARROW_OVERSHOOT = 4;      /* how far a miss can sail past its mark */
 var CRYSTAL_MIN_PCT = 10, CRYSTAL_MAX_PCT = 25;
 var MOVE_ANIM_MS = 110;       /* how long one monster step takes on screen */
-/* What every step after the first costs, as a share of an ordinary
-   one.  A creature quick enough to move twice in a turn should look
-   it, rather than taking twice as long over the turn as everything
-   else does. */
+/* How long to wait before every step after the first, as a share of the
+   usual pause.  A creature quick enough to move twice in a turn should
+   look it - but only the waiting is cut short.  The step itself crosses
+   the square at the same pace as anybody else's, because that is how
+   fast a thing of that size moves; halving it as well made the second
+   step read as a skip rather than a stride. */
 var EXTRA_STEP = 0.5;
 /* A hit knocks the victim back a pixel and flashes it red, so you can see
    the blow land rather than inferring it from the numbers. */
@@ -296,6 +311,14 @@ var BTN_FLASH_MS = 110;
 /* how much of the way home the sliding map travels each frame, and how
    many squares from the edge the player has to be to count as on screen */
 var CAM_CHASE = 0.25, CAM_EDGE = 2;
+/* Walking about, the view follows you rather than jumping to you.  It
+   closes this share of the distance each frame, which is a glide that
+   also rounds off a corner: the view is still coming out of the last
+   square when you start into the next, so it cuts across instead of
+   turning on the spot.  It never falls further behind than WALK_LAG_MAX,
+   and with something hostile in sight it does not lag at all - in a
+   fight the picture has to say exactly where you are. */
+var WALK_CHASE = 0.22, WALK_LAG_MAX = 1.4, WALK_LAG_SNAP = 0.02;
 /* and never more than this much of a tile in a single frame */
 var CAM_MAX_STEP = 0.6;
 /* How long an auto-walk takes over one square.  A turn is normally
@@ -478,7 +501,10 @@ var WITCH_SPIDER_LIFE = 60;
    a moment, goes in a flash, and comes back in another one - so a thing
    that vanishes is something you watched vanish rather than something
    that was suddenly elsewhere. */
-var WARP_SHAKE = 300, WARP_FLASH = 120;
+/* Halved, both parts: the whole jump is 210ms rather than 420.  It is
+   watched every time a teleport trap goes off and it was long enough to
+   feel like waiting rather than like something happening. */
+var WARP_SHAKE = 150, WARP_FLASH = 60;
 /* how often the shiver picks a new pixel to sit on - small, so it reads
    as a vibration rather than a wobble */
 var WARP_SHAKE_STEP = 16;
@@ -526,10 +552,16 @@ var STRAY_BARREL_DEPTH = 2, STRAY_BARREL_PCT = 55, STRAY_BARREL_MAX = 3;
    Barrels are not in the list - they have a fuse of their own - and
    neither is anything made of stone or bone. */
 var BURNS = { table: 'table', chair: 'chair', moss: 'moss', moss_b: 'moss',
-              moss2: 'moss', moss3: 'moss', moss4: 'moss' };
-var BURNS_PLURAL = { table: 'tables', chair: 'chairs', rug: 'rugs', moss: 'moss' };
+              moss2: 'moss', moss3: 'moss', moss4: 'moss', web: 'web' };
+var BURNS_PLURAL = { table: 'tables', chair: 'chairs', rug: 'rugs', moss: 'moss',
+                     web: 'webs' };
 /* the order to name them in when several go at once */
-var BURNS_ORDER = ['table', 'chair', 'rug', 'moss'];
+var BURNS_ORDER = ['table', 'chair', 'rug', 'moss', 'web'];
+/* Web is the one thing fire jumps to on its own.  Everything else has to
+   be standing in the flame; a patch of web catches from the square
+   beside it and is gone in a turn or two, so a fire in a nest of it runs
+   right through the lot. */
+var WEB_BURN_MIN = 2, WEB_BURN_MAX = 3;
 /* What somebody put in a room, as against what the room is made of.  A
    room chosen to be something in particular clears the first and leaves
    the second: a stone kerb round a pool and cracked flagstones round a
@@ -562,9 +594,28 @@ var WEAKNESS_MULT = 2;
 var FIREBALL_EVERY = 3, FIREBALL_RANGE = 7, FIREBALL_DAMAGE = [3, 5];
 /* The web spinner: how often it can spit, how far the web carries, how
    long it holds you, and how long a patch of it lies on the floor. */
-var WEB_EVERY = 2, WEB_RANGE = 6;
+/* The web spinner works to a round of five turns, in two parts.
+
+   The first two turns it spits, and does nothing else with them.  Then
+   it has three turns to close with you: it walks and it bites, an
+   ordinary turn at a time.  If it cannot be on you inside those three -
+   asked once, at the top of them - it spends the first on one more web
+   and forfeits the other two, because there is nothing else it can do to
+   somebody it cannot reach. */
+var WEB_SPIT_TURNS = 2, WEB_RUSH_TURNS = 3, WEB_RANGE = 6;
+/* A spinner does not wander the floor.  It sits in the corner of a room
+   in a nest of its own web, three or four squares of it spreading out
+   from the angle of the walls - so you meet the web before you meet the
+   thing that made it.  A nest is spun rather than spat, and does not rot
+   the way a shot patch does. */
+var SPIN_NEST_PCT = 70, NEST_MIN = 3, NEST_MAX = 4;
+var WEB_LIFE_NEST = -1;
+/* Turns you actually lose, whether it was spat over you or you walked
+   into a patch lying on the floor.  It used to be a flat one for the
+   floor, which cost nothing at all: your counters are wound down in the
+   upkeep that runs at the end of the very turn the web caught you, so a
+   hold of one was gone before you had a turn to lose.  See stickPlayer. */
 var WEB_HOLD_MIN = 1, WEB_HOLD_MAX = 2;
-var WEB_FLOOR_HOLD = 1;
 var WEB_LIFE = 40;
 var DOUSED_TURNS = 12;
 /* holy water, thrown at something that cannot bear it */
@@ -875,7 +926,11 @@ var RINGS = [
      are carrying them, which is the whole of what they do - so they hold
      no charges and there is nothing to wind up. */
   { n: 'battle luck', p: 55, w: 480, s: 'ring_o', worn: 1, charges: 0,
-    txt: 'your blows land better, and keep' },
+    /* Both halves of it, said plainly.  It used to trail off with "and
+       keep", which kept nothing anybody could name: what it means is
+       that the arrows and stones you loose are picked back up far more
+       often (LUCK_RECOVER_PCT). */
+    txt: 'double damage, arrows come back' },
   { n: 'the huntress', p: 55, w: 420, s: 'ring_n', worn: 1, charges: 0,
     txt: 'more chance of finding arrows' }
 ];
@@ -907,24 +962,36 @@ var RUNES = [
      'w' and never sees it. */
   { n: 'the spider', t: 'b', p: 12, txt: 'it looses web, not arrows' },
   /* --- worn --- */
-  { n: 'warding', t: 'g', p: 10, txt: 'it turns a blow aside (+1)' },
-  { n: 'thorns', t: 'g', p: 7, txt: 'it bites your attacker' },
-  { n: 'blight', t: 'g', p: 7, txt: 'its touch poisons attackers' },
-  { n: 'rime', t: 'g', p: 7, txt: 'its touch freezes attackers' },
+  { n: 'warding', t: 'g', p: 10, txt: 'it turns a blow aside (+1)',
+    eff: 'armor turns blows aside (+1)' },
+  { n: 'thorns', t: 'g', p: 7, txt: 'it bites your attacker',
+    eff: 'armor bites your attacker' },
+  { n: 'blight', t: 'g', p: 7, txt: 'its touch poisons attackers',
+    eff: 'armor poisons attackers' },
+  { n: 'rime', t: 'g', p: 7, txt: 'its touch freezes attackers',
+    eff: 'armor freezes attackers' },
   { n: 'reflexes', t: 'g', p: 8, latent: 1, txt: 'you slip aside more often' },
-  { n: 'shadow', t: 'g', p: 8, latent: 1, txt: 'it muffles your step' },
-  { n: 'insight', t: 'g', p: 7, latent: 1, txt: 'it sharpens the eye (+2 wis)' },
+  { n: 'shadow', t: 'g', p: 8, latent: 1, txt: 'it muffles your step',
+    eff: 'armor muffles your step' },
+  { n: 'insight', t: 'g', p: 7, latent: 1, txt: 'it sharpens the eye (+2 wis)',
+    eff: 'armor sharpens the eye (+2)' },
   { n: 'vigour', t: 'g', p: 7, latent: 1, txt: 'wounds close faster' },
-  { n: 'burden', t: 'g', p: 6, bad: 1, txt: 'it drags at every step' },
+  { n: 'burden', t: 'g', p: 6, bad: 1, txt: 'it drags at every step',
+    eff: 'armor drags at every step' },
   { n: 'thunder', t: 'g', p: 7, latent: 1,
-    txt: 'it answers every third blow' },
+    txt: 'it answers every third blow', eff: 'armor answers every 3rd blow' },
   /* Cut into a blade it drives your foe back; cut into armour it throws
      off whoever hit you.  One rune, one name, and it is offered to both
      - two entries sharing a name meant the lookup found only the last of
      them, so a knockback sword described itself as a breastplate. */
-  { n: 'knockback', t: 'wg', p: 8, latent: 1, txt: 'its blow drives things back' },
+  { n: 'knockback', t: 'wg', p: 8, latent: 1, txt: 'its blow drives things back',
+    eff: { w: 'your blows drive things back', g: 'armor throws attackers back' } },
   /* --- head only --- */
-  { n: 'clearwater', t: 'h', p: 10, txt: 'worn wet, it hides you' }
+  { n: 'clearwater', t: 'h', p: 10, txt: 'worn wet, it hides you' },
+  /* Boots and shoes only, which is what the 'f' is for.  Running headlong
+     in a fight is how you go over; in these you never do. */
+  { n: 'sure footed', t: 'f', p: 10, txt: 'you never stumble in them',
+    eff: 'boots: you never stumble' }
 ];
 var RUNE_BY_NAME = {};
 (function () { for (var i = 0; i < RUNES.length; i++) RUNE_BY_NAME[RUNES[i].n] = RUNES[i]; })();
@@ -952,6 +1019,19 @@ var ROOM_ENTRY = {
               'Do not bring a flame in here.'],
   mint:      ['A mint. Gold glitters behind iron bars.',
               'The lock will want a key.']
+};
+
+/* The same news, said once in a box over the middle of the map so that
+   walking into a room somebody built is an event rather than two more
+   lines scrolling up the side.  One picture each, taken from the sheet
+   like everything else, so a repaint carries. */
+var ROOM_TITLE = {
+  moss: 'A CAVE OF MOSS', nursery: 'A NURSERY', shrine: 'A SHRINE',
+  alchemist: "AN ALCHEMIST'S CELL", powder: 'A POWDER STORE', mint: 'A MINT'
+};
+var ROOM_ICON = {
+  moss: 'moss', nursery: 'mk_z', shrine: 'holy',
+  alchemist: 'pot_g', powder: 'barrel', mint: 'gold'
 };
 
 var TILE_INFO = {};
@@ -1084,9 +1164,16 @@ var MONS = [
      either.  It needs a claw for its real trick to work. */
   { c: 'A', n: 'aquator', swim: 1, lv: 5, xp: 20, ar: 2, d: [[1, 6]], mean: 1, sp: 'rust' },
   { c: 'B', n: 'bat', swim: 1, lv: 1, xp: 2, ar: 3, d: [[1, 4]], fly: 1, err: 1, nodrop: 1, hpMul: 0.85 , dmgMul: 0.9, dark: 1 },
-  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]] },
+  /* sure: four legs and no clumsiness in them.  Everything else that
+     runs headlong in a fight can go over; this one cannot. */
+  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]], sure: 1 },
   { c: 'D', n: 'dragon', smart: 1, lv: 10, xp: 5000, ar: -1, d: [[1, 8], [1, 8], [3, 10]], mean: 1, sp: 'flame' },
-  { c: 'E', n: 'spider', lv: 1, xp: 3, ar: 7, d: [[1, 6]], mean: 1 , dmgMul: 0.9 },
+  /* weaver: it made the web, or it is at home in one.  A spider walks
+     its own silk without sticking to it, and it does not tear it up on
+     the way through either - so a web spinner can fight from inside the
+     mess it has made of the floor. */
+  { c: 'E', n: 'spider', lv: 1, xp: 3, ar: 7, d: [[1, 6]], mean: 1 , dmgMul: 0.9,
+    weaver: 1 },
   { c: 'F', n: 'venus flytrap', swim: 1, lv: 8, xp: 80, ar: 3, d: [[1, 1]], mean: 1, sp: 'hold', still: 1 },
   { c: 'G', n: 'griffin', swim: 1, lv: 13, xp: 2000, ar: 2, d: [[4, 3], [3, 5]], mean: 1, fly: 1, regen: 1 },
   { c: 'H', n: 'hobgoblin', smart: 1, lv: 2, xp: 5, ar: 5, d: [[1, 6]], mean: 1 },
@@ -1128,7 +1215,8 @@ var MONS = [
      closing, and what it does not stick to you it leaves on the floor
      for you to walk into later. */
   { c: 'w', n: 'web spinner', lv: 1, xp: 6, ar: 8, d: [[1, 4]],
-    hpMul: 0.75, dmgMul: 0.9, sp: 'web', minDepth: 2 },
+    hpMul: 0.75, dmgMul: 0.9, sp: 'web', minDepth: 2, weaver: 1,
+    spitTurns: WEB_SPIT_TURNS, rushTurns: WEB_RUSH_TURNS },
   /* A witch keeps her distance and never closes: no melee at all, and
      every trick she has works across a room.  Fire goes through her and
      frost does not touch her. */
@@ -1243,7 +1331,9 @@ var HINTS = [
   'You cannot strike your own. Walk into an ally and the two of you change places.',
   "A monster with ? above it has not seen you. The ! symbol means it's surprised. Both cases allow for a sneak bonus attack!",
   'A cursed thing you cannot take off may carry a curse of its own. The shrine lifts both at once, and so does a scroll of remove curse.',
-  'It might be worth it to return to an upper floor to use a moss cave or healing water if your character is low on HP.'
+  'It might be worth it to return to an upper floor to use a moss cave or healing water if your character is low on HP.',
+  'Playing on a computer? Use the keys instead of the mouse for a more authentic retro experience.',
+  'A centaur never stumbles.'
 ];
 
 var MON_BY_C = {};
@@ -1341,7 +1431,7 @@ function newLevelObj(depth) {
     roomAt: new Int8Array(MAP_W * MAP_H).fill(-1),
     rooms: [], items: [], mons: [], traps: [], decor: {},
     locks: {}, doorMat: {}, temp: {}, corpses: [], clouds: [], sealed: {},
-    barrels: {}, fuses: {}, burning: {}, webs: {}, showAt: {}, arch: {}, cornerKept: {}, caged: {}, under: {}, bspan: {}, keyHomes: {}, rugId: {}, rugs: 0,
+    barrels: {}, fuses: {}, burning: {}, webs: {}, webOver: {}, showAt: {}, arch: {}, cornerKept: {}, caged: {}, under: {}, bspan: {}, keyHomes: {}, rugId: {}, rugs: 0,
     darkHall: {}, shrine: null, alchemy: null, special: null,
     wanderLeft: WANDER_BUDGET + ((depth / WANDER_BUDGET_PER_DEPTH) | 0),
     stair: { x: 0, y: 0 }
@@ -2549,6 +2639,34 @@ function tidyRugs(L) {
   return lifted;
 }
 function isRugName(d) { return !!d && String(d).indexOf('rug_') === 0; }
+
+/* ------------------------------------------- dry ground at the stairs
+   A staircase is cut into the flagstones and is always dry, so the water
+   stops short of it: any pool square touching one is pulled back to bare
+   floor.  The bank then forms clear of the steps instead of lapping at
+   them, which is what a flight of stairs going down into a pool ought to
+   look like from the dry side.
+
+   A bridge is left where it is - it is a plank you walk over, and it is
+   dry too.  This runs after the stairs have been placed and moved, since
+   both happen once the floor is already furnished. */
+function dryAroundStairs(L) {
+  var both = [L.stair, L.up], w, d, n = 0;
+  for (w = 0; w < both.length; w++) {
+    var st = both[w];
+    if (!st) continue;
+    for (d = 0; d < DIR4.length; d++) {
+      var x = st.x + DIR4[d][0], y = st.y + DIR4[d][1];
+      if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+      var j = y * MAP_W + x;
+      if (L.tiles[j] !== WATER && L.tiles[j] !== HOLY) continue;
+      L.tiles[j] = FLOOR;
+      if (L.under) delete L.under[j];
+      n++;
+    }
+  }
+  return n;
+}
 
 function everywhereReachable(L) {
   var T = L.tiles, n = T.length, i, from = -1;

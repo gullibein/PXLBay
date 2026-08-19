@@ -2548,16 +2548,20 @@ setTimeout(() => {
       const drawnS = blits.filter(b => b.tag === 'screen').length;
       if (drawnS < 30) problems.push('the save screen was not drawn');
       key('Enter');
-      frame('save slots after saving');
       const lab = ctx.slotLabel(0);
       if (lab === 'empty') problems.push('saving left the slot empty');
-      if (ctx.G.slots.msg !== 'Saved.') problems.push('saving said "' + ctx.G.slots.msg + '"');
+      /* SAVE AND QUIT does both: it used to write the file, print
+         "Saved." and sit there with the run still going */
+      if (ctx.G.mode !== 'title')
+        problems.push('saving left the game in ' + ctx.G.mode + ', not on the splash');
+      if (ctx.G.pause || ctx.G.slots) problems.push('a menu was left standing behind the splash');
       console.log('save screen          :', drawnS, 'marks, slot one now reads "' + lab + '"');
-      key('Escape');
-      if (ctx.G.mode !== 'pause') problems.push('ESC did not go back to the menu');
     }
 
-    /* LOAD: picking the saved slot puts you back in the game */
+    /* LOAD: picking the saved slot puts you back in the game.  Saving
+       quit to the splash, so the menu has to be opened again. */
+    ctx.G.mode = 'play'; ctx.G.slot = null; ctx.G.slots = null;
+    key('Escape');
     ctx.G.pause.i = names.indexOf('load'); key('Enter');
     if (ctx.G.mode !== 'slots') problems.push('LOAD did not open the slot list');
     else {
@@ -2890,29 +2894,50 @@ setTimeout(() => {
       problems.push('the hover frame is still drawn after the mouse left the picture');
     move(3 * 60, 3 * 60);
 
-    /* the pack icon, and clicking it */
-    const pack = ctx.HITS.filter(h => h.what === 'pack');
-    if (pack.length !== 1) problems.push(pack.length + ' pack icons on the play screen');
-    else {
-      if (pack[0].y + pack[0].h > ctx.SH) problems.push('the pack icon hangs off the bottom');
-      if (pack[0].x > 20) problems.push('the pack icon is not in the left corner');
-      ctx.clickAt(pack[0].x + 2, pack[0].y + 2, false);
-      if (ctx.G.mode !== 'inv') problems.push('clicking the pack did not open it');
+    /* the two buttons along the floor of the panel, and clicking them */
+    for (const what of ['pack', 'wait']) {
+      const b = ctx.HITS.filter(h => h.what === what);
+      if (b.length !== 1) { problems.push(b.length + ' ' + what + ' buttons on the play screen'); continue; }
+      if (b[0].y + b[0].h > ctx.SH) problems.push('the ' + what + ' button hangs off the bottom');
+      if (b[0].x + b[0].w > ctx.PANEL_W)
+        problems.push('the ' + what + ' button runs off the side of the panel');
+      if (b[0].y < ctx.FLAG_Y + 1)
+        problems.push('the ' + what + ' button is drawn over the flags line');
+    }
+    {
+      const pack = ctx.HITS.filter(h => h.what === 'pack')[0];
+      if (pack) {
+        ctx.clickAt(pack.x + 2, pack.y + 2, false);
+        if (ctx.G.mode !== 'inv') problems.push('clicking Pack did not open the pack');
+        vm.runInContext('render();', ctx);
+        ctx.clickAt(pack.x + 2, pack.y + 2, false);
+        if (ctx.G.mode === 'inv') problems.push('clicking Pack again did not close it');
+      }
+      /* Wait spends a turn, which is the one thing a finger could not ask
+         for at all before */
       vm.runInContext('render();', ctx);
-      ctx.clickAt(pack[0].x + 2, pack[0].y + 2, false);
-      if (ctx.G.mode === 'inv') problems.push('clicking the pack again did not close it');
+      const wait = ctx.HITS.filter(h => h.what === 'wait')[0];
+      if (!wait) problems.push('no Wait button to press');
+      else {
+        ctx.G.mode = 'play';
+        const t0 = ctx.G.turn;
+        ctx.clickAt(wait.x + 2, wait.y + 2, false);
+        if (ctx.G.turn === t0) problems.push('pressing Wait did not spend a turn');
+        if (ctx.G.mode !== 'play') problems.push('pressing Wait left the game in ' + ctx.G.mode);
+      }
     }
 
-    /* a key takes the pointer back, and then there is no pointer and no
-       pack icon on screen at all */
+    /* a key takes the pointer back, and then there is no pointer drawn -
+       but the buttons stay, because the panel is laid out around them and
+       a row that came and went would shuffle everything else about */
     key('Escape'); key('Escape');
     ctx.G.mode = 'play'; ctx.G.pause = null;
     blits = []; fills = [];
     vm.runInContext('render();', ctx);
     if (blits.some(b => b.tag === 'screen' && b.sx === ax && b.sy === ay))
       problems.push('the pointer is still drawn after a key was pressed');
-    if (ctx.HITS.some(h => h.what === 'pack'))
-      problems.push('the pack icon is still there after a key was pressed');
+    if (!ctx.HITS.some(h => h.what === 'pack') || !ctx.HITS.some(h => h.what === 'wait'))
+      problems.push('the panel buttons vanished when a key was pressed');
 
     /* every menu answers a click on the row you clicked */
     move(3 * 60, 3 * 60);
@@ -3978,8 +4003,13 @@ setTimeout(() => {
         ctx.G.walk = null;
         if (ctx.usingMouse()) problems.push('a finger counts as a mouse');
         if (!ctx.usingPointer()) problems.push('a finger does not count as a pointer');
-        /* the pack is still reachable, or a finger cannot open the bag */
-        if (!drawn('pouch')) problems.push('no pack icon for a finger to tap');
+        /* the buttons are still there, or a finger cannot open the bag
+           or wait a turn */
+        blits = []; fills = [];
+        vm.runInContext('render();', ctx);
+        for (const what of ['pack', 'wait'])
+          if (!ctx.HITS.some(h => h.what === what))
+            problems.push('no ' + what + ' button for a finger to tap');
 
         /* move a real mouse and the arrow comes back */
         canvasListeners.mousemove({ clientX: 3 * px, clientY: 3 * py });
@@ -4219,28 +4249,149 @@ setTimeout(() => {
       L.mons.push(m);
       ctx.G.beat = 0;
       m.anim = null;
-      ctx.monstersMove();
+      /* Hold the clock: each step is stamped Date.now() + the beat so
+         far, so a millisecond ticking over between the two stamps makes
+         the gap 251 instead of 250 and the check a coin toss on a busy
+         machine. */
+      const RealDate = ctx.Date, T0 = RealDate.now();
+      ctx.Date = { now: () => T0 };
+      try { ctx.monstersMove(); } finally { ctx.Date = RealDate; }
       const steps = m.anim || [];
       if (steps.length < 2)
         console.log('a second step        : it did not take two this turn');
       else {
-        /* the sixth number on each step is how long it takes to cross */
-        const first = steps[0][5] || ctx.MOVE_ANIM_MS;
-        const second = steps[1][5] || ctx.MOVE_ANIM_MS;
-        if (first !== ctx.MOVE_ANIM_MS)
-          problems.push('the first step of a turn takes ' + first + 'ms, not the usual ' +
-            ctx.MOVE_ANIM_MS);
-        if (second !== Math.round(ctx.MOVE_ANIM_MS * ctx.EXTRA_STEP))
-          problems.push('the second step takes ' + second + 'ms, not half of ' +
-            ctx.MOVE_ANIM_MS);
-        /* and it starts sooner than a full beat after the first */
+        /* It is the waiting that is cut short, not the stride: both steps
+           cross their square at the same pace, and the second simply
+           comes sooner. */
+        for (const st of steps)
+          if (st.length > 5 && st[5] !== ctx.MOVE_ANIM_MS)
+            problems.push('a step carries its own crossing time of ' + st[5] +
+              'ms - the stride should be the same for both');
         const gap = steps[1][4] - steps[0][4];
-        if (gap >= ctx.BEAT_STEP)
-          problems.push('the second step waits ' + gap + 'ms, a whole beat');
-        console.log('a second step        : first ' + first + 'ms, second ' + second +
-          'ms, ' + gap + 'ms between them');
+        const want = Math.round(ctx.BEAT_STEP * ctx.EXTRA_STEP);
+        if (gap !== want)
+          problems.push('the second step comes ' + gap + 'ms after the first, not ' + want);
+        console.log('a second step        : same stride both times, and the second comes ' +
+          gap + 'ms after the first instead of ' + ctx.BEAT_STEP + 'ms');
       }
       L.mons.length = 0;
+    }
+  }
+
+  /* --- clicking a wall walks you up to it ------------------------------ */
+  {
+    const P = ctx.P, L = ctx.L, TS = ctx.TS, MAP_W = ctx.MAP_W;
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.ctx = null; ctx.G.waiting = null; ctx.G.dead = 0;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0; ctx.MOUSE.held = null;
+    L.mons.length = 0; P.hp = P.mhp = 900; P.blind = 0;
+    ctx.computeVis();
+    ctx.LAST_INPUT = 'mouse'; ctx.MOUSE.on = 1;
+
+    /* a wall a few squares off, with a way to stand next to it */
+    let wall = null;
+    for (let y = 1; y < ctx.MAP_H - 1 && !wall; y++)
+      for (let x = 1; x < MAP_W - 1; x++) {
+        if (!ctx.isWallish(x, y)) continue;
+        if (!(L.flags[y * MAP_W + x] & ctx.F_SEEN)) continue;
+        const d = Math.abs(x - P.x) + Math.abs(y - P.y);
+        if (d < 3 || d > 8) continue;
+        let stand = null;
+        for (const [dx, dy] of ctx.DIR4) {
+          if (!ctx.walkable(x + dx, y + dy)) continue;
+          const road = ctx.findPath(x + dx, y + dy, {});
+          if (road && road.length) { stand = { x: x + dx, y: y + dy }; break; }
+        }
+        if (stand) { wall = { x, y, stand }; break; }
+      }
+    if (!wall) problems.push('no reachable wall to click on');
+    else {
+      const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+      ctx.MOUSE.x = ctx.VIEW_PX + (wall.x - camx) * TS + 3;
+      ctx.MOUSE.y = ctx.VIEW_PY + (wall.y - camy) * TS + 3;
+      const under = ctx.mouseTile();
+      if (!under || under.x !== wall.x || under.y !== wall.y)
+        problems.push('the pointer is not over the wall');
+      else {
+        ctx.G.msgq = []; ctx.G.log = [];
+        ctx.mapClick(ctx.MOUSE.x, ctx.MOUSE.y, false);
+        const said = () => ctx.G.msgq.concat(ctx.G.log).map(q => q.s || '').join(' ');
+        if (/can't go there/.test(said()))
+          problems.push('clicking a wall still says you cannot go there');
+        if (!ctx.G.walk) problems.push('clicking a wall started no walk');
+        else {
+          for (let t = 0; t < 80 && ctx.G.walk; t++) { ctx.G.walk.at = 0; ctx.walkTick(); }
+          const d = Math.abs(P.x - wall.x) + Math.abs(P.y - wall.y);
+          if (d !== 1)
+            problems.push('you ended up ' + d + ' squares from the wall, not against it');
+          console.log('clicking a wall      : you walk over and put your hands on it, ' +
+            'which is how a hidden door gives itself away');
+        }
+      }
+    }
+    ctx.G.walk = null; ctx.G.mode = 'play';
+  }
+
+  /* --- the view follows you rather than jumping a square at a time ----- */
+  {
+    const P = ctx.P, L = ctx.L, TS = ctx.TS;
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0; ctx.MOUSE.held = null;
+    L.mons.length = 0; P.hp = P.mhp = 900; P.blind = 0;
+    ctx.computeVis();
+    ctx.WALK_AT = null; ctx.camWalkTo();
+
+    /* Where the world is actually drawn.  A step used to move it a whole
+       tile between one frame and the next, which is the jerk. */
+    const worldPx = () => -(ctx.WALK_AT ? ctx.WALK_AT.x : P.x) * TS;
+
+    let dir = null;
+    for (const [dx, dy] of ctx.DIR4)
+      if (dx && ctx.walkable(P.x + dx, P.y) && ctx.walkable(P.x + dx * 2, P.y))
+        { dir = [dx, dy]; break; }
+    if (!dir) problems.push('nowhere to walk two squares in a line');
+    else {
+      const start = { x: P.x, y: P.y };
+      const before = worldPx();
+      P.x += dir[0];
+      /* the frame right after the step: the view has not arrived yet */
+      ctx.camWalkTo();
+      const first = worldPx();
+      if (Math.abs(first - before) >= TS - 0.01)
+        problems.push('the view moved a whole square in one frame - that is the jerk');
+      if (first === before) problems.push('the view did not start following at all');
+      /* and it arrives, smoothly, over several frames */
+      let frames = 1, biggest = Math.abs(first - before), prev = first;
+      while (Math.abs(worldPx() + P.x * TS) > 0.5 && frames < 200) {
+        ctx.camWalkTo(); frames++;
+        const now = worldPx();
+        biggest = Math.max(biggest, Math.abs(now - prev));
+        prev = now;
+      }
+      if (frames < 3) problems.push('the view arrived in ' + frames + ' frames - no glide');
+      if (frames >= 200) problems.push('the view never caught up');
+      if (biggest >= TS) problems.push('the view moved ' + biggest + 'px in one frame');
+      console.log('the view follows     : ' + frames + ' frames to cross a square, ' +
+        'biggest step ' + biggest.toFixed(1) + 'px of ' + TS);
+
+      /* with something hostile in sight it does not lag: in a fight the
+         picture has to say exactly where you are */
+      const m = ctx.mkMonster('O', 5, P.x + dir[0], P.y);
+      m.hp = m.mhp = 900; m.state = 2;
+      L.mons.push(m);
+      ctx.computeVis();
+      if (ctx.battleNear()) {
+        P.x += dir[0] ? 0 : 0;
+        ctx.WALK_AT.x -= 1;               /* pretend it had fallen behind */
+        ctx.camWalkTo();
+        if (Math.abs(ctx.WALK_AT.x - P.x) > 0.001)
+          problems.push('the view lags behind while something is on you');
+        console.log('             : and it does not lag with something hostile in sight');
+      }
+      L.mons.length = 0;
+      P.x = start.x; P.y = start.y;
+      ctx.WALK_AT = null; ctx.camWalkTo();
+      ctx.computeVis();
     }
   }
 
@@ -4295,6 +4446,377 @@ setTimeout(() => {
       ctx.BTN_FLASH.i = -1;
     }
     ctx.closeInv();
+  }
+
+
+  /* --- a hole has its corners cut on the diagonal ----------------------- */
+  {
+    const L = ctx.L, P = ctx.P, TS = ctx.TS, MAP_W = ctx.MAP_W;
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.roomBox = null; ctx.G.ctx = null;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0; ctx.MOUSE.held = null; ctx.MOUSE.on = 0;
+    L.mons.length = 0; L.items.length = 0;
+    /* somewhere with eight squares of bare floor round it, close enough
+       to be lit and on the screen */
+    let spot = null;
+    for (let y = P.y - 3; y <= P.y + 3 && !spot; y++)
+      for (let x = P.x - 3; x <= P.x + 3 && !spot; x++) {
+        if (x === P.x && y === P.y) continue;
+        let all = 1;
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const j = (y + dy) * MAP_W + (x + dx);
+            if (L.tiles[j] !== ctx.FLOOR || L.decor[j]) all = 0;
+          }
+        if (all) spot = { x: x, y: y };
+      }
+    if (!spot) problems.push('found nowhere to dig a hole to look at');
+    else {
+      const j = spot.y * MAP_W + spot.x, was = L.tiles[j];
+      L.tiles[j] = ctx.HOLE;
+      ctx.computeVis();
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+      const px = ctx.VIEW_PX + (spot.x - camx) * TS;
+      const py = ctx.VIEW_PY + (spot.y - camy) * TS;
+      const pit = fills.filter(f => f.tag === 'screen' && f.col === '#000000' &&
+        f.w === TS && f.h === TS && f.x === px && f.y === py);
+      if (!pit.length) problems.push('the pit was not drawn where it was dug');
+      else {
+        const inBox = (b, w) => b.dx >= px && b.dx + w <= px + TS &&
+                                b.dy >= py && b.dy + w <= py + TS;
+        const ones = blits.filter(b => b.tag === 'screen' && b.sw === 1 && b.sh === 1);
+        const cut = ones.filter(b => inBox(b, 1));
+        /* three pixels off each of the four corners: the corner itself
+           and the one either side of it along the two edges */
+        const want = new Set();
+        [[0, 0, 1, 1], [TS - 1, 0, -1, 1], [0, TS - 1, 1, -1],
+         [TS - 1, TS - 1, -1, -1]].forEach(c => {
+          want.add(c[0] + ',' + c[1]);
+          want.add((c[0] + c[2]) + ',' + c[1]);
+          want.add(c[0] + ',' + (c[1] + c[3]));
+        });
+        const got = new Set(cut.map(b => (b.dx - px) + ',' + (b.dy - py)));
+        want.forEach(k => { if (!got.has(k)) problems.push('the hole kept its pixel at ' + k); });
+        got.forEach(k => { if (!want.has(k)) problems.push('a pixel was cut at ' + k + ', which is no corner'); });
+        if (cut.length !== 12)
+          problems.push(cut.length + ' pixels cut out of a hole corner, wanted 12');
+        /* the square bite is gone: it is what left the floor a right
+           angle of its own pointing back into the drop */
+        const bites = blits.filter(b => b.tag === 'screen' && b.sw === 2 && b.sh === 2 &&
+          inBox(b, 2));
+        if (bites.length) problems.push(bites.length + ' square bites are still taken out of a hole');
+        /* and nothing at all is taken off the squares around it - the
+           four that meet it corner to corner included */
+        const elsewhere = ones.length - cut.length;
+        if (elsewhere) problems.push(elsewhere + ' pixels were cut off squares that are not the hole');
+        console.log('a hole rounded       : ' + cut.length + ' pixels off its four corners, ' +
+          bites.length + ' square bites, ' + elsewhere + ' pixels touched anywhere else');
+      }
+      L.tiles[j] = was;
+      ctx.computeVis();
+    }
+  }
+
+  /* --- walking into a built room says so in a box ----------------------- */
+  {
+    const TS = ctx.TS;
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.ctx = null; ctx.G.invOpen = 0; ctx.G.roomBox = null;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0; ctx.MOUSE.held = null; ctx.MOUSE.on = 0;
+
+    const put = () => {
+      ctx.G.roomBox = { kind: 'moss' };
+      ctx.G.mode = 'room';
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+    };
+    put();
+    /* the box itself: a panel over the middle of the map, not over the
+       side panel and not the whole screen */
+    const box = fills.filter(f => f.tag === 'screen' && f.col === '#0b0d1c' &&
+      f.x >= ctx.VIEW_PX && f.w > 60 && f.w <= ctx.VIEW_W * TS && f.h > 20 && f.h < ctx.SH);
+    if (!box.length) problems.push('walking into a built room drew no box');
+    else {
+      box.sort((a, b) => b.w * b.h - a.w * a.h);
+      const b0 = box[0];
+      const midX = b0.x + b0.w / 2, midY = b0.y + b0.h / 2;
+      const wantX = ctx.VIEW_PX + ctx.VIEW_W * TS / 2, wantY = ctx.VIEW_PY + ctx.VIEW_H * TS / 2;
+      if (Math.abs(midX - wantX) > 2 || Math.abs(midY - wantY) > 2)
+        problems.push('the room box is not over the middle of the map');
+      /* and the room's own picture in it, drawn bigger than a tile */
+      const cell = ctx.ATLAS.index[ctx.ROOM_ICON.moss];
+      const sx = (cell % ctx.ATLAS.cols) * 8, sy = ((cell / ctx.ATLAS.cols) | 0) * 8;
+      const icon = blits.filter(b => b.tag === 'screen' && b.sx === sx && b.sy === sy &&
+        b.dw > TS && b.dx >= b0.x && b.dx < b0.x + b0.w &&
+        b.dy >= b0.y && b.dy < b0.y + b0.h);
+      if (!icon.length) problems.push('the room box has no picture of the room in it');
+      console.log('a room announced     : a ' + b0.w + 'x' + b0.h + ' box over the middle of ' +
+        'the map with the room\'s own picture in it');
+    }
+    /* it goes up of its own accord once the turn has finished being
+       told, rather than waiting for something else to open it */
+    ctx.G.roomBox = { kind: 'moss' }; ctx.G.mode = 'play';
+    ctx.finishMsgs();
+    if (ctx.G.mode !== 'room')
+      problems.push('a room box was put up and the game stayed in ' + ctx.G.mode);
+    /* every key that means "done" anywhere else closes it */
+    ['Enter', ' ', 'Tab', 'Escape'].forEach(k => {
+      ctx.G.roomBox = { kind: 'moss' }; ctx.G.mode = 'room';
+      ctx.onKey({ key: k, preventDefault: function () { } });
+      if (ctx.G.roomBox || ctx.G.mode !== 'play')
+        problems.push('the room box would not close on ' + (k === ' ' ? 'SPACE' : k));
+    });
+    /* and so does a click anywhere at all - including on the Pack
+       button, which must not also open the pack behind it */
+    put();
+    const pack = ctx.HITS.filter(h => h.what === 'pack')[0];
+    if (!pack) problems.push('no pack button to click while a room box is up');
+    else {
+      ctx.clickAt(pack.x + 2, pack.y + 2, 0);
+      if (ctx.G.roomBox) problems.push('a click did not put the room box away');
+      if (ctx.G.mode !== 'play') problems.push('a click left the game somewhere other than play');
+      if (ctx.G.invOpen) problems.push('the click that closed the room box opened the pack as well');
+    }
+    ctx.G.roomBox = null; ctx.G.mode = 'play';
+    console.log('                     : ENTER, SPACE, TAB, ESC and a click anywhere all close it');
+  }
+
+
+  /* --- the room box does not tell a telephone to press ENTER ----------- */
+  {
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.ctx = null; ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    ctx.G.roomBox = { kind: 'moss' }; ctx.G.mode = 'room';
+    /* what the box actually writes, caught at the pen rather than read
+       back off a heap of single-glyph blits */
+    const realText = ctx.text;
+    const said = [];
+    ctx.text = function (s) { said.push(String(s)); return realText.apply(null, arguments); };
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    ctx.text = realText;
+    const all = said.join(' | ');
+    /* whole words in capitals: "You enter a room filled with soft moss"
+       is not the box telling anybody to press anything */
+    if (/\b(ENTER|SPACE|TAB|ESC)\b/.test(all))
+      problems.push('the room box still names a key: ' + all);
+    if (!said.some(s => s === ctx.ROOM_TITLE.moss))
+      problems.push('the room box lost its heading');
+    if (!said.some(s => /moss/i.test(s) && s !== ctx.ROOM_TITLE.moss))
+      problems.push('the room box lost its description');
+    console.log('a room box           : heading and words only, no key named');
+    ctx.G.roomBox = null; ctx.G.mode = 'play';
+  }
+
+  /* --- you cannot walk out of a teleport before you have arrived ------- */
+  {
+    const P = ctx.P, L = ctx.L;
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.ctx = null; ctx.G.waiting = null; ctx.G.dead = 0; ctx.G.roomBox = null;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0; ctx.MOUSE.held = null;
+    L.mons.length = 0; P.hp = P.mhp = 900; P.frozen = 0; P.webbed = 0; P.held = 0;
+    ctx.computeVis();
+
+    const whole = ctx.WARP_SHAKE + ctx.WARP_FLASH;
+    /* it was 420ms and half of anybody's patience; the point of the
+       change is that it is not */
+    if (whole > 240) problems.push('a teleport still takes ' + whole + 'ms to arrive');
+
+    const T0 = 5000000;
+    const realDate = ctx.Date;
+    ctx.Date = { now: () => T0 };
+    /* somewhere to walk to, so a step that does happen can be seen */
+    let dir = null;
+    for (const d of ctx.DIR4)
+      if (ctx.walkable(P.x + d[0], P.y + d[1]) && !ctx.monAt(L, P.x + d[0], P.y + d[1]))
+        dir = d;
+    if (!dir) problems.push('nowhere to step to beside the player');
+    else {
+      const KEY = { ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+                    ArrowUp: [0, -1], ArrowDown: [0, 1] };
+      let key = null;
+      for (const k in KEY) if (KEY[k][0] === dir[0] && KEY[k][1] === dir[1]) key = k;
+      P.warp = { fx: P.x, fy: P.y, t: T0 };
+      if (!ctx.warping()) problems.push('the player is not counted as being in mid-jump');
+      const was = { x: P.x, y: P.y };
+      ctx.onKey({ key: key, preventDefault: function () { } });
+      if (P.x !== was.x || P.y !== was.y)
+        problems.push('a key walked the player while he was still in the air');
+      /* and a click on the map is no different */
+      const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+      ctx.LAST_INPUT = 'mouse'; ctx.MOUSE.on = 1;
+      ctx.MOUSE.x = ctx.VIEW_PX + (P.x + dir[0] - camx) * ctx.TS + 3;
+      ctx.MOUSE.y = ctx.VIEW_PY + (P.y + dir[1] - camy) * ctx.TS + 3;
+      ctx.clickAt(ctx.MOUSE.x, ctx.MOUSE.y, 0);
+      if (P.x !== was.x || P.y !== was.y || ctx.G.walk)
+        problems.push('a click walked the player while he was still in the air');
+      /* once he has landed, the same key works */
+      ctx.Date = { now: () => T0 + whole + 5 };
+      if (ctx.warping()) problems.push('the jump never ends');
+      ctx.G.walk = null;
+      ctx.onKey({ key: key, preventDefault: function () { } });
+      if (P.x === was.x && P.y === was.y)
+        problems.push('the player could not move once he had arrived');
+      console.log('a teleport           : ' + whole + 'ms in the air, and no order taken ' +
+        'until he lands');
+      P.warp = null;
+    }
+    ctx.Date = realDate;
+    ctx.G.walk = null;
+  }
+
+
+  /* --- a curse says so on the line that is always on the screen -------- */
+  {
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.ctx = null; ctx.G.roomBox = null; ctx.G.invOpen = 0;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    const flags = () => {
+      const realText = ctx.text;
+      const said = [];
+      ctx.text = function (s, px, py) { said.push({ s: String(s), y: py }); return realText.apply(null, arguments); };
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      ctx.text = realText;
+      return said.filter(t => t.y === ctx.FLAG_Y).map(t => t.s).join(' ');
+    };
+    const wasHat = ctx.P.eq.head;
+    ctx.P.eq.head = null;
+    const clean = flags();
+    if (/CURSED/.test(clean)) problems.push('the panel says CURSED with nothing cursed on you');
+    const hat = ctx.mkItem('head', 0);
+    hat.known = 1; hat.cursed = 1; hat.curse = 'water';
+    ctx.P.eq.head = hat;
+    const cursed = flags();
+    if (!/CURSED/.test(cursed))
+      problems.push('a curse does not show on the panel: "' + cursed + '"');
+    console.log('a curse              : the panel line reads "' + cursed.trim() + '"');
+    ctx.P.eq.head = wasHat;
+  }
+
+
+  /* --- the effects list has room for three, and none of them run over -- */
+  {
+    ctx.G.mode = 'play'; ctx.G.walk = null; ctx.G.drag = null; ctx.G.pan = null;
+    ctx.G.ctx = null; ctx.G.roomBox = null; ctx.G.sel = null;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    const P = ctx.P;
+    /* four things going on at once, so the list is longer than the panel */
+    ctx.G.hungerState = 1; P.conf = 4; P.blind = 3; P.confuseTouch = 1;
+    ctx.openInv();
+    const realText = ctx.text;
+    const said = [];
+    ctx.text = function (s, px, py) { said.push({ s: String(s), x: px, y: py }); return realText.apply(null, arguments); };
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    ctx.text = realText;
+    const head = said.filter(t => /^EFFECTS/.test(t.s))[0];
+    if (!head) problems.push('the pack has no EFFECTS heading');
+    else {
+      const lines = said.filter(t => t.x === head.x && t.y > head.y);
+      if (lines.length < 3)
+        problems.push('the effects list still shows only ' + lines.length + ' lines');
+      /* every one of them has to be on the screen */
+      for (const l of lines)
+        if (l.y + ctx.LH > ctx.SH)
+          problems.push('an effect line is drawn off the bottom: "' + l.s + '" at ' + l.y);
+      /* and none of them runs past the column */
+      const IXX = ctx.GX + 5 * ctx.PITCH + 3, colW = ctx.SW - IXX - 2;
+      const all = ctx.playerEffects();
+      let widest = ['', 0];
+      for (const [s] of all) {
+        const w = ctx.textW(s);
+        if (w > widest[1]) widest = [s, w];
+        if (w > colW) problems.push('an effect line is ' + w + 'px wide, past the ' + colW + 'px column: "' + s + '"');
+      }
+      /* the red hands say what they are for on the one line */
+      const hands = all.map(e => e[0]).filter(s => /hands glow red/.test(s));
+      if (hands.length !== 1)
+        problems.push('the red hands take ' + hands.length + ' lines');
+      else if (!/confus/.test(hands[0]))
+        problems.push('the red hands line does not say what it does: "' + hands[0] + '"');
+      console.log('the effects list     : ' + lines.length + ' lines on the screen, widest "' +
+        widest[0] + '" ' + widest[1] + 'px of ' + colW);
+    }
+    ctx.closeInv();
+    ctx.G.hungerState = 0; P.conf = 0; P.blind = 0; P.confuseTouch = 0;
+  }
+
+
+  /* --- SAVE AND QUIT saves, and quits ---------------------------------- */
+  {
+    const key = (k) => ctx.onKey({ key: k, preventDefault: function () { } });
+    const pauseTo = (what) => {
+      /* open the pause menu and walk down to the wanted line */
+      ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null;
+      ctx.openPause();
+      for (let i = 0; i < ctx.PAUSE_OPTS.length; i++) {
+        if (ctx.PAUSE_OPTS[ctx.G.pause.i][0] === what) return true;
+        key('ArrowDown');
+      }
+      return false;
+    };
+    ctx.G.dead = 0; ctx.G.roomBox = null; ctx.G.walk = null;
+    ctx.G.slot = null;
+    /* slot one may already hold something from an earlier check, so what
+       matters is that these saves leave it exactly as it was */
+    let untouched = ctx.slotLabel(0);
+
+    /* first time: it has to ask which slot */
+    if (!pauseTo('save')) problems.push('the pause menu has no SAVE AND QUIT');
+    else {
+      key('Enter');
+      if (ctx.G.mode !== 'slots') problems.push('the first save did not ask for a slot');
+      else {
+        /* take the second slot, so the number is not the default */
+        key('ArrowDown');
+        key('Enter');
+        if (ctx.G.mode !== 'title')
+          problems.push('saving left the game in ' + ctx.G.mode + ', not on the splash');
+        if (ctx.G.pause || ctx.G.slots) problems.push('a menu is still standing behind the splash');
+        if (ctx.G.slot !== 1) problems.push('the run did not remember slot ' + ctx.G.slot);
+        if (ctx.slotLabel(1) === 'empty') problems.push('nothing was written to the slot');
+        untouched = ctx.slotLabel(0);
+      }
+    }
+
+    /* and after that it never asks again: straight to the same slot */
+    ctx.G.mode = 'play';
+    const before = ctx.slotLabel(1);
+    ctx.P.gold += 777;
+    if (!pauseTo('save')) problems.push('the pause menu lost SAVE AND QUIT');
+    else {
+      key('Enter');
+      if (ctx.G.mode === 'slots') problems.push('it asked for a slot a second time');
+      else if (ctx.G.mode !== 'title')
+        problems.push('the second save left the game in ' + ctx.G.mode);
+      if (ctx.slotLabel(1) === before)
+        problems.push('the second save did not overwrite slot two');
+      if (ctx.slotLabel(0) !== untouched) problems.push('it wrote to the wrong slot');
+    }
+
+    /* a run loaded out of a slot belongs to that slot */
+    ctx.G.mode = 'play'; ctx.G.slot = null;
+    ctx.openSlots('load', 'pause');
+    key('ArrowDown');              /* slot two, the one with the save in it */
+    key('Enter');
+    if (ctx.G.slot !== 1) problems.push('a loaded run does not know which slot it came from');
+    else {
+      ctx.G.mode = 'play';
+      ctx.P.gold += 5;
+      const was = ctx.slotLabel(1);
+      pauseTo('save');
+      key('Enter');
+      if (ctx.G.mode !== 'title') problems.push('save and quit after a load did not quit');
+      if (ctx.slotLabel(1) === was) problems.push('save and quit after a load wrote nowhere');
+      if (ctx.slotLabel(0) !== untouched)
+        problems.push('save and quit after a load wrote to slot one');
+    }
+    console.log('save and quit        : asks once, then always slot ' + (ctx.G.slot + 1) +
+      ', and every time it leaves you on the splash');
+    ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null;
   }
 
   if (problems.length) {

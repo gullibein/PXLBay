@@ -107,6 +107,7 @@ function freshG() {
     ask: null,
     perkPick: null, choice: null, pause: null, look: null,
     titleMenu: null, walk: null, ctx: null, drag: null, waiting: null,
+    roomBox: null, saidWaterCurse: 0, slot: null,
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
@@ -184,14 +185,23 @@ function shownAC(it) {
   return numbersKnown(it) ? gearAC(it) : (itemDef(it).a || 0);
 }
 
+/* Which pool a piece of gear draws its rune from.  Everything worn asks
+   with 'g'; a hood or a cap adds 'h' for the one rune only ever cut into
+   headwear, and boots add 'f' for the one only ever cut into footwear.
+   Asked in two places - what the dungeon deals out, and what a scroll of
+   enchantment puts in - and they must agree. */
+function gearRuneKind(it) {
+  if (!it) return 'g';
+  if (it.t === 'head') return 'gh';
+  if (it.t === 'feet') return 'gf';
+  return 'g';
+}
 function enchantGear(it, def) {
   if (def.bad) { layCurse(it); return; }
   var r = rnd(100);
   if (r < 16) { layCurse(it); it.ap = -(rnd(3) + 1); }
   else if (r < 26) { it.ap = rnd(2) + 1; }
-  /* headwear draws from the worn runes and from the one that is only
-     ever cut into a hood or a cap */
-  addRune(it, it.t === 'head' ? 'gh' : 'g', 18);
+  addRune(it, gearRuneKind(it), 18);
   if (it.br === 'clearwater') it.wet = 1;    /* found with a charge in it */
 }
 
@@ -794,7 +804,7 @@ function newPlayer() {
     amulet: 0,
     blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
     seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
-    unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, webbed: 0,
+    unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
     runSteps: 0, seer: 0, warp: null,
     statWas: null, statLit: {},
     regenCtr: 0
@@ -1120,6 +1130,15 @@ function curseDef(id) {
   for (var i = 0; i < CURSES.length; i++) if (CURSES[i].id === id) return CURSES[i];
   return null;
 }
+/* Which of the things you are wearing is carrying a given curse, said
+   the way you would say it out loud.  A curse with nothing to point at
+   is what made one look like a bug in the game: you take five damage
+   for standing in water and there is no cursed object anywhere to be
+   seen, because the panel never named the one you had on. */
+function curseSource(id) {
+  var it = curseOn(id);
+  return it ? shortItem(it) : '';
+}
 /* Every curse you are carrying, for the panel and for the shrine. */
 function cursesOnYou() {
   var out = [], k;
@@ -1317,6 +1336,14 @@ function soakPlayer(why) {
   markHurt(P, P.x, P.y - 1);
   if (typeof splashDrops === 'function') splashDrops(P.x, P.y, WATER_BURN_COL);
   msgTrap(why || 'The water burns you.', 'R', CURSE_WATER_DAMAGE + ' burn', 'R');
+  /* The first time it happens, say outright what is doing it and what
+     you have got on that is doing it.  Damage out of a clear sky reads
+     as a fault in the game rather than as a curse. */
+  if (!G.saidWaterCurse) {
+    G.saidWaterCurse = 1;
+    var src = curseSource('water');
+    msg('Your ' + (src || 'gear') + ' is cursed: water burns you.', 'R');
+  }
   if (P.hp <= 0) die('water');
   return CURSE_WATER_DAMAGE;
 }
@@ -1334,8 +1361,36 @@ function squibbed(what) {
   return true;
 }
 
+/* What a rune is called in the EFFECTS list.
+
+   A rune's own `txt` is written to be read beside the thing it is cut
+   into - "it bites your attacker" makes perfect sense under the name of
+   a breastplate.  In the list at the foot of the pack there is nothing
+   for "it" to point at, and a line reading "it bites your attacker" is
+   as easily read as something biting *you*.  So the worn ones name the
+   armour, and knockback - which is offered to blades as well - says
+   whichever of the two this copy is. */
+function runeEffect(it, rn) {
+  if (!rn.eff) return rn.txt;
+  if (typeof rn.eff === 'string') return rn.eff;
+  return rn.eff[it && it.t === 'weapon' ? 'w' : 'g'] || rn.txt;
+}
 function playerEffects() {
   var out = [], i;
+  /* Curses first, before anything else.  The pack shows two of these
+     lines and counts the rest, so whatever is at the bottom of the list
+     might as well not be written: a curse used to sit below the perks
+     and the runes and was never once seen.  It is the only entry here
+     that is quietly costing you hit points, so it goes at the top and
+     it names the thing it came in on. */
+  var cz0 = cursesOnYou();
+  for (i = 0; i < cz0.length; i++) {
+    var cd0 = curseDef(cz0[i]);
+    if (!cd0) continue;
+    out.push(['CURSED: ' + cd0.txt, 'R']);
+    var src = curseSource(cz0[i]);
+    if (src) out.push(['from your ' + src, 'R']);
+  }
   if (G.hungerState === 1) out.push(['hungry: healing halved', 'O']);
   if (G.hungerState === 2) out.push(['weak: no healing', 'O']);
   if (G.hungerState === 3) out.push(['starving: losing hp', 'R']);
@@ -1354,8 +1409,10 @@ function playerEffects() {
   if (darkAt(P.x, P.y)) out.push([nightEyes() ? 'in the dark, and seeing'
                                               : 'in the dark: one square', nightEyes() ? 'c' : 'p']);
   if (playerRunning()) out.push(['running: you may stumble', 'O']);
-  if (P.confuseTouch) out.push(['hands glow red: next hit', 'y']);
-  if (P.confuseTouch) out.push(['  confuses a monster', 'y']);
+  /* One line.  It was two, and the panel shows a few and counts the
+     rest, so the half that said what the red hands are for was the half
+     that fell off the bottom. */
+  if (P.confuseTouch) out.push(['hands glow red: next hit confuses', 'y']);
   if (P.amulet) out.push(['carrying the Amulet', 'y']);
 
   var pk = perkList();
@@ -1370,15 +1427,10 @@ function playerEffects() {
     var d = itemDef(eq[i]);
     if (d && d.prop && PROP_TEXT[d.prop]) out.push(PROP_TEXT[d.prop].slice());
     var rn = activeRune(eq[i]);
-    if (rn) out.push([rn.txt, rn.bad ? 'R' : 'c']);
+    if (rn) out.push([runeEffect(eq[i], rn), rn.bad ? 'R' : 'c']);
     else if (eq[i].br && !eq[i].brKnown && effWis() >= 12)
       out.push(['something sleeps in it', 'P']);
     if (eq[i].protected) out.push(['armor is protected', 'c']);
-  }
-  var cz = cursesOnYou();
-  for (i = 0; i < cz.length; i++) {
-    var cd = curseDef(cz[i]);
-    if (cd) out.push(['curse of ' + cd.n + ': ' + cd.txt, 'R']);
   }
   for (i = 0; i < eq.length; i++)
     if (eq[i].cursed) out.push(['cursed: ' + shortItem(eq[i]), 'R']);
@@ -1550,6 +1602,7 @@ function packPlayer() {
 function packRun() {
   var g = {}, k;
   var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1, waiting: 1,
+               roomBox: 1,
                box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
@@ -1604,8 +1657,16 @@ function writeStore(o) {
 function saveInto(i) {
   var store = saveStore();
   if (!store) return 'This browser will not let the game save.';
+  /* The slot this run belongs to, from the moment it is first put in
+     one.  Set before the run is packed so the save carries it: a run
+     loaded back out of slot two knows it is slot two, and SAVE AND QUIT
+     never asks again. */
+  var was = G.slot;
+  G.slot = i;
   store.slots[i] = packRun();
-  return writeStore(store) ? null : 'There is no room left to save.';
+  var err = writeStore(store) ? null : 'There is no room left to save.';
+  if (err) G.slot = was;
+  return err;
 }
 function loadFrom(i) {
   var store = saveStore();
@@ -1614,6 +1675,7 @@ function loadFrom(i) {
   if (!s) return 'That slot is empty.';
   if (s.v !== SAVE_VERSION) return 'That save is from an older game.';
   unpackRun(s);
+  G.slot = i;                 /* whichever slot it came out of, it lives in */
   return null;
 }
 function slotLabel(i) {
@@ -1797,6 +1859,7 @@ function mkMonster(c, depth, x, y) {
     conf: 0, hasted: 0, slowed: 0, cancel: 0, disc: 0, animT: 0, wade: 0,
     blind: 0, dmgBonus: 0, seek: null, mark: null, blindTo: 0,
     held: 0, stuck: 0, webbed: 0, burn: 0, cast: 0, doused: 0, runSteps: 0,
+    gather: 0, rushing: 0, nest: 0,
     /* A number of its own, so one creature can point at another across a
        save: a reference would be written out as a second copy of the
        creature and come back as somebody else. */
@@ -1988,6 +2051,84 @@ function keyCount() {
   var n = 0;
   for (var i = 0; i < P.keys.length; i++) n += P.keys[i];
   return n;
+}
+
+/* The squares of a room with the most stone about them.  A corner of a
+   rectangular room has five of its eight neighbours in the wall - three
+   along one side, three along the other, one shared - so five is what a
+   corner means.  Worked from the floor list rather than from a
+   rectangle, because half the rooms down here are not rectangles. */
+function roomCorners(Lv, ri) {
+  var r = Lv.rooms[ri];
+  if (!r || r.gone || !r.floors) return [];
+  var five = [], four = [], i, d;
+  for (i = 0; i < r.floors.length; i++) {
+    var x = r.floors[i][0], y = r.floors[i][1], j = y * MAP_W + x;
+    if (Lv.tiles[j] !== FLOOR || Lv.decor[j]) continue;
+    if (Lv.roomAt[j] !== ri) continue;
+    var n = 0;
+    for (d = 0; d < DIR8.length; d++) {
+      var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) { n++; continue; }
+      var t = Lv.tiles[ny * MAP_W + nx];
+      if (t === WALL || t === ROCK || t === SDOOR) n++;
+    }
+    if (n >= 5) five.push([x, y]);
+    else if (n === 4) four.push([x, y]);
+  }
+  return five.length ? five : four;
+}
+/* Spin a nest out from one square, along the floor of its own room.  The
+   web is permanent - it was spun before you got here - and it will not
+   go over a rug or a cracked flagstone, which is why the count is a
+   target rather than a promise. */
+function spinNest(Lv, ri, cx, cy, want) {
+  var cells = [[cx, cy]], seen = {}, qi = 0, laid = 0, d;
+  seen[cy * MAP_W + cx] = 1;
+  laid += layWeb(cx, cy, 0, 0, WEB_LIFE_NEST);
+  while (laid < want && qi < cells.length) {
+    var c = cells[qi++];
+    var dirs = DIR4.slice();
+    shuffle(dirs);
+    for (d = 0; d < dirs.length && laid < want; d++) {
+      var nx = c[0] + dirs[d][0], ny = c[1] + dirs[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var j = ny * MAP_W + nx;
+      if (seen[j]) continue;
+      seen[j] = 1;
+      if (Lv.roomAt[j] !== ri || Lv.tiles[j] !== FLOOR) continue;
+      if (nx === Lv.stair.x && ny === Lv.stair.y) continue;
+      if (Lv.up && nx === Lv.up.x && ny === Lv.up.y) continue;
+      cells.push([nx, ny]);
+      laid += layWeb(nx, ny, 0, 0, WEB_LIFE_NEST);
+    }
+  }
+  return laid;
+}
+/* Every spinner the floor rolled, moved into the corner of the room it
+   was dropped in and given a nest to sit in.  Most of them: one in
+   several is out on the floor, so the web is a warning rather than a
+   rule. */
+function spinNests(Lv) {
+  var made = 0, i;
+  for (i = 0; i < Lv.mons.length; i++) {
+    var m = Lv.mons[i];
+    if (!m.def || m.def.sp !== 'web') continue;
+    if (rnd(100) >= SPIN_NEST_PCT) continue;
+    var ri = Lv.roomAt[m.y * MAP_W + m.x];
+    if (ri < 0) continue;
+    var corners = roomCorners(Lv, ri);
+    if (!corners.length) continue;
+    var c = corners[rnd(corners.length)];
+    if (monAt(Lv, c[0], c[1]) && monAt(Lv, c[0], c[1]) !== m) continue;
+    if (c[0] === Lv.stair.x && c[1] === Lv.stair.y) continue;
+    m.x = c[0]; m.y = c[1];
+    m.wx = c[0]; m.wy = c[1]; m.home = ri;
+    if (!spinNest(Lv, ri, c[0], c[1], NEST_MIN + rnd(NEST_MAX - NEST_MIN + 1))) continue;
+    m.nest = 1;                    /* this one lives here; it did not wander in */
+    made++;
+  }
+  return made;
 }
 
 function populate(Lv) {
@@ -2378,6 +2519,11 @@ function decorHides(x, y, Lv) {
   var d = (Lv || L).decor[y * MAP_W + x];
   if (!d) return false;
   if (isRug(d)) return false;
+  /* Web lies flat on the flagstones and the drawing puts what is on the
+     square over the top of it, exactly as it does with moss - so a thing
+     lying in a spinner's nest is in plain sight, and a nest spun round
+     one is a larder rather than a hiding place. */
+  if (d === 'web') return false;
   return !isMoss(d) && !isCrack(d);
 }
 function dropNear(x, y, it) {
@@ -2643,6 +2789,8 @@ function stepIsFleeing(dx, dy) {
 function playerStumbles(dx, dy) {
   if (!playerRunning()) return false;
   if (!stepIsFleeing(dx, dy)) return false;
+  /* sure footed: whatever is on your feet does not let you go over */
+  if (hasGearRune('sure footed')) return false;
   if (rnd(100) >= stumbleChance(effDex(), 0)) return false;
   P.runSteps = 0;
   msg('You are running too fast and stumble.', 'O');
@@ -2657,6 +2805,8 @@ function monStumbles(m) {
      fight, he is leaving - a scripted flight with a patience of its own -
      and losing turns out of it at random only makes it flaky. */
   if (m.bolted) return false;
+  /* four legs, or simply better balance than the rest of them */
+  if (m.def.sure) return false;
   if (!monRunning(m)) return false;
   /* A creature has no dexterity of its own, so its armour class stands
      in for one: the nimble things are the hard ones to hit. */
@@ -2999,6 +3149,7 @@ function enterLevel(depth, how) {
   setDims(L.mw, L.mh);   /* the globals must match the floor we kept */
   P.x = start.x; P.y = start.y;     /* set first: keys are placed by reach */
   populate(L);
+  spinNests(L);
 
   /* if something landed on the entry square, move within the same region
      so we never start on the wrong side of a locked door */
@@ -3070,8 +3221,17 @@ function enterLevel(depth, how) {
     var uj = L.up.y * MAP_W + L.up.x;
     delete L.decor[uj];
     if (L.barrels) delete L.barrels[uj];
-    if (L.rugId) delete L.rugId[uj];
   }
+  /* And a rug that has lost a square to a staircase is rolled up whole.
+     The square under the stairs used to be quietly struck off the rug
+     instead, which left the rest of it lying there with a hole in the
+     middle and the stairs standing in the hole - a staircase laid on a
+     rug, as far as anybody looking at it could tell.  The stairs are
+     placed and moved about after the floor is furnished, so this has to
+     be the last word on it rather than the sweep the generator ran. */
+  tidyRugs(L);
+  /* and the pool stops short of the steps, which are dry */
+  dryAroundStairs(L);
   /* Nothing stands on a barrel, so no barrel may wall a way through.
      This waits until the end rather than running with the rest of the
      generator because the floor is not finished until the staircase back
@@ -3323,7 +3483,10 @@ function playerAttack(m) {
     if (crit) dm *= CRIT_MULT;
     m.hp -= dm;
     markHurt(m, P.x, P.y);
-    var fx = dm + (extra ? ' sneak' : crit ? ' telling' : ' damage');
+    /* "telling" is what a blow that lands well has always been called,
+       and nobody reading the bar knew what it meant.  What actually
+       happens is that the damage is doubled, so that is what it says. */
+    var fx = dm + (extra ? ' sneak' : crit ? ' double' : ' damage');
     if (m.hp <= 0) { killMonster(m, true, fx); return; }
     /* An executioner finishes what is already almost finished. */
     if (hasPerk('executioner') && m.hp * PERK_EXECUTE_FRAC <= m.mhp &&
@@ -3844,10 +4007,7 @@ function knockBack(m, fromx, fromy) {
   if (!walkable(nx, ny) || monAt(L, nx, ny)) return 0;
   if (nx === P.x && ny === P.y) return 0;
   if (!m.anim) m.anim = [];
-  /* the fifth number is when it starts, the sixth how long it takes:
-     a hurried step is over in half the time */
-  m.anim.push([m.x, m.y, nx, ny, beatNow(),
-               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
+  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
   m.x = nx; m.y = ny;
   m.held = 0;
   if (P.heldBy === m) { P.held = 0; P.heldBy = null; }
@@ -3985,6 +4145,36 @@ function monstersMove() {
       var settle = m.hurt.t + HURT_MS + HURT_HOLD - beatNow();
       if (settle > 0) beatWait(settle);
     }
+    /* A creature that works to a round rather than to a turn.  Two turns
+       of spitting, then three turns to close with you - one ordinary
+       turn at a time, walking and biting - or, if it cannot be on you
+       inside those three, one more web and the other two forfeit.
+
+       The reach is asked once, at the top of the three, and it settles
+       the whole of the rest of the round.  Asking it again each turn
+       would let a spinner spit, take a step, and spit again. */
+    var spitT = m.def.spitTurns || 0, rushT = m.def.rushTurns || 0;
+    if (spitT + rushT && m.state === 2 && !m.ally) {
+      var round = spitT + rushT;
+      var phase = m.gather || 0;
+      m.gather = (phase + 1) % round;
+      if (phase < spitT) {
+        monWeb(m);                           /* a web, and nothing else */
+      } else {
+        if (phase === spitT) m.rushing = monCanCloseIn(m, rushT) ? 1 : 0;
+        if (m.rushing) monOneMove(m);
+        else if (phase === spitT) monWeb(m);
+        /* and otherwise it stands there: the two turns it gave up when
+           it chose the web over the walk */
+      }
+      if (G.dead) return;
+      watched = watched || canSeeMon(m);
+      noteSight(m);
+      if (watched) beatWait(BEAT_ACT);
+      continue;
+    }
+    if (spitT + rushT) { m.gather = 0; m.rushing = 0; }
+
     monOneMove(m);
     if (G.dead) return;
     watched = watched || canSeeMon(m);
@@ -3997,9 +4187,7 @@ function monstersMove() {
          time crossing the square - so two steps read as one hurried
          creature rather than as two ordinary ones. */
       if (watched) beatWait(Math.round(BEAT_STEP * EXTRA_STEP));
-      m.quickStep = 1;
       monOneMove(m);
-      m.quickStep = 0;
       if (G.dead) return;
       watched = watched || canSeeMon(m);
     }
@@ -4009,6 +4197,34 @@ function monstersMove() {
 }
 
 function mdist(m) { return Math.abs(m.x - P.x) + Math.abs(m.y - P.y); }
+
+/* Could it get its teeth into you inside this many moves?  A breadth
+   first search three squares deep over ground it could actually stand
+   on, looking for a square beside you - blows are orthogonal, so beside
+   is what matters.  Three deep costs nothing; it is asked once a rush.
+   Straight line distance will not do: a spinner on the far side of a
+   wall is two squares away and cannot touch you. */
+function monCanCloseIn(m, steps) {
+  if (mdist(m) <= 1) return true;
+  var seen = {}, q = [[m.x, m.y, 0]], qi = 0, d;
+  seen[m.y * MAP_W + m.x] = 1;
+  while (qi < q.length) {
+    var c = q[qi++];
+    if (c[2] >= steps) continue;
+    for (d = 0; d < DIR4.length; d++) {
+      var nx = c[0] + DIR4[d][0], ny = c[1] + DIR4[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var k = ny * MAP_W + nx;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      if (nx === P.x && ny === P.y) return true;
+      if (!walkable(nx, ny) || barrelAt(nx, ny)) continue;
+      if (Math.abs(nx - P.x) + Math.abs(ny - P.y) <= 1) return true;
+      q.push([nx, ny, c[2] + 1]);
+    }
+  }
+  return false;
+}
 
 /* can this monster make out the player from where it stands? */
 function monSeesPlayer(m) {
@@ -4180,13 +4396,24 @@ function allyMove(m) {
 function webAt(x, y) {
   return !!(L.webs && L.webs[y * MAP_W + x]);
 }
-function layWeb(x, y, at) {
+function layWeb(x, y, at, over, life) {
   if (!walkable(x, y)) return 0;
-  if (L.decor[y * MAP_W + x] && L.decor[y * MAP_W + x] !== 'web') return 0;
+  var k0 = y * MAP_W + x, had = L.decor[k0];
+  if (had && had !== 'web') {
+    /* Ordinarily web will not stick over a cracked flagstone or a rug.
+       Web spat over the square you are standing on is the exception: the
+       whole point of it is that you can see what has hold of you, and a
+       patch of moss must not swallow it.  What it covers is remembered
+       and laid back down when the web rots away. */
+    if (!over) return 0;
+    if (!L.webOver) L.webOver = {};
+    if (L.webOver[k0] === undefined) L.webOver[k0] = had;
+  }
   if (!L.webs) L.webs = {};
   var k = y * MAP_W + x;
-  if (L.webs[k]) { L.webs[k] = WEB_LIFE; return 0; }
-  L.webs[k] = WEB_LIFE;
+  var span = (life === undefined) ? WEB_LIFE : life;
+  if (L.webs[k]) { L.webs[k] = span; return 0; }
+  L.webs[k] = span;
   L.decor[k] = 'web';
   /* and the moment it is there to see.  A creature's turn is worked out
      in one go and played back afterwards, so web still in the air must
@@ -4198,36 +4425,67 @@ function clearWeb(x, y) {
   var k = y * MAP_W + x;
   if (!L.webs || !L.webs[k]) return;
   delete L.webs[k];
-  if (L.decor[k] === 'web') delete L.decor[k];
+  if (L.decor[k] !== 'web') return;
+  if (L.webOver && L.webOver[k] !== undefined) {
+    L.decor[k] = L.webOver[k];              /* what the web was laid over */
+    delete L.webOver[k];
+    return;
+  }
+  delete L.decor[k];
 }
-/* Somebody has walked into one.  Returns true if they are stuck. */
-function webCatches(x, y) {
+/* Somebody has walked into one.  Returns true if they are stuck.
+   A weaver is not caught and does not tear the web up on its way
+   through: a spider walks its own silk. */
+function webCatches(x, y, who) {
+  if (who && who.def && who.def.weaver) return false;
   if (!webAt(x, y)) return false;
   clearWeb(x, y);
   return true;
+}
+/* How long web holds anything: one turn or two, and the same however it
+   was got at you. */
+function webHold() {
+  return WEB_HOLD_MIN + rnd(WEB_HOLD_MAX - WEB_HOLD_MIN + 1);
+}
+/* Stick the player for that many turns, and mean it.
+
+   A monster's counter is read at the top of its own turn, so `stuck = 1`
+   costs it exactly one turn.  The player's counters are wound down in
+   the upkeep at the end of the turn the web caught him - the same turn -
+   so setting his to 1 cost him nothing whatever, which is why walking
+   into web did not stop you.  One is added here to pay for that wind
+   down; by the time anything is drawn, the figure on the status line is
+   the number of turns that are really left. */
+function stickPlayer(turns) {
+  P.frozen += turns + 1;
+  P.webbed = Math.max(P.webbed || 0, turns + 1);
+  return turns;
 }
 /* the webs on the floor grow old and rot away */
 function ageWebs() {
   if (!L.webs) return;
   for (var k in L.webs) {
+    /* a nest is spun, not spat: it was there before you came and it will
+       be there when you leave */
+    if (L.webs[k] < 0) continue;
     if (--L.webs[k] > 0) continue;
     var x = (k | 0) % MAP_W, y = ((k | 0) / MAP_W) | 0;
     clearWeb(x, y);
   }
 }
 
-/* A web spinner does not close with you.  It spits, every other turn,
-   and what misses lands on the floor and waits. */
+/* One web, spat across the room.  It is asked for by the creature's own
+   turn rather than by the general ranged pass, because a spinner only
+   spits when it cannot get to you - see monBurst. */
 function monWeb(m) {
   if (m.cancel || m.def.sp !== 'web') return false;
-  if (m.cast > 0) { m.cast--; return false; }
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
-  if (d < 2 || d > WEB_RANGE) return false;
+  /* No minimum range any more.  A spinner standing over you used to be
+     unable to spit at all, so the two gathering turns of its round were
+     spent doing nothing whatever - which is what made it look broken.
+     Web in the face is exactly what it would do. */
+  if (d > WEB_RANGE) return false;
   if (!shotClear(m.x, m.y, P.x, P.y)) return false;
-  /* Counted down at the start of each turn, so the wait is one shorter
-     than the gap: setting it to the gap itself put three turns between
-     shots when two were wanted. */
-  m.cast = WEB_EVERY - 1;
   /* Wait first, then start the flight from that moment: timed from now
      it is over before the frame is drawn, which reads as the web landing
      on you in the same instant the creature spat it. */
@@ -4239,23 +4497,33 @@ function monWeb(m) {
      you - which is what makes it worth watching where you tread. */
   var atGround = rnd(100) < 30;
   if (!atGround && swing(m.lv + 2, playerAC(), 0)) {
-    var hold = WEB_HOLD_MIN + rnd(WEB_HOLD_MAX - WEB_HOLD_MIN + 1);
-    P.frozen += hold; P.webbed = Math.max(P.webbed || 0, hold);
+    /* It lands on the square you are standing on, and web on the square
+       you are standing on holds you.  The patch stays where it fell
+       rather than coming away with you: something has hold of you and
+       you should be able to see what.  A patch you walk into is a
+       different matter - that one comes away on your boots. */
+    layWeb(P.x, P.y, beatNow(), 1);
+    var hold = stickPlayer(webHold());
     msgFight(fightLine('', cap(monShort(m)), ' spits web over you.'),
       'c', 'stuck ' + hold, 'O', m);
     sound('miss');
     return true;
   }
-  /* it lands short, or on purpose, and sticks to the floor */
+  /* It lands short, or on purpose, on the ground between the two of you.
+     Never on the square you are standing on: that is the aimed shot, and
+     a shot that misses must not hold you anyway. */
   var laid = 0, step;
   var dx = Math.sign(P.x - m.x), dy = Math.sign(P.y - m.y);
   for (step = 1; step <= 2; step++) {
-    var wx = P.x - dx * (step - 1), wy = P.y - dy * (step - 1);
+    var wx = P.x - dx * step, wy = P.y - dy * step;
+    if (wx === m.x && wy === m.y) break;      /* not under its own feet */
     laid += layWeb(wx, wy, beatNow());
   }
   if (laid) msgFight(fightLine('', cap(monShort(m)), ' webs the floor.'),
     'c', laid + ' web', 'c', m);
-  else msgFight(fightLine('', cap(monShort(m)), ' spits and misses.'), '6', 'miss', '6', m);
+  /* Not 'miss': a spit that put no web down and a blow that went wide
+     are different things, and in the bar they looked identical. */
+  else msgFight(fightLine('', cap(monShort(m)), ' spits and misses.'), '6', 'no web', '6', m);
   return true;
 }
 
@@ -4471,7 +4739,6 @@ function monRanged(m) {
      just been surprised does not calmly line up a fireball. */
   if (m.surprised) return false;
   if (monWitch(m)) return true;
-  if (monWeb(m)) return true;
   if (monFireball(m)) return true;
   if (m.cancel || m.def.sp !== 'flame') return false;
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
@@ -4863,10 +5130,7 @@ function tryMonStep(m, dx, dy) {
      one start time - so the first was thrown away and the pair replayed
      together after a pause, which looked exactly like teleporting. */
   if (!m.anim) m.anim = [];
-  /* the fifth number is when it starts, the sixth how long it takes:
-     a hurried step is over in half the time */
-  m.anim.push([m.x, m.y, nx, ny, beatNow(),
-               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
+  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
   /* And it faces the way it went.  The sprites are painted facing right,
      so this is only ever a mirror, and only for the creatures that have
      a front and a back worth speaking of.  Being shoved is not walking,
@@ -4879,13 +5143,15 @@ function tryMonStep(m, dx, dy) {
      That fire does not care who walks into it afterwards. */
   if (m.burn > 0) dropEmber(m.x, m.y);
   m.x = nx; m.y = ny;
-  if (webCatches(nx, ny)) {
+  if (webCatches(nx, ny, m)) {
     /* Held, not frozen.  They are the same lost turn to the game and
        nothing like the same thing to look at: web is not ice. */
-    m.stuck = (m.stuck || 0) + WEB_FLOOR_HOLD;
-    m.webbed = (m.webbed || 0) + WEB_FLOOR_HOLD;
+    var mhold = webHold();
+    m.stuck = (m.stuck || 0) + mhold;
+    m.webbed = (m.webbed || 0) + mhold;
     if (canSeeMon(m))
-      msgFight(fightLine('', cap(monShort(m)), ' walks into web.'), 'c', 'stuck', 'c', m);
+      msgFight(fightLine('', cap(monShort(m)), ' walks into web.'),
+        'c', 'stuck ' + mhold, 'c', m);
   }
   var mtr = trapAt(nx, ny);
   if (mtr) { monTrap(m, mtr); if (L.mons.indexOf(m) < 0) return true; }
@@ -5018,7 +5284,15 @@ function upkeep() {
     P.unseen--;
     if (P.unseen === 0) msg('You come back into view.', 'y');
   }
-  var burn = hasProp('slow digestion') ? 0 : 1;
+  var burn = 1;
+  /* Wanderer boots: you eat little, not nothing.  Three turns in
+     thirteen cost you nothing, so a ration goes about thirty per cent
+     further - the same arithmetic as the perk below, and its own counter
+     so that having both is worth having both. */
+  if (hasProp('slow digestion')) {
+    P.digCtr = ((P.digCtr || 0) + 1) % SLOW_DIGEST_CYCLE;
+    if (P.digCtr < SLOW_DIGEST_FREE) burn = 0;
+  }
   /* Abstemious: three turns in thirteen cost you nothing, which makes a
      ration go thirty per cent further.  It does not make you proof
      against starving - it just takes longer to get there. */
@@ -5230,6 +5504,25 @@ function catchScenery(c) {
     dropEmber((k | 0) % MAP_W, ((k | 0) / MAP_W) | 0, DECOR_BURN_TURNS);
   }
 }
+/* Fire jumps to web.  Nothing else in the dungeon catches from the
+   square next door - a table has to be standing in the flame - but web
+   is a room full of tinder strung across the floor, and a fire in a nest
+   of it should run through the whole nest rather than sit where it was
+   lit.  Two or three turns each, so it travels about a square a turn. */
+function catchWebNear(x, y) {
+  if (!L.webs) return 0;
+  var d, lit = 0;
+  for (d = 0; d < DIR8.length; d++) {
+    var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
+    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+    if (!webAt(nx, ny)) continue;
+    var j = ny * MAP_W + nx;
+    if (L.burning && L.burning[j]) continue;      /* already alight */
+    dropEmber(nx, ny, WEB_BURN_MIN + rnd(WEB_BURN_MAX - WEB_BURN_MIN + 1));
+    lit++;
+  }
+  return lit;
+}
 /* and when that fire finally goes out, what it was standing on is gone */
 function burnAway(x, y) {
   var j = y * MAP_W + x;
@@ -5237,6 +5530,10 @@ function burnAway(x, y) {
   delete L.burning[j];
   var what = burnableAt(x, y);
   if (!what) return '';
+  /* Web is held in two places - the decor that is drawn and the patch
+     that catches you - so it goes through its own door, which also puts
+     back whatever it was spat over. */
+  if (what === 'web') { clearWeb(x, y); return what; }
   var id = L.rugId && L.rugId[j];
   if (!id) { delete L.decor[j]; return what; }
   /* A rug is one thing rather than nine, so the first square of it to go
@@ -5292,6 +5589,7 @@ function ageClouds() {
     }
     if (fire && typeof lightBarrel === 'function') lightBarrel(c.x, c.y);
     if (fire) catchScenery(c);
+    if (fire) catchWebNear(c.x, c.y);
     if (kind !== 'mend' && P.x === c.x && P.y === c.y) { if (fire) burn++; else hurt++; }
     if (--c.turns <= 0) {
       L.clouds.splice(i, 1);

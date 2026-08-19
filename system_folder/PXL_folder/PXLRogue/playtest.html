@@ -85,6 +85,14 @@ var ATLAS_PNG = "spritesheet.png";
 
 /* ---------------------------------------------------------- constants */
 var TS = 8, SW = 230, SH = 128;
+/* The pack's grid of slots, and from it the width of the column of words
+   beside it.  These live here rather than in the drawing because the
+   rules suite has to know how wide a line of text may be without loading
+   the renderer - a line that runs off the panel is a rule about words,
+   not about pixels being pushed. */
+var INV_SL = 17, INV_GAP = 2, INV_PITCH = INV_SL + INV_GAP, INV_GX = 2;
+var INV_TXT_X = INV_GX + 5 * INV_PITCH + 3;
+var INV_COL_W = SW - INV_TXT_X - 2;
 /* The left hand panel keeps the text and your stats where they stay put;
    the map fills everything to the right of it. */
 var PANEL_W = 78;
@@ -292,6 +300,11 @@ var RIVER_FREE_EVERY = 2;
    which is ten units of food where it used to be thirteen - so a ration
    carries you thirty per cent further. */
 var ABSTEMIOUS_CYCLE = 13, ABSTEMIOUS_FREE = 3;
+/* Wanderer boots, and the same arithmetic: three turns in thirteen cost
+   you nothing, so a ration goes about thirty per cent further.  They
+   used to stop hunger altogether - the meter sat at 100% for a whole
+   run, which is not "you eat little", it is "you never eat". */
+var SLOW_DIGEST_CYCLE = 13, SLOW_DIGEST_FREE = 3;
 
 var E_LEVELS = [
   15, 37, 128, 292, 529, 857, 1319, 2127, 3216, 4640, 7459, 11784, 18582,
@@ -342,10 +355,12 @@ var HUNTRESS_ARROW_PCT = 78, HUNTRESS_CHEST_PCT = 30;
 var ARROW_OVERSHOOT = 4;      /* how far a miss can sail past its mark */
 var CRYSTAL_MIN_PCT = 10, CRYSTAL_MAX_PCT = 25;
 var MOVE_ANIM_MS = 110;       /* how long one monster step takes on screen */
-/* What every step after the first costs, as a share of an ordinary
-   one.  A creature quick enough to move twice in a turn should look
-   it, rather than taking twice as long over the turn as everything
-   else does. */
+/* How long to wait before every step after the first, as a share of the
+   usual pause.  A creature quick enough to move twice in a turn should
+   look it - but only the waiting is cut short.  The step itself crosses
+   the square at the same pace as anybody else's, because that is how
+   fast a thing of that size moves; halving it as well made the second
+   step read as a skip rather than a stride. */
 var EXTRA_STEP = 0.5;
 /* A hit knocks the victim back a pixel and flashes it red, so you can see
    the blow land rather than inferring it from the numbers. */
@@ -375,6 +390,14 @@ var BTN_FLASH_MS = 110;
 /* how much of the way home the sliding map travels each frame, and how
    many squares from the edge the player has to be to count as on screen */
 var CAM_CHASE = 0.25, CAM_EDGE = 2;
+/* Walking about, the view follows you rather than jumping to you.  It
+   closes this share of the distance each frame, which is a glide that
+   also rounds off a corner: the view is still coming out of the last
+   square when you start into the next, so it cuts across instead of
+   turning on the spot.  It never falls further behind than WALK_LAG_MAX,
+   and with something hostile in sight it does not lag at all - in a
+   fight the picture has to say exactly where you are. */
+var WALK_CHASE = 0.22, WALK_LAG_MAX = 1.4, WALK_LAG_SNAP = 0.02;
 /* and never more than this much of a tile in a single frame */
 var CAM_MAX_STEP = 0.6;
 /* How long an auto-walk takes over one square.  A turn is normally
@@ -557,7 +580,10 @@ var WITCH_SPIDER_LIFE = 60;
    a moment, goes in a flash, and comes back in another one - so a thing
    that vanishes is something you watched vanish rather than something
    that was suddenly elsewhere. */
-var WARP_SHAKE = 300, WARP_FLASH = 120;
+/* Halved, both parts: the whole jump is 210ms rather than 420.  It is
+   watched every time a teleport trap goes off and it was long enough to
+   feel like waiting rather than like something happening. */
+var WARP_SHAKE = 150, WARP_FLASH = 60;
 /* how often the shiver picks a new pixel to sit on - small, so it reads
    as a vibration rather than a wobble */
 var WARP_SHAKE_STEP = 16;
@@ -605,10 +631,16 @@ var STRAY_BARREL_DEPTH = 2, STRAY_BARREL_PCT = 55, STRAY_BARREL_MAX = 3;
    Barrels are not in the list - they have a fuse of their own - and
    neither is anything made of stone or bone. */
 var BURNS = { table: 'table', chair: 'chair', moss: 'moss', moss_b: 'moss',
-              moss2: 'moss', moss3: 'moss', moss4: 'moss' };
-var BURNS_PLURAL = { table: 'tables', chair: 'chairs', rug: 'rugs', moss: 'moss' };
+              moss2: 'moss', moss3: 'moss', moss4: 'moss', web: 'web' };
+var BURNS_PLURAL = { table: 'tables', chair: 'chairs', rug: 'rugs', moss: 'moss',
+                     web: 'webs' };
 /* the order to name them in when several go at once */
-var BURNS_ORDER = ['table', 'chair', 'rug', 'moss'];
+var BURNS_ORDER = ['table', 'chair', 'rug', 'moss', 'web'];
+/* Web is the one thing fire jumps to on its own.  Everything else has to
+   be standing in the flame; a patch of web catches from the square
+   beside it and is gone in a turn or two, so a fire in a nest of it runs
+   right through the lot. */
+var WEB_BURN_MIN = 2, WEB_BURN_MAX = 3;
 /* What somebody put in a room, as against what the room is made of.  A
    room chosen to be something in particular clears the first and leaves
    the second: a stone kerb round a pool and cracked flagstones round a
@@ -641,9 +673,28 @@ var WEAKNESS_MULT = 2;
 var FIREBALL_EVERY = 3, FIREBALL_RANGE = 7, FIREBALL_DAMAGE = [3, 5];
 /* The web spinner: how often it can spit, how far the web carries, how
    long it holds you, and how long a patch of it lies on the floor. */
-var WEB_EVERY = 2, WEB_RANGE = 6;
+/* The web spinner works to a round of five turns, in two parts.
+
+   The first two turns it spits, and does nothing else with them.  Then
+   it has three turns to close with you: it walks and it bites, an
+   ordinary turn at a time.  If it cannot be on you inside those three -
+   asked once, at the top of them - it spends the first on one more web
+   and forfeits the other two, because there is nothing else it can do to
+   somebody it cannot reach. */
+var WEB_SPIT_TURNS = 2, WEB_RUSH_TURNS = 3, WEB_RANGE = 6;
+/* A spinner does not wander the floor.  It sits in the corner of a room
+   in a nest of its own web, three or four squares of it spreading out
+   from the angle of the walls - so you meet the web before you meet the
+   thing that made it.  A nest is spun rather than spat, and does not rot
+   the way a shot patch does. */
+var SPIN_NEST_PCT = 70, NEST_MIN = 3, NEST_MAX = 4;
+var WEB_LIFE_NEST = -1;
+/* Turns you actually lose, whether it was spat over you or you walked
+   into a patch lying on the floor.  It used to be a flat one for the
+   floor, which cost nothing at all: your counters are wound down in the
+   upkeep that runs at the end of the very turn the web caught you, so a
+   hold of one was gone before you had a turn to lose.  See stickPlayer. */
 var WEB_HOLD_MIN = 1, WEB_HOLD_MAX = 2;
-var WEB_FLOOR_HOLD = 1;
 var WEB_LIFE = 40;
 var DOUSED_TURNS = 12;
 /* holy water, thrown at something that cannot bear it */
@@ -954,7 +1005,11 @@ var RINGS = [
      are carrying them, which is the whole of what they do - so they hold
      no charges and there is nothing to wind up. */
   { n: 'battle luck', p: 55, w: 480, s: 'ring_o', worn: 1, charges: 0,
-    txt: 'your blows land better, and keep' },
+    /* Both halves of it, said plainly.  It used to trail off with "and
+       keep", which kept nothing anybody could name: what it means is
+       that the arrows and stones you loose are picked back up far more
+       often (LUCK_RECOVER_PCT). */
+    txt: 'double damage, arrows come back' },
   { n: 'the huntress', p: 55, w: 420, s: 'ring_n', worn: 1, charges: 0,
     txt: 'more chance of finding arrows' }
 ];
@@ -986,24 +1041,36 @@ var RUNES = [
      'w' and never sees it. */
   { n: 'the spider', t: 'b', p: 12, txt: 'it looses web, not arrows' },
   /* --- worn --- */
-  { n: 'warding', t: 'g', p: 10, txt: 'it turns a blow aside (+1)' },
-  { n: 'thorns', t: 'g', p: 7, txt: 'it bites your attacker' },
-  { n: 'blight', t: 'g', p: 7, txt: 'its touch poisons attackers' },
-  { n: 'rime', t: 'g', p: 7, txt: 'its touch freezes attackers' },
+  { n: 'warding', t: 'g', p: 10, txt: 'it turns a blow aside (+1)',
+    eff: 'armor turns blows aside (+1)' },
+  { n: 'thorns', t: 'g', p: 7, txt: 'it bites your attacker',
+    eff: 'armor bites your attacker' },
+  { n: 'blight', t: 'g', p: 7, txt: 'its touch poisons attackers',
+    eff: 'armor poisons attackers' },
+  { n: 'rime', t: 'g', p: 7, txt: 'its touch freezes attackers',
+    eff: 'armor freezes attackers' },
   { n: 'reflexes', t: 'g', p: 8, latent: 1, txt: 'you slip aside more often' },
-  { n: 'shadow', t: 'g', p: 8, latent: 1, txt: 'it muffles your step' },
-  { n: 'insight', t: 'g', p: 7, latent: 1, txt: 'it sharpens the eye (+2 wis)' },
+  { n: 'shadow', t: 'g', p: 8, latent: 1, txt: 'it muffles your step',
+    eff: 'armor muffles your step' },
+  { n: 'insight', t: 'g', p: 7, latent: 1, txt: 'it sharpens the eye (+2 wis)',
+    eff: 'armor sharpens the eye (+2)' },
   { n: 'vigour', t: 'g', p: 7, latent: 1, txt: 'wounds close faster' },
-  { n: 'burden', t: 'g', p: 6, bad: 1, txt: 'it drags at every step' },
+  { n: 'burden', t: 'g', p: 6, bad: 1, txt: 'it drags at every step',
+    eff: 'armor drags at every step' },
   { n: 'thunder', t: 'g', p: 7, latent: 1,
-    txt: 'it answers every third blow' },
+    txt: 'it answers every third blow', eff: 'armor answers every 3rd blow' },
   /* Cut into a blade it drives your foe back; cut into armour it throws
      off whoever hit you.  One rune, one name, and it is offered to both
      - two entries sharing a name meant the lookup found only the last of
      them, so a knockback sword described itself as a breastplate. */
-  { n: 'knockback', t: 'wg', p: 8, latent: 1, txt: 'its blow drives things back' },
+  { n: 'knockback', t: 'wg', p: 8, latent: 1, txt: 'its blow drives things back',
+    eff: { w: 'your blows drive things back', g: 'armor throws attackers back' } },
   /* --- head only --- */
-  { n: 'clearwater', t: 'h', p: 10, txt: 'worn wet, it hides you' }
+  { n: 'clearwater', t: 'h', p: 10, txt: 'worn wet, it hides you' },
+  /* Boots and shoes only, which is what the 'f' is for.  Running headlong
+     in a fight is how you go over; in these you never do. */
+  { n: 'sure footed', t: 'f', p: 10, txt: 'you never stumble in them',
+    eff: 'boots: you never stumble' }
 ];
 var RUNE_BY_NAME = {};
 (function () { for (var i = 0; i < RUNES.length; i++) RUNE_BY_NAME[RUNES[i].n] = RUNES[i]; })();
@@ -1031,6 +1098,19 @@ var ROOM_ENTRY = {
               'Do not bring a flame in here.'],
   mint:      ['A mint. Gold glitters behind iron bars.',
               'The lock will want a key.']
+};
+
+/* The same news, said once in a box over the middle of the map so that
+   walking into a room somebody built is an event rather than two more
+   lines scrolling up the side.  One picture each, taken from the sheet
+   like everything else, so a repaint carries. */
+var ROOM_TITLE = {
+  moss: 'A CAVE OF MOSS', nursery: 'A NURSERY', shrine: 'A SHRINE',
+  alchemist: "AN ALCHEMIST'S CELL", powder: 'A POWDER STORE', mint: 'A MINT'
+};
+var ROOM_ICON = {
+  moss: 'moss', nursery: 'mk_z', shrine: 'holy',
+  alchemist: 'pot_g', powder: 'barrel', mint: 'gold'
 };
 
 var TILE_INFO = {};
@@ -1163,9 +1243,16 @@ var MONS = [
      either.  It needs a claw for its real trick to work. */
   { c: 'A', n: 'aquator', swim: 1, lv: 5, xp: 20, ar: 2, d: [[1, 6]], mean: 1, sp: 'rust' },
   { c: 'B', n: 'bat', swim: 1, lv: 1, xp: 2, ar: 3, d: [[1, 4]], fly: 1, err: 1, nodrop: 1, hpMul: 0.85 , dmgMul: 0.9, dark: 1 },
-  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]] },
+  /* sure: four legs and no clumsiness in them.  Everything else that
+     runs headlong in a fight can go over; this one cannot. */
+  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]], sure: 1 },
   { c: 'D', n: 'dragon', smart: 1, lv: 10, xp: 5000, ar: -1, d: [[1, 8], [1, 8], [3, 10]], mean: 1, sp: 'flame' },
-  { c: 'E', n: 'spider', lv: 1, xp: 3, ar: 7, d: [[1, 6]], mean: 1 , dmgMul: 0.9 },
+  /* weaver: it made the web, or it is at home in one.  A spider walks
+     its own silk without sticking to it, and it does not tear it up on
+     the way through either - so a web spinner can fight from inside the
+     mess it has made of the floor. */
+  { c: 'E', n: 'spider', lv: 1, xp: 3, ar: 7, d: [[1, 6]], mean: 1 , dmgMul: 0.9,
+    weaver: 1 },
   { c: 'F', n: 'venus flytrap', swim: 1, lv: 8, xp: 80, ar: 3, d: [[1, 1]], mean: 1, sp: 'hold', still: 1 },
   { c: 'G', n: 'griffin', swim: 1, lv: 13, xp: 2000, ar: 2, d: [[4, 3], [3, 5]], mean: 1, fly: 1, regen: 1 },
   { c: 'H', n: 'hobgoblin', smart: 1, lv: 2, xp: 5, ar: 5, d: [[1, 6]], mean: 1 },
@@ -1207,7 +1294,8 @@ var MONS = [
      closing, and what it does not stick to you it leaves on the floor
      for you to walk into later. */
   { c: 'w', n: 'web spinner', lv: 1, xp: 6, ar: 8, d: [[1, 4]],
-    hpMul: 0.75, dmgMul: 0.9, sp: 'web', minDepth: 2 },
+    hpMul: 0.75, dmgMul: 0.9, sp: 'web', minDepth: 2, weaver: 1,
+    spitTurns: WEB_SPIT_TURNS, rushTurns: WEB_RUSH_TURNS },
   /* A witch keeps her distance and never closes: no melee at all, and
      every trick she has works across a room.  Fire goes through her and
      frost does not touch her. */
@@ -1322,7 +1410,9 @@ var HINTS = [
   'You cannot strike your own. Walk into an ally and the two of you change places.',
   "A monster with ? above it has not seen you. The ! symbol means it's surprised. Both cases allow for a sneak bonus attack!",
   'A cursed thing you cannot take off may carry a curse of its own. The shrine lifts both at once, and so does a scroll of remove curse.',
-  'It might be worth it to return to an upper floor to use a moss cave or healing water if your character is low on HP.'
+  'It might be worth it to return to an upper floor to use a moss cave or healing water if your character is low on HP.',
+  'Playing on a computer? Use the keys instead of the mouse for a more authentic retro experience.',
+  'A centaur never stumbles.'
 ];
 
 var MON_BY_C = {};
@@ -1420,7 +1510,7 @@ function newLevelObj(depth) {
     roomAt: new Int8Array(MAP_W * MAP_H).fill(-1),
     rooms: [], items: [], mons: [], traps: [], decor: {},
     locks: {}, doorMat: {}, temp: {}, corpses: [], clouds: [], sealed: {},
-    barrels: {}, fuses: {}, burning: {}, webs: {}, showAt: {}, arch: {}, cornerKept: {}, caged: {}, under: {}, bspan: {}, keyHomes: {}, rugId: {}, rugs: 0,
+    barrels: {}, fuses: {}, burning: {}, webs: {}, webOver: {}, showAt: {}, arch: {}, cornerKept: {}, caged: {}, under: {}, bspan: {}, keyHomes: {}, rugId: {}, rugs: 0,
     darkHall: {}, shrine: null, alchemy: null, special: null,
     wanderLeft: WANDER_BUDGET + ((depth / WANDER_BUDGET_PER_DEPTH) | 0),
     stair: { x: 0, y: 0 }
@@ -2628,6 +2718,34 @@ function tidyRugs(L) {
   return lifted;
 }
 function isRugName(d) { return !!d && String(d).indexOf('rug_') === 0; }
+
+/* ------------------------------------------- dry ground at the stairs
+   A staircase is cut into the flagstones and is always dry, so the water
+   stops short of it: any pool square touching one is pulled back to bare
+   floor.  The bank then forms clear of the steps instead of lapping at
+   them, which is what a flight of stairs going down into a pool ought to
+   look like from the dry side.
+
+   A bridge is left where it is - it is a plank you walk over, and it is
+   dry too.  This runs after the stairs have been placed and moved, since
+   both happen once the floor is already furnished. */
+function dryAroundStairs(L) {
+  var both = [L.stair, L.up], w, d, n = 0;
+  for (w = 0; w < both.length; w++) {
+    var st = both[w];
+    if (!st) continue;
+    for (d = 0; d < DIR4.length; d++) {
+      var x = st.x + DIR4[d][0], y = st.y + DIR4[d][1];
+      if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+      var j = y * MAP_W + x;
+      if (L.tiles[j] !== WATER && L.tiles[j] !== HOLY) continue;
+      L.tiles[j] = FLOOR;
+      if (L.under) delete L.under[j];
+      n++;
+    }
+  }
+  return n;
+}
 
 function everywhereReachable(L) {
   var T = L.tiles, n = T.length, i, from = -1;
@@ -4242,6 +4360,7 @@ function freshG() {
     ask: null,
     perkPick: null, choice: null, pause: null, look: null,
     titleMenu: null, walk: null, ctx: null, drag: null, waiting: null,
+    roomBox: null, saidWaterCurse: 0, slot: null,
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
@@ -4319,14 +4438,23 @@ function shownAC(it) {
   return numbersKnown(it) ? gearAC(it) : (itemDef(it).a || 0);
 }
 
+/* Which pool a piece of gear draws its rune from.  Everything worn asks
+   with 'g'; a hood or a cap adds 'h' for the one rune only ever cut into
+   headwear, and boots add 'f' for the one only ever cut into footwear.
+   Asked in two places - what the dungeon deals out, and what a scroll of
+   enchantment puts in - and they must agree. */
+function gearRuneKind(it) {
+  if (!it) return 'g';
+  if (it.t === 'head') return 'gh';
+  if (it.t === 'feet') return 'gf';
+  return 'g';
+}
 function enchantGear(it, def) {
   if (def.bad) { layCurse(it); return; }
   var r = rnd(100);
   if (r < 16) { layCurse(it); it.ap = -(rnd(3) + 1); }
   else if (r < 26) { it.ap = rnd(2) + 1; }
-  /* headwear draws from the worn runes and from the one that is only
-     ever cut into a hood or a cap */
-  addRune(it, it.t === 'head' ? 'gh' : 'g', 18);
+  addRune(it, gearRuneKind(it), 18);
   if (it.br === 'clearwater') it.wet = 1;    /* found with a charge in it */
 }
 
@@ -4929,7 +5057,7 @@ function newPlayer() {
     amulet: 0,
     blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
     seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
-    unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, webbed: 0,
+    unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
     runSteps: 0, seer: 0, warp: null,
     statWas: null, statLit: {},
     regenCtr: 0
@@ -5255,6 +5383,15 @@ function curseDef(id) {
   for (var i = 0; i < CURSES.length; i++) if (CURSES[i].id === id) return CURSES[i];
   return null;
 }
+/* Which of the things you are wearing is carrying a given curse, said
+   the way you would say it out loud.  A curse with nothing to point at
+   is what made one look like a bug in the game: you take five damage
+   for standing in water and there is no cursed object anywhere to be
+   seen, because the panel never named the one you had on. */
+function curseSource(id) {
+  var it = curseOn(id);
+  return it ? shortItem(it) : '';
+}
 /* Every curse you are carrying, for the panel and for the shrine. */
 function cursesOnYou() {
   var out = [], k;
@@ -5452,6 +5589,14 @@ function soakPlayer(why) {
   markHurt(P, P.x, P.y - 1);
   if (typeof splashDrops === 'function') splashDrops(P.x, P.y, WATER_BURN_COL);
   msgTrap(why || 'The water burns you.', 'R', CURSE_WATER_DAMAGE + ' burn', 'R');
+  /* The first time it happens, say outright what is doing it and what
+     you have got on that is doing it.  Damage out of a clear sky reads
+     as a fault in the game rather than as a curse. */
+  if (!G.saidWaterCurse) {
+    G.saidWaterCurse = 1;
+    var src = curseSource('water');
+    msg('Your ' + (src || 'gear') + ' is cursed: water burns you.', 'R');
+  }
   if (P.hp <= 0) die('water');
   return CURSE_WATER_DAMAGE;
 }
@@ -5469,8 +5614,36 @@ function squibbed(what) {
   return true;
 }
 
+/* What a rune is called in the EFFECTS list.
+
+   A rune's own `txt` is written to be read beside the thing it is cut
+   into - "it bites your attacker" makes perfect sense under the name of
+   a breastplate.  In the list at the foot of the pack there is nothing
+   for "it" to point at, and a line reading "it bites your attacker" is
+   as easily read as something biting *you*.  So the worn ones name the
+   armour, and knockback - which is offered to blades as well - says
+   whichever of the two this copy is. */
+function runeEffect(it, rn) {
+  if (!rn.eff) return rn.txt;
+  if (typeof rn.eff === 'string') return rn.eff;
+  return rn.eff[it && it.t === 'weapon' ? 'w' : 'g'] || rn.txt;
+}
 function playerEffects() {
   var out = [], i;
+  /* Curses first, before anything else.  The pack shows two of these
+     lines and counts the rest, so whatever is at the bottom of the list
+     might as well not be written: a curse used to sit below the perks
+     and the runes and was never once seen.  It is the only entry here
+     that is quietly costing you hit points, so it goes at the top and
+     it names the thing it came in on. */
+  var cz0 = cursesOnYou();
+  for (i = 0; i < cz0.length; i++) {
+    var cd0 = curseDef(cz0[i]);
+    if (!cd0) continue;
+    out.push(['CURSED: ' + cd0.txt, 'R']);
+    var src = curseSource(cz0[i]);
+    if (src) out.push(['from your ' + src, 'R']);
+  }
   if (G.hungerState === 1) out.push(['hungry: healing halved', 'O']);
   if (G.hungerState === 2) out.push(['weak: no healing', 'O']);
   if (G.hungerState === 3) out.push(['starving: losing hp', 'R']);
@@ -5489,8 +5662,10 @@ function playerEffects() {
   if (darkAt(P.x, P.y)) out.push([nightEyes() ? 'in the dark, and seeing'
                                               : 'in the dark: one square', nightEyes() ? 'c' : 'p']);
   if (playerRunning()) out.push(['running: you may stumble', 'O']);
-  if (P.confuseTouch) out.push(['hands glow red: next hit', 'y']);
-  if (P.confuseTouch) out.push(['  confuses a monster', 'y']);
+  /* One line.  It was two, and the panel shows a few and counts the
+     rest, so the half that said what the red hands are for was the half
+     that fell off the bottom. */
+  if (P.confuseTouch) out.push(['hands glow red: next hit confuses', 'y']);
   if (P.amulet) out.push(['carrying the Amulet', 'y']);
 
   var pk = perkList();
@@ -5505,15 +5680,10 @@ function playerEffects() {
     var d = itemDef(eq[i]);
     if (d && d.prop && PROP_TEXT[d.prop]) out.push(PROP_TEXT[d.prop].slice());
     var rn = activeRune(eq[i]);
-    if (rn) out.push([rn.txt, rn.bad ? 'R' : 'c']);
+    if (rn) out.push([runeEffect(eq[i], rn), rn.bad ? 'R' : 'c']);
     else if (eq[i].br && !eq[i].brKnown && effWis() >= 12)
       out.push(['something sleeps in it', 'P']);
     if (eq[i].protected) out.push(['armor is protected', 'c']);
-  }
-  var cz = cursesOnYou();
-  for (i = 0; i < cz.length; i++) {
-    var cd = curseDef(cz[i]);
-    if (cd) out.push(['curse of ' + cd.n + ': ' + cd.txt, 'R']);
   }
   for (i = 0; i < eq.length; i++)
     if (eq[i].cursed) out.push(['cursed: ' + shortItem(eq[i]), 'R']);
@@ -5685,6 +5855,7 @@ function packPlayer() {
 function packRun() {
   var g = {}, k;
   var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1, waiting: 1,
+               roomBox: 1,
                box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
@@ -5739,8 +5910,16 @@ function writeStore(o) {
 function saveInto(i) {
   var store = saveStore();
   if (!store) return 'This browser will not let the game save.';
+  /* The slot this run belongs to, from the moment it is first put in
+     one.  Set before the run is packed so the save carries it: a run
+     loaded back out of slot two knows it is slot two, and SAVE AND QUIT
+     never asks again. */
+  var was = G.slot;
+  G.slot = i;
   store.slots[i] = packRun();
-  return writeStore(store) ? null : 'There is no room left to save.';
+  var err = writeStore(store) ? null : 'There is no room left to save.';
+  if (err) G.slot = was;
+  return err;
 }
 function loadFrom(i) {
   var store = saveStore();
@@ -5749,6 +5928,7 @@ function loadFrom(i) {
   if (!s) return 'That slot is empty.';
   if (s.v !== SAVE_VERSION) return 'That save is from an older game.';
   unpackRun(s);
+  G.slot = i;                 /* whichever slot it came out of, it lives in */
   return null;
 }
 function slotLabel(i) {
@@ -5932,6 +6112,7 @@ function mkMonster(c, depth, x, y) {
     conf: 0, hasted: 0, slowed: 0, cancel: 0, disc: 0, animT: 0, wade: 0,
     blind: 0, dmgBonus: 0, seek: null, mark: null, blindTo: 0,
     held: 0, stuck: 0, webbed: 0, burn: 0, cast: 0, doused: 0, runSteps: 0,
+    gather: 0, rushing: 0, nest: 0,
     /* A number of its own, so one creature can point at another across a
        save: a reference would be written out as a second copy of the
        creature and come back as somebody else. */
@@ -6123,6 +6304,84 @@ function keyCount() {
   var n = 0;
   for (var i = 0; i < P.keys.length; i++) n += P.keys[i];
   return n;
+}
+
+/* The squares of a room with the most stone about them.  A corner of a
+   rectangular room has five of its eight neighbours in the wall - three
+   along one side, three along the other, one shared - so five is what a
+   corner means.  Worked from the floor list rather than from a
+   rectangle, because half the rooms down here are not rectangles. */
+function roomCorners(Lv, ri) {
+  var r = Lv.rooms[ri];
+  if (!r || r.gone || !r.floors) return [];
+  var five = [], four = [], i, d;
+  for (i = 0; i < r.floors.length; i++) {
+    var x = r.floors[i][0], y = r.floors[i][1], j = y * MAP_W + x;
+    if (Lv.tiles[j] !== FLOOR || Lv.decor[j]) continue;
+    if (Lv.roomAt[j] !== ri) continue;
+    var n = 0;
+    for (d = 0; d < DIR8.length; d++) {
+      var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) { n++; continue; }
+      var t = Lv.tiles[ny * MAP_W + nx];
+      if (t === WALL || t === ROCK || t === SDOOR) n++;
+    }
+    if (n >= 5) five.push([x, y]);
+    else if (n === 4) four.push([x, y]);
+  }
+  return five.length ? five : four;
+}
+/* Spin a nest out from one square, along the floor of its own room.  The
+   web is permanent - it was spun before you got here - and it will not
+   go over a rug or a cracked flagstone, which is why the count is a
+   target rather than a promise. */
+function spinNest(Lv, ri, cx, cy, want) {
+  var cells = [[cx, cy]], seen = {}, qi = 0, laid = 0, d;
+  seen[cy * MAP_W + cx] = 1;
+  laid += layWeb(cx, cy, 0, 0, WEB_LIFE_NEST);
+  while (laid < want && qi < cells.length) {
+    var c = cells[qi++];
+    var dirs = DIR4.slice();
+    shuffle(dirs);
+    for (d = 0; d < dirs.length && laid < want; d++) {
+      var nx = c[0] + dirs[d][0], ny = c[1] + dirs[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var j = ny * MAP_W + nx;
+      if (seen[j]) continue;
+      seen[j] = 1;
+      if (Lv.roomAt[j] !== ri || Lv.tiles[j] !== FLOOR) continue;
+      if (nx === Lv.stair.x && ny === Lv.stair.y) continue;
+      if (Lv.up && nx === Lv.up.x && ny === Lv.up.y) continue;
+      cells.push([nx, ny]);
+      laid += layWeb(nx, ny, 0, 0, WEB_LIFE_NEST);
+    }
+  }
+  return laid;
+}
+/* Every spinner the floor rolled, moved into the corner of the room it
+   was dropped in and given a nest to sit in.  Most of them: one in
+   several is out on the floor, so the web is a warning rather than a
+   rule. */
+function spinNests(Lv) {
+  var made = 0, i;
+  for (i = 0; i < Lv.mons.length; i++) {
+    var m = Lv.mons[i];
+    if (!m.def || m.def.sp !== 'web') continue;
+    if (rnd(100) >= SPIN_NEST_PCT) continue;
+    var ri = Lv.roomAt[m.y * MAP_W + m.x];
+    if (ri < 0) continue;
+    var corners = roomCorners(Lv, ri);
+    if (!corners.length) continue;
+    var c = corners[rnd(corners.length)];
+    if (monAt(Lv, c[0], c[1]) && monAt(Lv, c[0], c[1]) !== m) continue;
+    if (c[0] === Lv.stair.x && c[1] === Lv.stair.y) continue;
+    m.x = c[0]; m.y = c[1];
+    m.wx = c[0]; m.wy = c[1]; m.home = ri;
+    if (!spinNest(Lv, ri, c[0], c[1], NEST_MIN + rnd(NEST_MAX - NEST_MIN + 1))) continue;
+    m.nest = 1;                    /* this one lives here; it did not wander in */
+    made++;
+  }
+  return made;
 }
 
 function populate(Lv) {
@@ -6513,6 +6772,11 @@ function decorHides(x, y, Lv) {
   var d = (Lv || L).decor[y * MAP_W + x];
   if (!d) return false;
   if (isRug(d)) return false;
+  /* Web lies flat on the flagstones and the drawing puts what is on the
+     square over the top of it, exactly as it does with moss - so a thing
+     lying in a spinner's nest is in plain sight, and a nest spun round
+     one is a larder rather than a hiding place. */
+  if (d === 'web') return false;
   return !isMoss(d) && !isCrack(d);
 }
 function dropNear(x, y, it) {
@@ -6778,6 +7042,8 @@ function stepIsFleeing(dx, dy) {
 function playerStumbles(dx, dy) {
   if (!playerRunning()) return false;
   if (!stepIsFleeing(dx, dy)) return false;
+  /* sure footed: whatever is on your feet does not let you go over */
+  if (hasGearRune('sure footed')) return false;
   if (rnd(100) >= stumbleChance(effDex(), 0)) return false;
   P.runSteps = 0;
   msg('You are running too fast and stumble.', 'O');
@@ -6792,6 +7058,8 @@ function monStumbles(m) {
      fight, he is leaving - a scripted flight with a patience of its own -
      and losing turns out of it at random only makes it flaky. */
   if (m.bolted) return false;
+  /* four legs, or simply better balance than the rest of them */
+  if (m.def.sure) return false;
   if (!monRunning(m)) return false;
   /* A creature has no dexterity of its own, so its armour class stands
      in for one: the nimble things are the hard ones to hit. */
@@ -7134,6 +7402,7 @@ function enterLevel(depth, how) {
   setDims(L.mw, L.mh);   /* the globals must match the floor we kept */
   P.x = start.x; P.y = start.y;     /* set first: keys are placed by reach */
   populate(L);
+  spinNests(L);
 
   /* if something landed on the entry square, move within the same region
      so we never start on the wrong side of a locked door */
@@ -7205,8 +7474,17 @@ function enterLevel(depth, how) {
     var uj = L.up.y * MAP_W + L.up.x;
     delete L.decor[uj];
     if (L.barrels) delete L.barrels[uj];
-    if (L.rugId) delete L.rugId[uj];
   }
+  /* And a rug that has lost a square to a staircase is rolled up whole.
+     The square under the stairs used to be quietly struck off the rug
+     instead, which left the rest of it lying there with a hole in the
+     middle and the stairs standing in the hole - a staircase laid on a
+     rug, as far as anybody looking at it could tell.  The stairs are
+     placed and moved about after the floor is furnished, so this has to
+     be the last word on it rather than the sweep the generator ran. */
+  tidyRugs(L);
+  /* and the pool stops short of the steps, which are dry */
+  dryAroundStairs(L);
   /* Nothing stands on a barrel, so no barrel may wall a way through.
      This waits until the end rather than running with the rest of the
      generator because the floor is not finished until the staircase back
@@ -7458,7 +7736,10 @@ function playerAttack(m) {
     if (crit) dm *= CRIT_MULT;
     m.hp -= dm;
     markHurt(m, P.x, P.y);
-    var fx = dm + (extra ? ' sneak' : crit ? ' telling' : ' damage');
+    /* "telling" is what a blow that lands well has always been called,
+       and nobody reading the bar knew what it meant.  What actually
+       happens is that the damage is doubled, so that is what it says. */
+    var fx = dm + (extra ? ' sneak' : crit ? ' double' : ' damage');
     if (m.hp <= 0) { killMonster(m, true, fx); return; }
     /* An executioner finishes what is already almost finished. */
     if (hasPerk('executioner') && m.hp * PERK_EXECUTE_FRAC <= m.mhp &&
@@ -7979,10 +8260,7 @@ function knockBack(m, fromx, fromy) {
   if (!walkable(nx, ny) || monAt(L, nx, ny)) return 0;
   if (nx === P.x && ny === P.y) return 0;
   if (!m.anim) m.anim = [];
-  /* the fifth number is when it starts, the sixth how long it takes:
-     a hurried step is over in half the time */
-  m.anim.push([m.x, m.y, nx, ny, beatNow(),
-               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
+  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
   m.x = nx; m.y = ny;
   m.held = 0;
   if (P.heldBy === m) { P.held = 0; P.heldBy = null; }
@@ -8120,6 +8398,36 @@ function monstersMove() {
       var settle = m.hurt.t + HURT_MS + HURT_HOLD - beatNow();
       if (settle > 0) beatWait(settle);
     }
+    /* A creature that works to a round rather than to a turn.  Two turns
+       of spitting, then three turns to close with you - one ordinary
+       turn at a time, walking and biting - or, if it cannot be on you
+       inside those three, one more web and the other two forfeit.
+
+       The reach is asked once, at the top of the three, and it settles
+       the whole of the rest of the round.  Asking it again each turn
+       would let a spinner spit, take a step, and spit again. */
+    var spitT = m.def.spitTurns || 0, rushT = m.def.rushTurns || 0;
+    if (spitT + rushT && m.state === 2 && !m.ally) {
+      var round = spitT + rushT;
+      var phase = m.gather || 0;
+      m.gather = (phase + 1) % round;
+      if (phase < spitT) {
+        monWeb(m);                           /* a web, and nothing else */
+      } else {
+        if (phase === spitT) m.rushing = monCanCloseIn(m, rushT) ? 1 : 0;
+        if (m.rushing) monOneMove(m);
+        else if (phase === spitT) monWeb(m);
+        /* and otherwise it stands there: the two turns it gave up when
+           it chose the web over the walk */
+      }
+      if (G.dead) return;
+      watched = watched || canSeeMon(m);
+      noteSight(m);
+      if (watched) beatWait(BEAT_ACT);
+      continue;
+    }
+    if (spitT + rushT) { m.gather = 0; m.rushing = 0; }
+
     monOneMove(m);
     if (G.dead) return;
     watched = watched || canSeeMon(m);
@@ -8132,9 +8440,7 @@ function monstersMove() {
          time crossing the square - so two steps read as one hurried
          creature rather than as two ordinary ones. */
       if (watched) beatWait(Math.round(BEAT_STEP * EXTRA_STEP));
-      m.quickStep = 1;
       monOneMove(m);
-      m.quickStep = 0;
       if (G.dead) return;
       watched = watched || canSeeMon(m);
     }
@@ -8144,6 +8450,34 @@ function monstersMove() {
 }
 
 function mdist(m) { return Math.abs(m.x - P.x) + Math.abs(m.y - P.y); }
+
+/* Could it get its teeth into you inside this many moves?  A breadth
+   first search three squares deep over ground it could actually stand
+   on, looking for a square beside you - blows are orthogonal, so beside
+   is what matters.  Three deep costs nothing; it is asked once a rush.
+   Straight line distance will not do: a spinner on the far side of a
+   wall is two squares away and cannot touch you. */
+function monCanCloseIn(m, steps) {
+  if (mdist(m) <= 1) return true;
+  var seen = {}, q = [[m.x, m.y, 0]], qi = 0, d;
+  seen[m.y * MAP_W + m.x] = 1;
+  while (qi < q.length) {
+    var c = q[qi++];
+    if (c[2] >= steps) continue;
+    for (d = 0; d < DIR4.length; d++) {
+      var nx = c[0] + DIR4[d][0], ny = c[1] + DIR4[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var k = ny * MAP_W + nx;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      if (nx === P.x && ny === P.y) return true;
+      if (!walkable(nx, ny) || barrelAt(nx, ny)) continue;
+      if (Math.abs(nx - P.x) + Math.abs(ny - P.y) <= 1) return true;
+      q.push([nx, ny, c[2] + 1]);
+    }
+  }
+  return false;
+}
 
 /* can this monster make out the player from where it stands? */
 function monSeesPlayer(m) {
@@ -8315,13 +8649,24 @@ function allyMove(m) {
 function webAt(x, y) {
   return !!(L.webs && L.webs[y * MAP_W + x]);
 }
-function layWeb(x, y, at) {
+function layWeb(x, y, at, over, life) {
   if (!walkable(x, y)) return 0;
-  if (L.decor[y * MAP_W + x] && L.decor[y * MAP_W + x] !== 'web') return 0;
+  var k0 = y * MAP_W + x, had = L.decor[k0];
+  if (had && had !== 'web') {
+    /* Ordinarily web will not stick over a cracked flagstone or a rug.
+       Web spat over the square you are standing on is the exception: the
+       whole point of it is that you can see what has hold of you, and a
+       patch of moss must not swallow it.  What it covers is remembered
+       and laid back down when the web rots away. */
+    if (!over) return 0;
+    if (!L.webOver) L.webOver = {};
+    if (L.webOver[k0] === undefined) L.webOver[k0] = had;
+  }
   if (!L.webs) L.webs = {};
   var k = y * MAP_W + x;
-  if (L.webs[k]) { L.webs[k] = WEB_LIFE; return 0; }
-  L.webs[k] = WEB_LIFE;
+  var span = (life === undefined) ? WEB_LIFE : life;
+  if (L.webs[k]) { L.webs[k] = span; return 0; }
+  L.webs[k] = span;
   L.decor[k] = 'web';
   /* and the moment it is there to see.  A creature's turn is worked out
      in one go and played back afterwards, so web still in the air must
@@ -8333,36 +8678,67 @@ function clearWeb(x, y) {
   var k = y * MAP_W + x;
   if (!L.webs || !L.webs[k]) return;
   delete L.webs[k];
-  if (L.decor[k] === 'web') delete L.decor[k];
+  if (L.decor[k] !== 'web') return;
+  if (L.webOver && L.webOver[k] !== undefined) {
+    L.decor[k] = L.webOver[k];              /* what the web was laid over */
+    delete L.webOver[k];
+    return;
+  }
+  delete L.decor[k];
 }
-/* Somebody has walked into one.  Returns true if they are stuck. */
-function webCatches(x, y) {
+/* Somebody has walked into one.  Returns true if they are stuck.
+   A weaver is not caught and does not tear the web up on its way
+   through: a spider walks its own silk. */
+function webCatches(x, y, who) {
+  if (who && who.def && who.def.weaver) return false;
   if (!webAt(x, y)) return false;
   clearWeb(x, y);
   return true;
+}
+/* How long web holds anything: one turn or two, and the same however it
+   was got at you. */
+function webHold() {
+  return WEB_HOLD_MIN + rnd(WEB_HOLD_MAX - WEB_HOLD_MIN + 1);
+}
+/* Stick the player for that many turns, and mean it.
+
+   A monster's counter is read at the top of its own turn, so `stuck = 1`
+   costs it exactly one turn.  The player's counters are wound down in
+   the upkeep at the end of the turn the web caught him - the same turn -
+   so setting his to 1 cost him nothing whatever, which is why walking
+   into web did not stop you.  One is added here to pay for that wind
+   down; by the time anything is drawn, the figure on the status line is
+   the number of turns that are really left. */
+function stickPlayer(turns) {
+  P.frozen += turns + 1;
+  P.webbed = Math.max(P.webbed || 0, turns + 1);
+  return turns;
 }
 /* the webs on the floor grow old and rot away */
 function ageWebs() {
   if (!L.webs) return;
   for (var k in L.webs) {
+    /* a nest is spun, not spat: it was there before you came and it will
+       be there when you leave */
+    if (L.webs[k] < 0) continue;
     if (--L.webs[k] > 0) continue;
     var x = (k | 0) % MAP_W, y = ((k | 0) / MAP_W) | 0;
     clearWeb(x, y);
   }
 }
 
-/* A web spinner does not close with you.  It spits, every other turn,
-   and what misses lands on the floor and waits. */
+/* One web, spat across the room.  It is asked for by the creature's own
+   turn rather than by the general ranged pass, because a spinner only
+   spits when it cannot get to you - see monBurst. */
 function monWeb(m) {
   if (m.cancel || m.def.sp !== 'web') return false;
-  if (m.cast > 0) { m.cast--; return false; }
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
-  if (d < 2 || d > WEB_RANGE) return false;
+  /* No minimum range any more.  A spinner standing over you used to be
+     unable to spit at all, so the two gathering turns of its round were
+     spent doing nothing whatever - which is what made it look broken.
+     Web in the face is exactly what it would do. */
+  if (d > WEB_RANGE) return false;
   if (!shotClear(m.x, m.y, P.x, P.y)) return false;
-  /* Counted down at the start of each turn, so the wait is one shorter
-     than the gap: setting it to the gap itself put three turns between
-     shots when two were wanted. */
-  m.cast = WEB_EVERY - 1;
   /* Wait first, then start the flight from that moment: timed from now
      it is over before the frame is drawn, which reads as the web landing
      on you in the same instant the creature spat it. */
@@ -8374,23 +8750,33 @@ function monWeb(m) {
      you - which is what makes it worth watching where you tread. */
   var atGround = rnd(100) < 30;
   if (!atGround && swing(m.lv + 2, playerAC(), 0)) {
-    var hold = WEB_HOLD_MIN + rnd(WEB_HOLD_MAX - WEB_HOLD_MIN + 1);
-    P.frozen += hold; P.webbed = Math.max(P.webbed || 0, hold);
+    /* It lands on the square you are standing on, and web on the square
+       you are standing on holds you.  The patch stays where it fell
+       rather than coming away with you: something has hold of you and
+       you should be able to see what.  A patch you walk into is a
+       different matter - that one comes away on your boots. */
+    layWeb(P.x, P.y, beatNow(), 1);
+    var hold = stickPlayer(webHold());
     msgFight(fightLine('', cap(monShort(m)), ' spits web over you.'),
       'c', 'stuck ' + hold, 'O', m);
     sound('miss');
     return true;
   }
-  /* it lands short, or on purpose, and sticks to the floor */
+  /* It lands short, or on purpose, on the ground between the two of you.
+     Never on the square you are standing on: that is the aimed shot, and
+     a shot that misses must not hold you anyway. */
   var laid = 0, step;
   var dx = Math.sign(P.x - m.x), dy = Math.sign(P.y - m.y);
   for (step = 1; step <= 2; step++) {
-    var wx = P.x - dx * (step - 1), wy = P.y - dy * (step - 1);
+    var wx = P.x - dx * step, wy = P.y - dy * step;
+    if (wx === m.x && wy === m.y) break;      /* not under its own feet */
     laid += layWeb(wx, wy, beatNow());
   }
   if (laid) msgFight(fightLine('', cap(monShort(m)), ' webs the floor.'),
     'c', laid + ' web', 'c', m);
-  else msgFight(fightLine('', cap(monShort(m)), ' spits and misses.'), '6', 'miss', '6', m);
+  /* Not 'miss': a spit that put no web down and a blow that went wide
+     are different things, and in the bar they looked identical. */
+  else msgFight(fightLine('', cap(monShort(m)), ' spits and misses.'), '6', 'no web', '6', m);
   return true;
 }
 
@@ -8606,7 +8992,6 @@ function monRanged(m) {
      just been surprised does not calmly line up a fireball. */
   if (m.surprised) return false;
   if (monWitch(m)) return true;
-  if (monWeb(m)) return true;
   if (monFireball(m)) return true;
   if (m.cancel || m.def.sp !== 'flame') return false;
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
@@ -8998,10 +9383,7 @@ function tryMonStep(m, dx, dy) {
      one start time - so the first was thrown away and the pair replayed
      together after a pause, which looked exactly like teleporting. */
   if (!m.anim) m.anim = [];
-  /* the fifth number is when it starts, the sixth how long it takes:
-     a hurried step is over in half the time */
-  m.anim.push([m.x, m.y, nx, ny, beatNow(),
-               m.quickStep ? Math.round(MOVE_ANIM_MS * EXTRA_STEP) : MOVE_ANIM_MS]);
+  m.anim.push([m.x, m.y, nx, ny, beatNow()]);
   /* And it faces the way it went.  The sprites are painted facing right,
      so this is only ever a mirror, and only for the creatures that have
      a front and a back worth speaking of.  Being shoved is not walking,
@@ -9014,13 +9396,15 @@ function tryMonStep(m, dx, dy) {
      That fire does not care who walks into it afterwards. */
   if (m.burn > 0) dropEmber(m.x, m.y);
   m.x = nx; m.y = ny;
-  if (webCatches(nx, ny)) {
+  if (webCatches(nx, ny, m)) {
     /* Held, not frozen.  They are the same lost turn to the game and
        nothing like the same thing to look at: web is not ice. */
-    m.stuck = (m.stuck || 0) + WEB_FLOOR_HOLD;
-    m.webbed = (m.webbed || 0) + WEB_FLOOR_HOLD;
+    var mhold = webHold();
+    m.stuck = (m.stuck || 0) + mhold;
+    m.webbed = (m.webbed || 0) + mhold;
     if (canSeeMon(m))
-      msgFight(fightLine('', cap(monShort(m)), ' walks into web.'), 'c', 'stuck', 'c', m);
+      msgFight(fightLine('', cap(monShort(m)), ' walks into web.'),
+        'c', 'stuck ' + mhold, 'c', m);
   }
   var mtr = trapAt(nx, ny);
   if (mtr) { monTrap(m, mtr); if (L.mons.indexOf(m) < 0) return true; }
@@ -9153,7 +9537,15 @@ function upkeep() {
     P.unseen--;
     if (P.unseen === 0) msg('You come back into view.', 'y');
   }
-  var burn = hasProp('slow digestion') ? 0 : 1;
+  var burn = 1;
+  /* Wanderer boots: you eat little, not nothing.  Three turns in
+     thirteen cost you nothing, so a ration goes about thirty per cent
+     further - the same arithmetic as the perk below, and its own counter
+     so that having both is worth having both. */
+  if (hasProp('slow digestion')) {
+    P.digCtr = ((P.digCtr || 0) + 1) % SLOW_DIGEST_CYCLE;
+    if (P.digCtr < SLOW_DIGEST_FREE) burn = 0;
+  }
   /* Abstemious: three turns in thirteen cost you nothing, which makes a
      ration go thirty per cent further.  It does not make you proof
      against starving - it just takes longer to get there. */
@@ -9365,6 +9757,25 @@ function catchScenery(c) {
     dropEmber((k | 0) % MAP_W, ((k | 0) / MAP_W) | 0, DECOR_BURN_TURNS);
   }
 }
+/* Fire jumps to web.  Nothing else in the dungeon catches from the
+   square next door - a table has to be standing in the flame - but web
+   is a room full of tinder strung across the floor, and a fire in a nest
+   of it should run through the whole nest rather than sit where it was
+   lit.  Two or three turns each, so it travels about a square a turn. */
+function catchWebNear(x, y) {
+  if (!L.webs) return 0;
+  var d, lit = 0;
+  for (d = 0; d < DIR8.length; d++) {
+    var nx = x + DIR8[d][0], ny = y + DIR8[d][1];
+    if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+    if (!webAt(nx, ny)) continue;
+    var j = ny * MAP_W + nx;
+    if (L.burning && L.burning[j]) continue;      /* already alight */
+    dropEmber(nx, ny, WEB_BURN_MIN + rnd(WEB_BURN_MAX - WEB_BURN_MIN + 1));
+    lit++;
+  }
+  return lit;
+}
 /* and when that fire finally goes out, what it was standing on is gone */
 function burnAway(x, y) {
   var j = y * MAP_W + x;
@@ -9372,6 +9783,10 @@ function burnAway(x, y) {
   delete L.burning[j];
   var what = burnableAt(x, y);
   if (!what) return '';
+  /* Web is held in two places - the decor that is drawn and the patch
+     that catches you - so it goes through its own door, which also puts
+     back whatever it was spat over. */
+  if (what === 'web') { clearWeb(x, y); return what; }
   var id = L.rugId && L.rugId[j];
   if (!id) { delete L.decor[j]; return what; }
   /* A rug is one thing rather than nine, so the first square of it to go
@@ -9427,6 +9842,7 @@ function ageClouds() {
     }
     if (fire && typeof lightBarrel === 'function') lightBarrel(c.x, c.y);
     if (fire) catchScenery(c);
+    if (fire) catchWebNear(c.x, c.y);
     if (kind !== 'mend' && P.x === c.x && P.y === c.y) { if (fire) burn++; else hurt++; }
     if (--c.turns <= 0) {
       L.clouds.splice(i, 1);
@@ -9851,9 +10267,8 @@ function playerMove(dx, dy) {
   P.walkT = Date.now();
   /* web on the floor holds the first thing into it, and comes away */
   if (webCatches(nx, ny)) {
-    P.frozen += WEB_FLOOR_HOLD;
-    P.webbed = Math.max(P.webbed || 0, WEB_FLOOR_HOLD);
-    msgTrap('You walk into a web.', 'c', 'stuck ' + WEB_FLOOR_HOLD, 'O');
+    var whold = stickPlayer(webHold());
+    msgTrap('You walk into a web.', 'c', 'stuck ' + whold, 'O');
   }
   computeVis();
   afterStep();
@@ -9934,6 +10349,12 @@ function noteDarkness() {
   var now = darkAt(P.x, P.y) ? 1 : 0;
   if (now === G.wasDark) return;
   G.wasDark = now;
+  /* Blind is blind.  Walking from a lit room into a pitch dark one is
+     not a thing you notice with your eyes shut, and being told about it
+     is the game telling you something your character cannot know.  The
+     crossing is still recorded, so the line comes at the right moment if
+     your sight is back before you cross again. */
+  if (P.blind) return;
   /* Coming out of the dark is only worth remarking on if the dark was
      costing you something.  Night eyes make it a change of scenery. */
   if (!now) {
@@ -9949,15 +10370,43 @@ function noteDarkness() {
 /* The first time you set foot in a room somebody built on purpose, the
    game says what sort of room it is.  Once only, and only for the rooms
    that are worth remarking on. */
-function announceRoom() {
+/* Which room is being walked into.  Ordinarily that is the room you are
+   standing in - but a doorway belongs to no room, and standing in one is
+   the moment you have opened the door and can see what is on the other
+   side.  So from a doorway it looks through to the rooms it joins and
+   takes the one that has something to say.  That is a turn earlier than
+   setting foot inside, which is when the news is actually news. */
+function roomToAnnounce() {
   var ri = roomIndexAt(P.x, P.y);
+  if (ri >= 0) return ri;
+  if (!isDoorish(P.x, P.y)) return -1;
+  for (var d = 0; d < DIR4.length; d++) {
+    var k = roomIndexAt(P.x + DIR4[d][0], P.y + DIR4[d][1]);
+    if (k < 0) continue;
+    var rr = L.rooms[k];
+    if (rr && !rr.gone && rr.special && !rr.told && ROOM_ENTRY[rr.special]) return k;
+  }
+  return -1;
+}
+function announceRoom() {
+  var ri = roomToAnnounce();
   if (ri < 0) return;
   var r = L.rooms[ri];
   if (!r || !r.special || r.told) return;
+  /* Every word of it is something you can see: moss on the floor, flasks
+     on the shelves, gold behind bars.  Blind you walk in and know
+     nothing, and the room keeps its secret until you can look at it -
+     which is why `told` is not set here. */
+  if (P.blind) return;
   r.told = 1;
   var lines = ROOM_ENTRY[r.special];
   if (!lines) return;
   for (var i = 0; i < lines.length; i++) msg(lines[i], i ? 'c' : 'y');
+  /* and the same thing said properly, in a box over the middle of the
+     map with the room's own picture beside it.  It is put up rather than
+     shown here, so it waits for the turn to finish playing out - see
+     resumeMode. */
+  G.roomBox = { kind: r.special };
 }
 
 /* ---------------------------------------------------------- pickup */
@@ -11108,11 +11557,25 @@ function faceTheRock(cells) {
 }
 
 /* ---------------------------------------------------------- wands */
+/* The last charge has gone.  A stick of dead wood is not a thing to
+   carry: it is a slot in the pack you have to notice is useless and
+   clear out yourself.  Called after the zap has been resolved, so the
+   charge you paid for still does its work. */
+function wandSpent(it, spent) {
+  if (!spent || !it || it.ch > 0) return;
+  msg(cap(itemName(it)) + ' crumbles to dust.', '6');
+  removeItem(it, 1);
+}
 function zapWand(it, dx, dy) {
   breakClearwater('You give yourself away.');
   if (squibbed('wand')) return true;          /* the turn is spent trying */
   if (it.ch <= 0) { msg('Nothing happens.', '6'); return true; }
   if (!keepsCharge(it)) it.ch--;
+  /* Nothing is left in it.  A stick of dead wood is not an item, it is
+     a slot in your pack you have to notice and clear yourself, so it
+     goes - but only once the zap it just paid for has been resolved,
+     which is why this is a note and not a removal. */
+  var spent = it.ch <= 0;
   var k = it.k, n = WANDS[k].n, id = 1, i;
   var path = [], x = P.x, y = P.y;
   var pierce = (n === 'lightning' || n === 'fire' || n === 'cold');
@@ -11154,6 +11617,7 @@ function zapWand(it, dx, dy) {
     }
     else msg('You twitch and stay put.', '6');
     KNOWN.wand[k] = 1;
+    wandSpent(it, spent);
     return true;
   }
   switch (n) {
@@ -11306,6 +11770,7 @@ function zapWand(it, dx, dy) {
     }
   }
   if (id) KNOWN.wand[k] = 1;
+  wandSpent(it, spent);
   computeVis();
   return true;
 }
@@ -11441,7 +11906,10 @@ function throwAtSquare(it, tx, ty) {
   sound('shoot');
   G.shot = { sx: P.x, sy: P.y, ex: tx, ey: ty, t: beatNow(),
              dur: flight, tail: 4,
-             spr: (it.t === 'weapon') ? WEAPONS[it.k].s : null,
+             /* what the thing looks like, not what it is: a runed
+                stone wears whichever carving this run dealt it, and it
+                must wear the same one in the air */
+             spr: (it.t === 'weapon') ? itemSprite(it) : null,
              col: boom ? '#d82b2b' : isFlask(it) ? '#f59e0b' : null };
   beatWait(flight);
   removeItem(it, 1);
@@ -11562,7 +12030,7 @@ function likeItem(am) {
 function flyHome(am, fx, fy, flight) {
   if (!am.homing) return false;
   G.ret = { fx: fx, fy: fy, tx: P.x, ty: P.y,
-            t: beatNow(), dur: RETURN_MS, spr: WEAPONS[am.k].s };
+            t: beatNow(), dur: RETURN_MS, spr: itemSprite(am) };
   beatWait(RETURN_MS);
   var back = likeItem(am);
   if (addItem(back)) msg(cap(WEAPONS[am.k].n) + ' flies back to your hand.', 'G');
@@ -11646,7 +12114,7 @@ function fireAt(best) {
      stone arrived before it had been thrown. */
   G.shot = { sx: P.x, sy: P.y, ex: best.x, ey: best.y, t: beatNow(), dur: flight,
              tail: isBolt ? 3 : 6,
-             spr: thrown ? WEAPONS[am.k].s : null };
+             spr: thrown ? itemSprite(am) : null };
 
   /* everything waits for the arrow to arrive */
   beatWait(flight);
@@ -11819,7 +12287,7 @@ function stoneRune(rune, target, am, flight) {
          worn out before the second is touched. */
       var left = (am.ret === undefined ? RETURN_USES : am.ret) - 1;
       G.ret = { fx: target.x, fy: target.y, tx: P.x, ty: P.y,
-                t: beatNow(), dur: RETURN_MS, spr: WEAPONS[am.k].s };
+                t: beatNow(), dur: RETURN_MS, spr: itemSprite(am) };
       beatWait(RETURN_MS);
       /* You have just watched it come back to your hand.  Whatever else
          it may be carrying, there is no longer any question about what
@@ -11955,7 +12423,7 @@ function pinOnto(it) {
       it.ap += 1;
       msg('It is already spoken for. ' + cap(itemName(it)) + '.', 'c');
     } else {
-      addRune(it, it.t === 'head' ? 'gh' : 'g', 100);
+      addRune(it, gearRuneKind(it), 100);
       learnRune(it);             /* you watched it go in */
       var rn = runeDef(it);
       if (rn && rn.bad) msg('The pin blackens. ' + cap(itemName(it)) + '.', 'R');
@@ -12293,7 +12761,7 @@ function itemNotes(it) {
       break;
     case 'weapon':
       out.push(['damage ' + d.d[0] + 'd' + d.d[1], '6']);
-      if (d.launch) out.push(['fires ' + d.ammo + 's', 'c']);
+      if (d.launch) out.push(['shoots ' + d.ammo + 's', 'c']);
       if (d.ammoFor)
         out.push([d.ammoText || ('for a ' + d.ammoFor + (d.alsoFor ? ' or ' + d.alsoFor : '')), 'c']);
       if (d.hurl) out.push(['wield or throw it; never lost', 'c']);
@@ -12347,7 +12815,14 @@ function itemNotes(it) {
     case 'amulet': out.push(['carry it out to win', 'y']); break;
   }
   /* the weight in your hand tells you this much, name or no name */
-  if (it.cursed && numbersKnown(it)) out.push(['CURSED - cannot be removed', 'R']);
+  if (it.cursed && numbersKnown(it)) {
+    out.push(['CURSED - cannot be removed', 'R']);
+    /* and which curse, once it is on you and has therefore been settled.
+       "Cursed" on its own does not tell you why you are losing hit
+       points in every puddle. */
+    var cdn = it.curse ? curseDef(it.curse) : null;
+    if (cdn) out.push([cdn.txt, 'R']);
+  }
   return out;
 }
 
@@ -12400,14 +12875,14 @@ var COLS = {
 };
 
 /* inventory geometry */
-var SL = 17, GAP = 2, PITCH = SL + GAP;
+var SL = INV_SL, GAP = INV_GAP, PITCH = INV_PITCH;
 /* The squares sit one pixel higher than the labels above them would
    suggest.  There were two spare pixels under RH BD LH HD FT, so the
    whole grid comes up one without the labels moving and without any of
    it looking any different - and the pixel that buys, together with the
    one spare row at the very bottom, makes the buttons two pixels taller
    so their text can sit squarely in the middle of them. */
-var GX = 2, MSG_Y = 1, TITLE_Y = 12, LABEL_Y = 12, GY_EQ = 20, GY_BAG = 42;
+var GX = INV_GX, MSG_Y = 1, TITLE_Y = 12, LABEL_Y = 12, GY_EQ = 20, GY_BAG = 42;
 /* The wide, short buttons under the four rows of the bag.  The last row
    of squares ends at 117 and the screen is 128 tall, so there are ten
    pixels to work with and the buttons are shorter than a square. */
@@ -12425,6 +12900,8 @@ var STAT_H = 39, HP_BAR_H = 7;
    from there: flags on the very bottom line, three rows of numbers above
    them, then whatever is currently trying to kill you, then the log. */
 var FLAG_Y = 0, STAT_Y = 0;        /* both fixed up from the font at boot */
+/* the row of buttons along the floor of the panel, likewise */
+var PANEL_BTN_H = 0, PANEL_BTN_Y = 0;
 var BATTLE_ROW = 9;
 var LOG_W = 0;                     /* worked out from the font at boot */
 
@@ -12916,9 +13393,21 @@ function onMouseUp(e) {
 }
 function clickAt(mx, my, right) {
   var h = hitAt(mx, my);
+  /* A room box has the screen until it is dismissed, and anywhere at all
+     dismisses it - either button, a finger, the panel, the map.  It is
+     ahead of the panel buttons on purpose: a click meant to put the box
+     away should not also open the pack behind it. */
+  if (G.mode === 'room') { roomKey('Enter'); return; }
   /* the pack, wherever you are */
   if (h && h.what === 'pack' && !right) {
+    PANEL_FLASH = { what: 'pack', t: Date.now() };
     if (G.mode === 'inv') closeInv(); else openInv();
+    return;
+  }
+  /* and waiting a turn, which SPACE does and a finger otherwise cannot */
+  if (h && h.what === 'wait' && !right) {
+    PANEL_FLASH = { what: 'wait', t: Date.now() };
+    if (G.mode === 'play') waitTurn();
     return;
   }
   switch (G.mode) {
@@ -12959,6 +13448,8 @@ function clickAt(mx, my, right) {
       else G.ctx = null, G.mode = 'play';
       return;
     case 'play':
+      /* in mid-jump there is nobody to give the order to */
+      if (warping()) return;
       mapClick(mx, my, right);
       return;
     /* Aiming with the mouse: the square you click is the square you meant,
@@ -13069,6 +13560,20 @@ function mapOrder(mx2, my2) {
       return;
     }
     walkTo(m.x, m.y, { door: { x: m.x, y: m.y } });
+    return;
+  }
+  /* A wall is a thing to walk up to and put your hands on.  Pushing into
+     stone is how a hidden door gives itself away, and with the keyboard
+     that is simply walking at it; a click used to answer "You can't go
+     there" and leave you standing where you were, so a whole way of
+     playing was shut to the mouse. */
+  if (isWallish(m.x, m.y)) {
+    if (mdist({ x: m.x, y: m.y }) === 1) {
+      var wm = playerMove(m.x - P.x, m.y - P.y);
+      tick(wm);
+      return;
+    }
+    walkTo(m.x, m.y, { feel: { x: m.x, y: m.y } });
     return;
   }
   var foe = monAt(L, m.x, m.y);
@@ -13283,6 +13788,13 @@ function textC(s, py, col, scale) {
   text(s, ((SW - textW(s, scale)) / 2) | 0, py, col, scale);
 }
 function textR(s, rx, py, col) { text(s, rx - textW(s), py, col); }
+/* Centred on the map rather than on the whole screen.  Anything centred
+   on the screen starts inside the panel and is written over whatever the
+   panel has there. */
+function textM(s, py, col, scale) {
+  scale = scale || 1;
+  text(s, VIEW_PX + (((VIEW_W * TS) - textW(s, scale)) >> 1), py, col, scale);
+}
 /* the longest leading part of s that fits in w pixels */
 function clipTo(s, w) {
   s = String(s);
@@ -13420,6 +13932,10 @@ function resumeMode() {
     G.invMode = 'pick'; G.sel = null; setPouch(null);
     G.invOpen = 1; G.mode = 'inv'; return;
   }
+  /* You have just walked into a room somebody built.  It goes up once
+     the turn has finished playing out, and it takes the screen until it
+     is dismissed - which is the point of it. */
+  if (G.roomBox) { G.mode = 'room'; return; }
   if (G.ask) { G.mode = 'ask'; return; }
   if (G.aim) { G.mode = 'dir'; return; }
   G.mode = G.invOpen ? 'inv' : 'play';
@@ -13441,6 +13957,34 @@ function camTarget() {
   return { x: (G.drag ? G.drag.dx : 0) + (G.pan ? G.pan.dx : 0),
            y: (G.drag ? G.drag.dy : 0) + (G.pan ? G.pan.dy : 0) };
 }
+/* Where the view has got to, following you about: your position, but
+   arrived at smoothly rather than a square at a time.  Null until the
+   first frame, and snapped whenever you are somewhere else entirely -
+   a new floor, a fall, a teleport. */
+var WALK_AT = null;
+function camWalkTo() {
+  if (typeof P === 'undefined' || !P) return;
+  if (!WALK_AT) { WALK_AT = { x: P.x, y: P.y }; return; }
+  var dx = P.x - WALK_AT.x, dy = P.y - WALK_AT.y;
+  /* In a fight, or a long way off, the view is simply where you are. */
+  if (Math.abs(dx) > WALK_LAG_MAX + 2 || Math.abs(dy) > WALK_LAG_MAX + 2 ||
+      (typeof battleNear === 'function' && battleNear())) {
+    WALK_AT.x = P.x; WALK_AT.y = P.y; return;
+  }
+  if (Math.abs(dx) < WALK_LAG_SNAP && Math.abs(dy) < WALK_LAG_SNAP) {
+    WALK_AT.x = P.x; WALK_AT.y = P.y; return;
+  }
+  WALK_AT.x += dx * WALK_CHASE;
+  WALK_AT.y += dy * WALK_CHASE;
+  /* never so far behind that you are looking at the wrong room */
+  WALK_AT.x = clamp(WALK_AT.x, P.x - WALK_LAG_MAX, P.x + WALK_LAG_MAX);
+  WALK_AT.y = clamp(WALK_AT.y, P.y - WALK_LAG_MAX, P.y + WALK_LAG_MAX);
+}
+/* how far behind you the view is, in tiles */
+function walkLag() {
+  if (!WALK_AT || typeof P === 'undefined' || !P) return { x: 0, y: 0 };
+  return { x: P.x - WALK_AT.x, y: P.y - WALK_AT.y };
+}
 /* How far, in pixels, to shift the whole map from where its tiles say it
    is, so that it appears at CAM_AT rather than at the whole-tile offset
    it is drawn on.
@@ -13452,9 +13996,17 @@ function camTarget() {
    every slide before easing it back, and that is what made a dragged map
    look as though it were being torn about. */
 function camSlip() {
+  var w = camTarget(), g = walkLag();
+  return { x: Math.round((w.x - CAM_AT.x + g.x) * TS),
+           y: Math.round((w.y - CAM_AT.y + g.y) * TS) };
+}
+/* The same question without the following: has the view arrived where
+   the tiles say it should be?  An order waiting on the view asks this
+   one, or a walk in progress would hold it up for ever. */
+function camSettled() {
   var w = camTarget();
-  return { x: Math.round((w.x - CAM_AT.x) * TS),
-           y: Math.round((w.y - CAM_AT.y) * TS) };
+  return Math.round((w.x - CAM_AT.x) * TS) === 0 &&
+         Math.round((w.y - CAM_AT.y) * TS) === 0;
 }
 /* Is the hand pushing the map about this instant?  While it is, the view
    is wherever the hand has put it and nothing else may move it. */
@@ -13511,8 +14063,7 @@ function camHomeFirst() {
 function camWaiting() {
   if (!G.waiting) return;
   if (G.mode !== 'play' || G.dead || G.ask || G.walk) { G.waiting = null; return; }
-  var s = camSlip();
-  if (s.x || s.y) return;                 /* still on its way */
+  if (!camSettled()) return;              /* still on its way */
   var job = G.waiting;
   G.waiting = null;
   if (job.x < 0 || job.y < 0 || job.x >= MAP_W || job.y >= MAP_H) return;
@@ -13572,7 +14123,7 @@ function camFollow() {
    of the things below ends it - and none of them lose you anything, you
    simply click again. */
 function walkTo(tx, ty, job) {
-  var stopShort = !!(job && (job.foe || job.door));
+  var stopShort = !!(job && (job.foe || job.door || job.feel));
   var path = findPath(tx, ty, { stopShort: stopShort });
   if (!path) { msg("You can't go there.", '6'); finishMsgs(); return false; }
   if (!path.length) {
@@ -13616,6 +14167,15 @@ function doWalkJob(job) {
     tick(opened);
     return true;
   }
+  /* walked over to the wall: now put your hands on it */
+  if (job.feel) {
+    var fdx = job.feel.x - P.x, fdy = job.feel.y - P.y;
+    if (Math.abs(fdx) + Math.abs(fdy) !== 1) return false;
+    if (!isWallish(job.feel.x, job.feel.y)) return false;
+    beginAction();
+    tick(playerMove(fdx, fdy));
+    return true;
+  }
   /* walked over to the stairs: now go down them */
   if (job.stairs) {
     if (tileAt(P.x, P.y) !== STAIR && tileAt(P.x, P.y) !== STAIR_UP) return false;
@@ -13637,6 +14197,8 @@ function walkTick() {
   if (!G.walk) return;
   if (G.dead || G.mode !== 'play') { G.walk = null; return; }
   if (Date.now() < G.walk.at) return;
+  /* and a walk under way holds its breath until you have landed */
+  if (warping()) return;
   var w = G.walk;
   /* the reasons to stop, all of them checked before the step */
   if (heldFast()) { stopWalk('You cannot move.'); return; }
@@ -13780,6 +14342,7 @@ function onKey(e) {
     case 'pause': pauseKey(k); return;
     case 'slots': slotsKey(k); return;
     case 'hint': hintKey(k); return;
+    case 'room': roomKey(k); return;
     case 'look': lookKey(k); return;
     case 'inv': invKey(k); return;
     case 'dir': dirKey(k); return;
@@ -13791,6 +14354,9 @@ function onKey(e) {
 }
 
 function playKey(k) {
+  /* nothing at all while you are in mid-jump: you are not standing
+     anywhere to act from */
+  if (warping()) return;
   /* the chest is open only while you are standing on it */
   if (G.box && !(G.box.x === P.x && G.box.y === P.y &&
       L.items.indexOf(G.box) >= 0)) G.box = null;
@@ -13850,14 +14416,7 @@ function playKey(k) {
      something is.  Help lives on the ESC menu now. */
   if (k === '?' || k === '/') { openLook(); return; }
   if (k === 'Escape') { openPause(); return; }
-  if (k === ' ') {
-    /* SPACE waits a turn, and only that.  Looking in a chest is ENTER,
-       which is what opens everything else in the game. */
-    var before = G.msgq.length;
-    tick(true);
-    if (!G.dead && G.msgq.length === before) { msg('You wait.', '4'); finishMsgs(); }
-    return;
-  }
+  if (k === ' ') { waitTurn(); return; }
   G.msgq = [];
 }
 
@@ -13991,13 +14550,32 @@ var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['load', 'LOAD'], ['hints', 'HINTS'
 var TITLE_OPTS = [['start', 'START'], ['load', 'LOAD'], ['hints', 'HINTS'],
                   ['help', 'HELP'], ['exit', 'EXIT']];
 function openPause() { G.pause = { i: 0 }; G.titleMenu = null; G.mode = 'pause'; }
+/* Out of the run and back to the splash, with nothing of the menus left
+   standing behind it. */
+function quitToTitle() {
+  G.slots = null; G.pause = null; G.titleMenu = null;
+  G.msgq = [];
+  G.mode = 'title';
+}
 function pauseKey(k) {
   var d = keyDir(k);
   if (k === 'Escape' || k === 'Tab') { G.pause = null; G.mode = 'play'; return; }
   if (d && d[1]) { G.pause.i = (G.pause.i + d[1] + PAUSE_OPTS.length) % PAUSE_OPTS.length; return; }
   if (k !== 'Enter' && k !== ' ') return;
   var pick = PAUSE_OPTS[G.pause.i][0];
-  if (pick === 'save' || pick === 'load') { openSlots(pick, 'pause'); return; }
+  /* Save and quit means both.  It used to open the slot picker, write
+     the file, print "Saved." and sit there with the run still going -
+     which is neither saving and quitting nor anything else you asked
+     for.  The slot is asked for once; after that the run knows which
+     one it lives in. */
+  if (pick === 'save') {
+    if (G.slot === null || G.slot === undefined) { openSlots('save', 'pause'); return; }
+    var serr = saveInto(G.slot);
+    if (serr) { openSlots('save', 'pause'); G.slots.msg = serr; return; }
+    quitToTitle();
+    return;
+  }
+  if (pick === 'load') { openSlots(pick, 'pause'); return; }
   if (pick === 'hints') { openHints('pause'); return; }
   G.pause = null;
   if (pick === 'help') { G.mode = 'help'; return; }
@@ -14085,7 +14663,8 @@ function slotsKey(k) {
   var err;
   if (G.slots.what === 'save') {
     err = saveInto(G.slots.i);
-    G.slots.msg = err || 'Saved.';
+    if (err) { G.slots.msg = err; return; }
+    quitToTitle();                     /* save AND quit */
     return;
   }
   err = loadFrom(G.slots.i);
@@ -14174,6 +14753,42 @@ function drawHints() {
   text('SPACE another   ESC back', x + 5, y + h - 10, '4');
 }
 
+/* -------------------------------------------------- a room announced
+   Walking into a room somebody built stops the game and says so, in a
+   box over the middle of the map with the room's own picture in it.  Any
+   of the four keys that mean "done" anywhere else in the game closes it,
+   and so does a click or a touch anywhere at all. */
+var ROOM_BOX_W = 148;
+function roomLines() {
+  var lines = ROOM_ENTRY[G.roomBox.kind] || [];
+  return wrap(lines.join(' '), ROOM_BOX_W - 10);
+}
+function roomKey(k) {
+  if (k !== 'Enter' && k !== ' ' && k !== 'Tab' && k !== 'Escape') return;
+  G.roomBox = null;
+  G.mode = 'play';
+}
+function drawRoomBox() {
+  if (!G.roomBox) return;
+  var kind = G.roomBox.kind, lines = roomLines(), i;
+  var icon = ROOM_ICON[kind], title = ROOM_TITLE[kind] || '';
+  var w = ROOM_BOX_W;
+  var head = icon ? TS * 2 : LH;                    /* the picture's row */
+  /* No "ENTER to go on" along the bottom.  Half the people playing this
+     are holding a telephone and have no such key, and anybody can work
+     out that a box in the way goes away when you touch it. */
+  var h = 5 + head + 4 + lines.length * 9 + 5;
+  var x = VIEW_PX + ((VIEW_W * TS - w) >> 1);
+  var y = VIEW_PY + ((VIEW_H * TS - h) >> 1);
+  rect(x, y, w, h, '#0b0d1c');
+  frame(x, y, w, h, '#636d85');
+  if (icon) sprS(icon, x + 6, y + 5, 2);
+  text(title, x + (icon ? 6 + TS * 2 + 6 : 6), y + 5 + ((head - LH) >> 1), 'y');
+  var ty = y + 5 + head + 4;
+  for (i = 0; i < lines.length; i++) text(lines[i], x + 6, ty + i * 9, 'w');
+  hit(x, y, w, h, 'room', 0);
+}
+
 /* ------------------------------------------------------- looking about
    A cursor you walk over the map.  ENTER or SPACE reads out whatever is
    on the square it is sitting on. */
@@ -14211,7 +14826,10 @@ function drawLook(camx, camy) {
     else frame(px - 1, py - 1, TS + 2, TS + 2, '#c3ccd9');
   }
   if (!G.look.lines) {
-    textC('ARROWS look around, ENTER reads', SH - 8, '6');
+    /* centred on the map, not on the whole screen: centred on the screen
+       it began inside the panel and was laid across whatever was written
+       there.  What it is about is on the map, so that is where it goes. */
+    textM('ARROWS look around, ENTER reads', SH - 8, '6');
     return;
   }
   /* the box of words, kept clear of the square it is talking about */
@@ -14692,7 +15310,7 @@ function invEnter() {
 }
 
 /* ---------------------------------------------------------- render */
-function loop() { walkTick(); touchHold(); camEase(); camWaiting(); render(); requestAnimationFrame(loop); }
+function loop() { walkTick(); touchHold(); camEase(); camWalkTo(); camWaiting(); render(); requestAnimationFrame(loop); }
 
 function render() {
   /* The hit list is rebuilt every frame by the things that draw
@@ -14783,6 +15401,15 @@ function warpPhase(w) {
   if (age < WARP_SHAKE + WARP_FLASH) return { part: 'flash', age: age - WARP_SHAKE };
   return null;
 }
+/* You are still in the air.  The jump is drawn over WARP_SHAKE +
+   WARP_FLASH milliseconds, and for that long there is no man on the
+   screen to give an order to - he is shivering on the square he is
+   leaving, or he is nowhere at all.  Orders given in that window used to
+   go through, so you could walk out of the far end of a teleport before
+   you had arrived at it. */
+function warping() {
+  return !!(typeof P !== 'undefined' && P && P.warp && warpPhase(P.warp));
+}
 function warpJitter(w, age) {
   var n = (age / WARP_SHAKE_STEP) | 0;
   var h = (n * 2654435761 + w.fx * 40507 + w.fy * 12289) >>> 0;
@@ -14821,7 +15448,7 @@ function monBetween(m) {
   for (i = 0; i < m.anim.length; i++) {
     var a = m.anim[i], t0 = a[4];
     if (now < t0) return [a[0], a[1], a[0], a[1]];      /* not started yet */
-    if (now < t0 + (a[5] || MOVE_ANIM_MS)) return [a[0], a[1], a[2], a[3]];  /* crossing */
+    if (now < t0 + MOVE_ANIM_MS) return [a[0], a[1], a[2], a[3]];  /* crossing */
     if (i + 1 < m.anim.length && now < m.anim[i + 1][4])
       return [a[2], a[3], a[2], a[3]];                  /* arrived, waiting */
   }
@@ -14842,9 +15469,8 @@ function monPixel(m, camx, camy) {
     if (now < t0) {                      /* this step has not happened yet */
       return [VIEW_PX + (a[0] - camx) * TS, VIEW_PY + (a[1] - camy) * TS];
     }
-    var span = a[5] || MOVE_ANIM_MS;
-    if (now < t0 + span) {
-      var f = (now - t0) / span;
+    if (now < t0 + MOVE_ANIM_MS) {
+      var f = (now - t0) / MOVE_ANIM_MS;
       var fx = VIEW_PX + (a[0] - camx) * TS, fy = VIEW_PY + (a[1] - camy) * TS;
       var tx2 = VIEW_PX + (a[2] - camx) * TS, ty2 = VIEW_PY + (a[3] - camy) * TS;
       return [Math.round(fx + (tx2 - fx) * f), Math.round(fy + (ty2 - fy) * f)];
@@ -14915,6 +15541,22 @@ function cornerFrom(name, px, py, corner, a) {
     sx + ox, sy + oy, 2, 2, px + ox, py + oy, 2, 2);
 }
 
+/* The same trick, three pixels instead of four: the corner pixel and the
+   one either side of it along the two edges.  That is the smallest cut
+   that reads as a bevel rather than as a bite. */
+function cornerNib(name, px, py, corner, a) {
+  var i = IX[name];
+  if (i === undefined) return;
+  var sx = (i % ATLAS.cols) * TS, sy = ((i / ATLAS.cols) | 0) * TS;
+  var qx = (corner & 1) ? TS - 1 : 0, qy = (corner > 1) ? TS - 1 : 0;
+  var dx = (corner & 1) ? -1 : 1, dy = (corner > 1) ? -1 : 1;
+  var sheet = (a === undefined || a >= 1) ? atlasImg : fadedSheet(a);
+  var pts = [[qx, qy], [qx + dx, qy], [qx, qy + dy]], k;
+  for (k = 0; k < 3; k++)
+    cx.drawImage(sheet || atlasImg,
+      sx + pts[k][0], sy + pts[k][1], 1, 1, px + pts[k][0], py + pts[k][1], 1, 1);
+}
+
 /* the sprite a square would show if it were plain floor */
 /* Three flagstones, scattered evenly over the floor by a cheap hash so
    the same square always draws the same one.  Two of the three used to
@@ -14970,6 +15612,24 @@ function drawEdging(mx, my, px, py, a) {
             isEdgeTile(mx, my + ((i > 1) ? 1 : -1));
     if (!t) continue;
     cornerFrom(liquidSprite(t, mx, my), px, py, i, a);
+    drew++;
+  }
+  return drew;
+}
+
+/* A hole sticking out into the room gets the same treatment as a pool,
+   but taken off diagonally rather than squarely: three pixels, the
+   corner and the one either side of it.
+   A square 2x2 bite leaves the floor with a right angle of its own
+   pointing back into the drop - the step is still there, it has only
+   moved two pixels - and four of those round one hole is what made a
+   pit read as a plus sign.  Water keeps the square bite: a pool is a
+   bigger, softer shape and nobody has complained of it. */
+function drawHoleCorners(mx, my, px, py, a) {
+  var c = edgeCorners(mx, my), i, drew = 0;
+  for (i = 0; i < 4; i++) {
+    if (!c[i]) continue;
+    cornerNib(floorSprite(mx, my), px, py, i, a);
     drew++;
   }
   return drew;
@@ -15364,7 +16024,7 @@ function drawMapAt(overX, overY) {
           break;
         case HOLE:
           drawHole(mx, my, px, py, a);
-          drawLiquidCorners(mx, my, px, py, a);
+          drawHoleCorners(mx, my, px, py, a);
           break;
         case CORR: spr('corr', px, py, a); break;
         case BRIDGE: drawBridge(mx, my, px, py, a); break;
@@ -15707,6 +16367,7 @@ function drawMapAt(overX, overY) {
   if (G.mode === 'pause') drawPause();
   if (G.mode === 'slots') drawSlots();
   if (G.mode === 'hint') drawHints();
+  if (G.mode === 'room') drawRoomBox();
 
   /* choosing what to shoot at */
   if (G.mode === 'target' && G.targets.length) {
@@ -15742,7 +16403,12 @@ function fitBars() {
   LOG_LINE = LH;
   TPAD = 0;
   LOG_W = PANEL_W - PX0 - 2;         /* the panel measures in pixels now */
-  FLAG_Y = SH - LH;                  /* the last line, flush with the floor */
+  /* The floor of the panel is a row of buttons, so that everything the
+     game asks of you can be done with a finger.  Waiting a turn had no
+     way in at all without a keyboard. */
+  PANEL_BTN_H = LH + 4;
+  PANEL_BTN_Y = SH - PANEL_BTN_H;
+  FLAG_Y = PANEL_BTN_Y - LH;         /* the flags sit on top of them */
   STAT_Y = FLAG_Y - 2 - STAT_H;
 }
 
@@ -15888,20 +16554,50 @@ function drawStats() {
   if (P.haste) fl.push('Fast');
   if (P.frozen) fl.push('Stuck');
   if (P.scare) fl.push('Scare');
+  /* A curse costs you hit points in circumstances you have to work out
+     for yourself, so it is worth a word on the line that is always on
+     the screen.  The pack says which curse and what is carrying it. */
+  if (cursesOnYou().length) fl.push('CURSED');
   if (P.amulet) fl.push('AMULET');
-  /* The pack, in the corner, where a mouse can reach it without knowing
-     that TAB opens it.  The flags shuffle along to make room. */
-  var px2 = PX0, fx2 = PX0;
-  if (usingPointer()) {
-    /* flush with the floor of the screen: the flags line is the last one
-       there is, so the icon sits in it rather than under it */
-    var py2 = SH - TS;
-    spr('pouch', px2, py2, 1);
-    hit(px2, py2, TS + 1, TS, 'pack', 0);
-    fx2 = px2 + TS + 2;
+  /* The pack used to be a small picture squeezed onto this line.  It is
+     a button of its own now, on the row below, so the flags have the
+     line to themselves. */
+  var s = clipTo(fl.join(' '), LOG_W);
+  if (s) text(s, PX0, FLAG_Y, G.hungerState >= 2 ? 'R' : 'O');
+  drawPanelButtons();
+}
+
+/* ------------------------------------------------- the panel's buttons
+   Two, along the floor of the panel: the pack, and waiting a turn.  Both
+   have keys - TAB and SPACE - but a finger has no keys, and waiting is
+   not something you can otherwise ask for at all without one. */
+var PANEL_BTNS = [['pack', 'Pack'], ['wait', 'Wait']];
+function drawPanelButtons() {
+  var full = PANEL_W - PX0 * 2, gap = 2;
+  var w = ((full - gap * (PANEL_BTNS.length - 1)) / PANEL_BTNS.length) | 0;
+  for (var i = 0; i < PANEL_BTNS.length; i++) {
+    var bx = PX0 + i * (w + gap);
+    if (i === PANEL_BTNS.length - 1) w = full - (bx - PX0);
+    var over = usingMouse() && MOUSE.on &&
+      MOUSE.x >= bx && MOUSE.y >= PANEL_BTN_Y &&
+      MOUSE.x < bx + w && MOUSE.y < PANEL_BTN_Y + PANEL_BTN_H;
+    var lit = PANEL_FLASH.what === PANEL_BTNS[i][0] &&
+      Date.now() - PANEL_FLASH.t < BTN_FLASH_MS;
+    rect(bx, PANEL_BTN_Y, w, PANEL_BTN_H, lit ? '#fad039' : over ? '#1b2140' : '#141829');
+    frame(bx, PANEL_BTN_Y, w, PANEL_BTN_H, lit ? '#fad039' : over ? '#636d85' : '#3f4966');
+    var tw = textW(PANEL_BTNS[i][1]);
+    text(PANEL_BTNS[i][1], bx + ((w - tw) >> 1), PANEL_BTN_Y + 2, lit ? 'n' : '6');
+    hit(bx, PANEL_BTN_Y, w, PANEL_BTN_H, PANEL_BTNS[i][0], i);
   }
-  var s = clipTo(fl.join(' '), LOG_W - (fx2 - PX0));
-  if (s) text(s, fx2, FLAG_Y, G.hungerState >= 2 ? 'R' : 'O');
+}
+var PANEL_FLASH = { what: '', t: 0 };
+/* Standing still for a turn.  SPACE does it, and so does the button -
+   the same one thing, so they cannot drift apart.  Looking in a chest is
+   ENTER, which is what opens everything else in the game. */
+function waitTurn() {
+  var before = G.msgq.length;
+  tick(true);
+  if (!G.dead && G.msgq.length === before) { msg('You wait.', '4'); finishMsgs(); }
 }
 
 /* Your keys, in the top corner of the map.  Nothing important happens
@@ -16041,7 +16737,7 @@ function drawInv() {
   }
 
   /* -------- right hand column: the keys, the item, then you -------- */
-  var IXX = GX + 5 * PITCH + 3, IW = SW - IXX - 2;
+  var IXX = INV_TXT_X, IW = INV_COL_W;
   var colW = IW;
   /* The two keys that always work, at the top where they are out of the
      way of the thing you are reading about. */
@@ -16117,9 +16813,18 @@ function drawInv() {
   text('Gold ' + P.gold, IXX + 52, ly, 'y'); ly += LH;
   text('sneak ' + stealthWord() + '  dodge ' + dodgeChance() + '%', IXX, ly, 'c'); ly += LH;
 
-  ly = 107;
+  /* The list used to start at 107, which left room for two lines and no
+     more - so a two line entry was cut in half and anything after the
+     hunger was never seen at all.  There were ten spare pixels above it
+     doing nothing: the stats end at 96.  It starts at 100 now, which is
+     a third line. */
+  ly = 100;
   rect(IXX, ly - 3, IW, 1, '#2b3352');
-  var ef = playerEffects(), room = 2;
+  var ef = playerEffects();
+  /* as many lines as there is screen left below the heading, keeping one
+     back for the thing in your hand if you are carrying one */
+  var room = (((SH - (ly + LH)) / LH) | 0) - (G.sel ? 1 : 0);
+  if (room < 1) room = 1;
   /* the overflow count rides on the heading, which costs no line */
   text('EFFECTS' + (ef.length > room ? '  +' + (ef.length - room) : ''), IXX, ly, 'y');
   ly += LH;

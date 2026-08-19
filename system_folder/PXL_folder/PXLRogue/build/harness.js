@@ -971,9 +971,13 @@ function noteWords(){
   g.known=0;
   joined=itemNotes(g).map(function(n){return n[0];}).join(' | ');
   if(joined.indexOf('enchantment unknown')<0) bad.push('an unknown item gives itself away: '+joined);
-  var panel=noteChars();
-  for(i=0;i<RUNES.length;i++) if(RUNES[i].txt.length>panel)
-    bad.push('note too long ('+RUNES[i].txt.length+'/'+panel+'): '+RUNES[i].txt);
+  /* measured in pixels, not letters: the font is not fixed width and the
+     panel clips by pixels.  Counting letters read as 29 of a column that
+     is 128 wide and only 21 letters at the very widest - both wrong, in
+     opposite directions, for anything actually written in English. */
+  var panel=effectsColPx();
+  for(i=0;i<RUNES.length;i++) if(textPx(RUNES[i].txt)>panel)
+    bad.push('note too wide ('+textPx(RUNES[i].txt)+'px/'+panel+'): '+RUNES[i].txt);
   return bad;
 }
 function battleListOK(){
@@ -1334,6 +1338,40 @@ function stoneLooksOK(seeds){
     else if (key !== first) differed++;
   }
   if (!differed) bad.push('every run deals the looks out the same way');
+
+  /* And it wears the same carving in the air as it does in your hand.
+     The flight was drawn from WEAPONS[k].s - the stone's true sprite -
+     while the one in the pack wore this run's carving, so a red stone
+     went white the moment you threw it and named its own rune on the
+     way across the room. */
+  var checked = 0, disguised = 0;
+  for (s = 0; s < runes.length; s++) {
+    bootTest(70500 + s);
+    var k = runes[s];
+    var spot = nearWalkable();
+    if (!spot) continue;
+    var m = mkMonster('E', 5, spot.x, spot.y); m.hp = m.mhp = 5000; L.mons.push(m);
+    var st = mkItem('weapon', k); st.cnt = 3; st.known = 0;
+    var look = itemSprite(st);
+    if (look !== WEAPONS[k].s) disguised++;
+    P.slots = new Array(N_SLOTS).fill(null); P.slots[0] = st;
+    P.eq.lh = null;
+    G.msgq = []; G.beat = 0; G.shot = null; G.ret = null;
+    G.throwing = st;
+    throwAtSquare(st, m.x, m.y);
+    G.throwing = null;
+    if (!G.shot) { bad.push('nothing flew when ' + WEAPONS[k].n + ' was thrown'); continue; }
+    checked++;
+    if (G.shot.spr !== look)
+      bad.push(WEAPONS[k].n + ' flies as ' + G.shot.spr + ' but sits in the pack as ' + look);
+    /* the one that comes home flies back wearing it too */
+    if (G.ret && G.ret.spr !== look)
+      bad.push(WEAPONS[k].n + ' comes home as ' + G.ret.spr + ', not as ' + look);
+  }
+  if (checked < runes.length)
+    bad.push('only ' + checked + ' of ' + runes.length + ' runed stones were thrown');
+  if (!disguised)
+    bad.push('no runed stone was wearing a carving other than its own, so the flight proves nothing');
   return bad;
 }
 /* A cave of moss keeps some bare stone, and the moss thins as it comes
@@ -2019,10 +2057,11 @@ function barWidths(){
   return { fight:{ lw:fits(165-1-2), mw:fits(233-169-2) },
            trap: { lw:fits(233-1-2), mw:fits(320-237-2) } };
 }
-function noteChars(){
-  var cw=ATLAS.font.cw, IXX=6+5*26+4;
-  return Math.max(0,((320-IXX-4)/cw)|0);
-}
+/* How many letters of the widest kind fit in the pack's column.  It used
+   to be worked out from a screen 320 pixels across, which this game has
+   never been - so it allowed 29 where 21 fit, and every check that used
+   it was looser than it looked. */
+function noteChars(){ return Math.max(0,(INV_COL_W/ATLAS.font.cw)|0); }
 /* a monster with its back to you must be easier to hit */
 function fleeHitReport(){
   function pct(state, flee, surprised){
@@ -5722,17 +5761,36 @@ function stealthCurve(){
   P.dex = 11;
   return out.join('  ');
 }
+/* How wide a line of text really is, in pixels.  The font is not fixed
+   width - an 'i' is two pixels and an 'm' is six - so counting letters
+   is only ever a guess, and the panel clips by pixels.  The renderer's
+   own textW is not here (this suite does not load the drawing), but the
+   widths it reads are in the atlas and are the same numbers. */
+function textPx(s){
+  var f=ATLAS.font, w=0, i;
+  for(i=0;i<s.length;i++){
+    var c=s.charCodeAt(i)-f.first;
+    if(c>=0 && c<f.widths.length) w+=f.widths[c];
+  }
+  return w;
+}
+/* the column the effects list is drawn in - the same number the pack
+   itself uses, which is why it is a constant rather than a copy */
+function effectsColPx(){ return INV_COL_W; }
 function effectsWidth(){
   P.conf=9; P.blind=4; P.hallu=1; P.haste=3; P.frozen=2; P.scare=7;
   /* the widest each label ever gets: monster sight runs to three
      figures, so that is the one to measure */
   P.seeinv=12; P.monsight=MONSIGHT_TURNS; P.confuseTouch=1; P.amulet=1;
   G.hungerState=2;
-  var e = playerEffects(), w=0;
-  for(var i=0;i<e.length;i++) if(e[i][0].length>w) w=e[i][0].length;
+  var e = playerEffects(), w=0, widest='';
+  for(var i=0;i<e.length;i++){
+    var px=textPx(e[i][0]);
+    if(px>w){ w=px; widest=e[i][0]; }
+  }
   P.conf=P.blind=P.hallu=P.haste=P.frozen=P.scare=0;
   P.seeinv=P.monsight=P.confuseTouch=P.amulet=0; G.hungerState=0;
-  return w;
+  return { px:w, s:widest, col:effectsColPx() };
 }
 function waterStats(){
   var pools=0, tiles=0, seen={};
@@ -7705,8 +7763,18 @@ function sightReachOK(seeds){
    A lighter spider that fights at a distance.  It sticks you where you
    stand, or lays web on the floor for you to walk into later, and it
    can only do either every other turn. */
+/* How many of his own turns the player loses, counted the way the game
+   counts them.  Called straight after the turn on which something took
+   hold of him: the first upkeep is that turn's, and every one after it
+   is a turn he could not act on. */
+function turnsHeldAfter(){
+  upkeep();
+  var lost=0;
+  while(heldFast() && lost<12){ lost++; upkeep(); }
+  return lost;
+}
 function webSpinnerOK(seeds){
-  var bad=[], i, s, stuck=0, laid=0, shots=0, tries=0, gaps=[];
+  var bad=[], i, s, stuck=0, laid=0, shots=0, tries=0, gaps=[], held=[];
   var W = MON_BY_C['w'], E = MON_BY_C['E'];
   if(!W) return { bad:['there is no web spinner'], shots:0 };
   if(ATLAS.index['mon_w']===undefined) bad.push('it has no sprite');
@@ -7729,102 +7797,185 @@ function webSpinnerOK(seeds){
     L.mons.length=0; L.webs={};
     var m=mkMonster('w',3,line.x,line.y);
     m.hp=m.mhp=900; m.state=2; L.mons.push(m);
-    var fired=[];
     for(var t2=0;t2<10;t2++){
       P.frozen=0; P.webbed=0;
       var before=Object.keys(L.webs).length;
       G.msgq=[];
-      if(monRanged(m)){
-        fired.push(t2); shots++;
-        if(P.frozen>0){
+      /* the spit itself, asked for directly: which turns it happens on
+         is the burst's business and is measured on its own below */
+      if(monWeb(m)){
+        shots++;
+        var landedOnYou = P.frozen > 0;
+        if(landedOnYou){
           stuck++;
-          if(P.frozen<WEB_HOLD_MIN||P.frozen>WEB_HOLD_MAX)
-            bad.push('it held you '+P.frozen+' turns, outside '+WEB_HOLD_MIN+'-'+WEB_HOLD_MAX);
+          /* the turns it really costs, not the number in the counter:
+             the counter is wound down once more at the end of the very
+             turn the web arrives on */
+          var reallyLost=turnsHeldAfter();
+          held.push(reallyLost);
+          if(reallyLost<WEB_HOLD_MIN||reallyLost>WEB_HOLD_MAX)
+            bad.push('it cost you '+reallyLost+' turns, outside '+WEB_HOLD_MIN+'-'+WEB_HOLD_MAX);
         }
+        /* A shot that landed on you leaves its web there, so you can see
+           what has hold of you.  One that went for the ground must not:
+           the squares it webs are the ones between you and it. */
+        if(landedOnYou && !webAt(P.x,P.y))
+          bad.push('web spat over you left nothing to see on your square');
+        if(!landedOnYou && webAt(P.x,P.y))
+          bad.push('a shot that missed left web on the square you are standing on');
         if(Object.keys(L.webs).length>before) laid++;
       }
+      P.frozen=0; P.webbed=0; clearWeb(P.x,P.y);
     }
-    for(i=1;i<fired.length;i++) gaps.push(fired[i]-fired[i-1]);
   }
   var avg=function(a){ return a.length? a.reduce(function(x,y){return x+y;},0)/a.length : 0; };
-  var gap=avg(gaps);
   if(!shots) bad.push('it never spat at anything');
-  if(gaps.length && Math.abs(gap-WEB_EVERY)>0.15)
-    bad.push('it shoots every '+gap.toFixed(1)+' turns, not every '+WEB_EVERY);
-  if(!stuck) bad.push('it never stuck you');
+  if(!stuck) bad.push('a web spat over you never held you');
   if(!laid) bad.push('it never webbed the floor');
 
-  /* it spits after a pause, so the web is seen crossing the room */
-  bootTest(52996);
-  L.mons.length=0;
-  var ln=straightLine4();
-  if(ln){
-    var sp=mkMonster('w',3,ln.x,ln.y); sp.hp=sp.mhp=900; sp.state=2; L.mons.push(sp);
-    P.hp=P.mhp=9000; G.beat=0; G.msgq=[]; P.frozen=0;
-    monRanged(sp);
-    if(!G.beat) bad.push('the web arrives in the same instant it is spat');
+  /* --- the round: spit, spit, then three turns of closing in -------- */
+  var round = WEB_SPIT_TURNS + WEB_RUSH_TURNS;
+  var nearRounds = 0, farRounds = 0, meleeTurns = 0, idleTurns = 0, spitTurns = 0;
+  /* What a single turn of a spinner's round came to.  'miss' is a blow
+     that went wide and nothing else - a spit that stuck to nothing says
+     'no web' - so the two can be told apart. */
+  function turnOf(mm){
+    var wx = mm.x, wy = mm.y;
+    G.msgq = []; G.beat = 0;
+    monstersMove();
+    P.frozen = 0; P.webbed = 0; clearWeb(P.x, P.y);
+    var fx = G.msgq.map(function(q){ return q.fx || ''; });
+    var webs = 0, blows = 0, i2;
+    for(i2 = 0; i2 < fx.length; i2++){
+      if(/stuck|web/.test(fx[i2])) webs++;
+      else if(/damage|dodged/.test(fx[i2]) || fx[i2] === 'miss') blows++;
+    }
+    if(webs > 1) bad.push('it spat ' + webs + ' webs in one turn');
+    return { web: webs, blow: blows, moved: (mm.x !== wx || mm.y !== wy) };
   }
 
-  /* web on the floor holds whatever walks into it, and comes away with it */
-  bootTest(52999);
-  P.hp=P.mhp=900; P.frozen=0; P.webbed=0;
-  L.webs={}; L.mons.length=0;
-  var d=null, q;
-  /* a bare square, not merely a walkable one: web will not stick over a
-     crack or a rug, so a neighbour that happens to be decorated made
-     this read as a failure of the web rather than of the square */
-  for(q=0;q<DIR4.length;q++){
-    var wx=P.x+DIR4[q][0], wy=P.y+DIR4[q][1];
-    if(!walkable(wx,wy)) continue;
-    if(L.decor[wy*MAP_W+wx]) continue;
-    d=DIR4[q]; break;
+  /* beside you, where it can always reach: two webs, then three turns of
+     teeth - not three bites crammed into one turn */
+  for(s = 0; s < seeds; s++){
+    bootTest(52700 + s);
+    P.hp = P.mhp = 900000; P.frozen = 0; P.webbed = 0;
+    L.mons.length = 0; L.webs = {};
+    /* dry ground: something thigh deep in water is wading, and a wading
+       creature loses turns that have nothing to do with its round */
+    var near = null;
+    for(i = 0; i < DIR4.length; i++)
+      if(walkable(P.x + DIR4[i][0], P.y + DIR4[i][1]) &&
+         !inWater(P.x + DIR4[i][0], P.y + DIR4[i][1]))
+        near = { x: P.x + DIR4[i][0], y: P.y + DIR4[i][1] };
+    if(!near) continue;
+    var mb = mkMonster('w', 3, near.x, near.y);
+    mb.hp = mb.mhp = 900000; mb.state = 2; L.mons.push(mb);
+    nearRounds++;
+    for(i = 0; i < round * 2; i++){
+      var t4 = turnOf(mb), ph = i % round;
+      if(ph < WEB_SPIT_TURNS){
+        if(t4.blow) bad.push('it struck on one of its two spitting turns');
+        if(!t4.web) bad.push('it spat nothing on a spitting turn while standing over you');
+        spitTurns++;
+      } else {
+        if(t4.web) bad.push('it spat while it was busy closing with you');
+        if(t4.blow) meleeTurns++;
+        else bad.push('a turn of the rush was spent on nothing at all');
+      }
+    }
   }
-  if(!d) bad.push('nowhere to lay a web');
-  else {
-    layWeb(P.x+d[0],P.y+d[1]);
-    if(!webAt(P.x+d[0],P.y+d[1])) bad.push('the web did not stick to the floor');
+  if(nearRounds && meleeTurns < nearRounds * WEB_RUSH_TURNS * 2 - nearRounds)
+    bad.push('only ' + meleeTurns + ' turns of teeth over ' + nearRounds + ' set ups');
+
+  /* and out of reach: one more web, and the other two turns forfeit */
+  var forfeited = 0;
+  for(s = 0; s < seeds; s++){
+    bootTest(52800 + s);
+    P.hp = P.mhp = 900000; P.frozen = 0; P.webbed = 0;
+    L.mons.length = 0; L.webs = {};
+    var far = null;
+    for(i = 0; i < DIR4.length; i++){
+      var fx2 = P.x, fy2 = P.y, ok2 = 1;
+      for(var n2 = 1; n2 <= WEB_RUSH_TURNS + 2; n2++){
+        fx2 += DIR4[i][0]; fy2 += DIR4[i][1];
+        if(!walkable(fx2, fy2) || monAt(L, fx2, fy2) || isDoorish(fx2, fy2) ||
+           inWater(fx2, fy2)){ ok2 = 0; break; }
+      }
+      if(ok2){ far = { x: fx2, y: fy2 }; break; }
+    }
+    if(!far) continue;
+    var mf = mkMonster('w', 3, far.x, far.y);
+    mf.hp = mf.mhp = 900000; mf.state = 2; L.mons.push(mf);
+    if(monCanCloseIn(mf, WEB_RUSH_TURNS))
+      bad.push('it thinks it can reach you from ' + mdist(mf) + ' squares in ' +
+        WEB_RUSH_TURNS + ' steps');
+    farRounds++;
+    for(i = 0; i < round; i++){
+      var t5 = turnOf(mf), ph2 = i % round;
+      if(ph2 < WEB_SPIT_TURNS){
+        if(!t5.web) bad.push('it spat nothing on a spitting turn from across the room');
+      } else if(ph2 === WEB_SPIT_TURNS){
+        if(!t5.web) bad.push('out of reach it did not spend the first of the three on a web');
+        if(t5.moved) bad.push('out of reach it walked on the turn it should have spat');
+      } else {
+        if(t5.web) bad.push('it spat again on a turn it had already given up');
+        if(t5.blow || t5.moved) bad.push('it acted on a turn it had forfeited');
+        else { idleTurns++; forfeited++; }
+      }
+    }
+  }
+  if(farRounds && forfeited < farRounds * (WEB_RUSH_TURNS - 1))
+    bad.push('only ' + forfeited + ' turns were really forfeited');
+  if(!farRounds) bad.push('never got it far enough away to be out of reach');
+  var avgBlows = meleeTurns, webbedInstead = farRounds, rushed = 0;
+
+  /* --- a weaver is at home in its own web --------------------------- */
+  var weavers=[], plain=[], weaverTried=0;
+  for(i=0;i<MONS.length;i++) (MONS[i].weaver?weavers:plain).push(MONS[i].c);
+  if(weavers.indexOf('w')<0) bad.push('the web spinner sticks in its own web');
+  if(weavers.indexOf('E')<0) bad.push('a spider sticks in web');
+  for(i=0;i<weavers.length+1;i++){
+    var wc = i<weavers.length ? weavers[i] : 'O';       /* and one that is not */
+    /* Web will not stick over a crack or a rug, so keep dealing floors
+       until there is a pair of bare squares to walk between.  A square
+       that never had web on it proves nothing either way. */
+    var ln2=null, q2, sd;
+    for(sd=0;sd<40 && !ln2;sd++){
+      bootTest(52400+i*40+sd);
+      L.webs={}; L.mons.length=0;
+      for(q2=0;q2<DIR4.length && !ln2;q2++){
+        var ax=P.x+DIR4[q2][0]*2, ay=P.y+DIR4[q2][1]*2;
+        var bx2=ax-DIR4[q2][0], by2=ay-DIR4[q2][1];
+        if(!walkable(ax,ay)||!walkable(bx2,by2)) continue;
+        if(L.decor[by2*MAP_W+bx2]) continue;
+        ln2={x:ax,y:ay,dx:-DIR4[q2][0],dy:-DIR4[q2][1]};
+      }
+    }
+    if(!ln2) continue;
+    var wm=mkMonster(wc,4,ln2.x,ln2.y); wm.hp=wm.mhp=900; L.mons.push(wm);
+    var tx=ln2.x+ln2.dx, ty=ln2.y+ln2.dy;
+    layWeb(tx,ty);
+    if(!webAt(tx,ty)) continue;
+    weaverTried++;
     G.msgq=[];
-    playerMove(d[0],d[1]);
-    if(P.frozen<WEB_FLOOR_HOLD) bad.push('walking into web did not hold you');
-    if(Object.keys(L.webs).length) bad.push('the web is still there after catching you');
-    /* and a creature likewise */
-    bootTest(52998);
-    L.webs={}; L.mons.length=0;
-    var spot=null;
-    for(q=0;q<DIR4.length;q++){
-      var x=P.x+DIR4[q][0]*2, y=P.y+DIR4[q][1]*2;
-      if(walkable(x,y)&&walkable(x-DIR4[q][0],y-DIR4[q][1])) spot={x:x,y:y,dx:-DIR4[q][0],dy:-DIR4[q][1]};
-    }
-    if(spot){
-      var mm=mkMonster('E',3,spot.x,spot.y); mm.hp=mm.mhp=900; L.mons.push(mm);
-      layWeb(spot.x+spot.dx, spot.y+spot.dy);
-      G.msgq=[];
-      tryMonStep(mm, spot.dx, spot.dy);
-      if(!mm.stuck) bad.push('a creature walked through web unhindered');
-      /* held by web, not frozen in ice - they look nothing alike */
-      if(!mm.webbed) bad.push('a creature in web is not marked as being in web');
-      if(mm.stuck!==WEB_FLOOR_HOLD)
-        bad.push('web held it '+mm.stuck+' turns, not '+WEB_FLOOR_HOLD);
-      /* and it really does lose the turn */
-      var was=mm.x+','+mm.y;
-      G.turn=0; monstersMove();
-      if(mm.x+','+mm.y!==was) bad.push('a creature in web walked on regardless');
-      if(mm.webbed) bad.push('the web still holds it a turn later');
-      /* ice is not web */
-      var ic=mkMonster('E',3,spot.x,spot.y);
-      freezeMon(ic,'test');
-      if(ic.webbed) bad.push('something frozen by ice counts as being in web');
+    tryMonStep(wm, ln2.dx, ln2.dy);
+    var isWeaver = i<weavers.length;
+    if(isWeaver){
+      if(wm.stuck) bad.push(monShort(wm)+' stuck in web it should walk through');
+      if(!webAt(tx,ty)) bad.push(monShort(wm)+' tore up the web it walked over');
+    } else {
+      if(!wm.stuck) bad.push(monShort(wm)+' walked through web unhindered');
+      if(webAt(tx,ty)) bad.push('the web survived catching '+monShort(wm));
     }
   }
-  /* and it rots away in the end */
-  bootTest(52997);
-  L.webs={};
-  if(walkable(P.x+1,P.y)){
-    layWeb(P.x+1,P.y);
-    for(i=0;i<WEB_LIFE+2;i++) ageWebs();
-    if(webAt(P.x+1,P.y)) bad.push('web on the floor never rots away');
-  }
-  return { bad:bad, shots:shots, stuck:stuck, laid:laid, gap:gap, tries:tries };
+  if(weaverTried < weavers.length + 1)
+    bad.push('only '+weaverTried+' of '+(weavers.length+1)+
+      ' walked over web that was really there');
+  var avgHeld = held.length ? (held.reduce(function(x,y){return x+y;},0)/held.length) : 0;
+  return { bad:bad, shots:shots, stuck:stuck, laid:laid, tries:tries,
+           held:avgHeld, weavers:weavers.length, weaverTried:weaverTried,
+           melee:meleeTurns, spits:spitTurns, idle:idleTurns,
+           nearRounds:nearRounds, farRounds:farRounds, round:round };
 }
 function straightLine4(){
   for(var i=0;i<DIR4.length;i++){
@@ -10169,6 +10320,62 @@ function bowOfFireOK(seeds){
            misses:misses, missFires:missFires, plain:plain, unknown:unknown };
 }
 
+/* ------------------------------------------- nothing under a staircase
+   A staircase is cut into the flagstones, so nothing is laid over or
+   under it.  The stairs are placed - and moved - after the floor has
+   been furnished, so a rug can be down before they arrive.  The square
+   itself used to be struck off the rug and the rest of it left lying
+   there, which put the stairs in a hole in the middle of a rug: a
+   staircase on a rug, to anybody looking at it. */
+function stairsClearOK(seeds){
+  var bad=[], s, d, i, floors=0, stairs=0, rugSquares=0, wet=0, inRug=0, waterSquares=0;
+  for(s=0;s<seeds;s++){
+    bootTest(62000+s);
+    for(d=1;d<=8;d++){
+      enterLevel(d,'down');
+      floors++;
+      for(var k in L.rugId) if(L.rugId[k]) rugSquares++;
+      for(i=0;i<L.tiles.length;i++)
+        if(L.tiles[i]===WATER||L.tiles[i]===HOLY) waterSquares++;
+      var both=[L.stair, L.up];
+      for(var w=0;w<both.length;w++){
+        var st=both[w];
+        if(!st) continue;
+        stairs++;
+        var j=st.y*MAP_W+st.x;
+        if(isRugName(L.decor[j])) bad.push('a rug is laid under a staircase');
+        if(L.rugId && L.rugId[j]) bad.push('a staircase still counts as part of a rug');
+        if(L.tiles[j]===WATER||L.tiles[j]===HOLY){ wet++; bad.push('a staircase stands in water'); }
+        /* and the pool stops short of it, so its bank forms clear of the
+           steps rather than lapping at them */
+        for(i=0;i<DIR4.length;i++){
+          var nt=tileAt(st.x+DIR4[i][0], st.y+DIR4[i][1]);
+          if(nt===WATER||nt===HOLY){ wet++; bad.push('water laps at a staircase'); }
+        }
+        if(L.barrels && L.barrels[j]) bad.push('a barrel is under a staircase');
+        /* Moss is not checked: it grows on the flagstones and a staircase
+           is drawn without its square's ground cover anyway, so a patch
+           reaching under one is neither seen nor a mistake.  A rug is a
+           thing laid down, and that is a different matter. */
+        /* and it is not standing in a hole in one either: a rug that has
+           lost a square to the stairs is rolled up whole */
+        var near=0;
+        for(i=0;i<DIR4.length;i++)
+          if(isRugName(L.decor[(st.y+DIR4[i][1])*MAP_W+st.x+DIR4[i][0]])) near++;
+        if(near>=2){ inRug++; bad.push('a staircase is standing in a hole in a rug'); }
+      }
+    }
+  }
+  if(!stairs) bad.push('no staircases to look at');
+  /* the sweep must not simply have taken every rug off every floor */
+  if(rugSquares < floors) bad.push('only '+rugSquares+' squares of rug over '+floors+
+    ' floors - the sweep is lifting everything');
+  if(waterSquares < floors) bad.push('only '+waterSquares+' squares of water over '+floors+
+    ' floors - the margin is draining the dungeon');
+  return { bad:bad, floors:floors, stairs:stairs, rugSquares:rugSquares,
+           waterSquares:waterSquares, wet:wet, inRug:inRug };
+}
+
 function bowsOK(){
   var bad=[], out=[], names=['short bow','long bow','crossbow','great bow'], i;
   bootTest(1);
@@ -10487,14 +10694,14 @@ function carriedRingsOK(seeds){
       G.msgq=[]; G.beat=0;
       playerAttack(m);
       var said=G.msgq.map(function(q){ return q.fx||''; }).join(' ');
-      if(/damage|telling/.test(said)) hits++;
-      if(/telling/.test(said)) tell++;
+      if(/damage|double/.test(said)) hits++;
+      if(/double/.test(said)) tell++;
     }
     return hits ? tell*100/hits : 0;
   }
   var plainPct=blows(0), luckPct=blows(1);
   if(luckPct <= plainPct)
-    bad.push('battle luck landed no more telling blows: '+luckPct.toFixed(0)+'% against '+plainPct.toFixed(0)+'%');
+    bad.push('battle luck doubled no more blows: '+luckPct.toFixed(0)+'% against '+plainPct.toFixed(0)+'%');
   if(plainPct > CRIT_PCT + 6 || plainPct < CRIT_PCT - 6)
     bad.push('a plain blow lands well '+plainPct.toFixed(0)+'% of the time, not about '+CRIT_PCT+'%');
 
@@ -10593,4 +10800,616 @@ function oneStoneAloftOK(seeds){
   if(homeFromLanding<tried)
     bad.push((tried-homeFromLanding)+' came home from the wrong square');
   return { bad:bad, tried:tried, overlapped:overlapped };
+}
+
+/* -------------------------------------------- a room announced in a box
+   Walking into a room somebody built puts a box up over the map: the
+   room's own words, its own picture, and nothing said twice. */
+function roomBoxOK(seeds){
+  var bad=[], k, kinds={}, seen={}, tried=0;
+  for(k in ROOM_ENTRY){
+    kinds[k]=1;
+    if(!ROOM_TITLE[k]) bad.push('the '+k+' room has no heading');
+    if(!ROOM_ICON[k]){ bad.push('the '+k+' room has no picture'); continue; }
+    if(ATLAS.index[ROOM_ICON[k]]===undefined)
+      bad.push('the '+k+' room asks for a sprite the sheet has not got: '+ROOM_ICON[k]);
+  }
+  var atDoor=0, doors=0;
+  for(var s=0;s<(seeds||14);s++){
+    bootTest(64300+s);
+    for(var d=2;d<=9;d++){
+      enterLevel(d,'down');
+      var ri=-1, i;
+      for(i=0;i<L.rooms.length;i++)
+        if(!L.rooms[i].gone && L.rooms[i].special && ROOM_ENTRY[L.rooms[i].special]) ri=i;
+      if(ri<0) continue;
+      var r=L.rooms[ri];
+      if(!r.floors || !r.floors.length) continue;
+      /* Standing in the doorway is the moment the door is open and you
+         can see in.  That is where it should be said, a turn before you
+         set foot inside. */
+      var door=null, dx3, dy3;
+      for(dy3=0;dy3<MAP_H && !door;dy3++) for(dx3=0;dx3<MAP_W && !door;dx3++){
+        if(!isDoorish(dx3,dy3)) continue;
+        for(var q4=0;q4<DIR4.length;q4++)
+          if(roomIndexAt(dx3+DIR4[q4][0], dy3+DIR4[q4][1])===ri) door={x:dx3,y:dy3};
+      }
+      if(door){
+        doors++;
+        r.told=0; G.roomBox=null; P.blind=0; P.x=door.x; P.y=door.y; G.msgq=[];
+        announceRoom();
+        if(G.roomBox && G.roomBox.kind===r.special) atDoor++;
+        else bad.push('the '+r.special+' room said nothing from its own doorway');
+        r.told=0; G.roomBox=null;
+      }
+      /* stand in it and let the step be dealt with */
+      G.roomBox=null; r.told=0;
+      P.x=r.floors[0][0]; P.y=r.floors[0][1];
+      G.msgq=[];
+      announceRoom();
+      tried++;
+      seen[r.special]=1;
+      if(!G.roomBox){ bad.push('walking into the '+r.special+' room put no box up'); continue; }
+      if(G.roomBox.kind!==r.special)
+        bad.push('the box named the wrong room: '+G.roomBox.kind+' for '+r.special);
+      /* and it is said once only */
+      G.roomBox=null;
+      announceRoom();
+      if(G.roomBox) bad.push('the '+r.special+' room announced itself twice');
+    }
+  }
+  if(!tried) bad.push('never found a room worth announcing');
+  if(!doors) bad.push('never found a special room with a door on it');
+  return { bad:bad, tried:tried, kinds:Object.keys(seen).length, of:Object.keys(kinds).length,
+           doors:doors, atDoor:atDoor };
+}
+
+/* --------------------------------------------- words in the pack panel
+   The EFFECTS list at the foot of the pack is a bare list: there is
+   nothing above a line for the word "it" to point back at.  A rune's own
+   `txt` is written to sit under the name of the thing it is cut into, so
+   in the list it has to name that thing itself - "armor bites your
+   attacker", not "it bites your attacker", which reads as though
+   something were biting you. */
+function effectWordsOK(){
+  var bad=[], i, room=effectsColPx();
+  var worn=mkItem('armor',0), blade=mkItem('weapon',weaponIndex('long sword'));
+  for(i=0;i<RUNES.length;i++){
+    var rn=RUNES[i];
+    if(rn.t.indexOf('g')<0) continue;              /* worn ones only */
+    var line=runeEffect(worn, rn);
+    if(/^it['s ]/.test(line) || /^its /.test(line))
+      bad.push('the '+rn.n+' rune says "'+line+'" in the effects list, with no "it" to point at');
+    if(textPx(line)>room)
+      bad.push('the '+rn.n+' rune runs off the panel: '+textPx(line)+'px of '+room);
+    if(rn.t.indexOf('w')>=0){
+      /* offered to blades as well: it must not call a sword armour */
+      var wline=runeEffect(blade, rn);
+      if(wline===line) bad.push('the '+rn.n+' rune reads the same on a blade as on armour');
+      if(/armor|armour/.test(wline)) bad.push('the '+rn.n+' rune calls a blade armour');
+      if(textPx(wline)>room) bad.push('the '+rn.n+' rune runs off the panel on a blade');
+    }
+  }
+  /* the one that was complained of, by name */
+  var th=null;
+  for(i=0;i<RUNES.length;i++) if(RUNES[i].n==='thorns') th=RUNES[i];
+  if(!th) bad.push('there is no rune of thorns');
+  else {
+    var tl=runeEffect(worn, th);
+    if(!/armor/.test(tl)) bad.push('the thorns line does not say what is doing the biting: '+tl);
+    if(!/attack/.test(tl)) bad.push('the thorns line does not say who it happens to: '+tl);
+  }
+  /* and it really is what the pack would print */
+  bootTest(63100);
+  var body=mkItem('armor',0); body.known=1; body.br='thorns'; body.brKnown=1;
+  P.eq.body=body;
+  var lines=playerEffects().map(function(e){ return e[0]; });
+  var got=null;
+  for(i=0;i<lines.length;i++) if(/bites/.test(lines[i])) got=lines[i];
+  if(!got) bad.push('a suit of thorned armour says nothing in the effects list');
+  else if(/^it /.test(got)) bad.push('the pack still prints "'+got+'"');
+
+  /* a bow shoots; it is not a firearm */
+  var bows=[], nb;
+  for(i=0;i<WEAPONS.length;i++) if(WEAPONS[i].launch) bows.push(i);
+  if(!bows.length) bad.push('there are no bows');
+  for(i=0;i<bows.length;i++){
+    nb=mkItem('weapon',bows[i]); nb.known=1;
+    var notes=itemNotes(nb).map(function(e){ return e[0]; }).join(' | ');
+    if(/fires /.test(notes)) bad.push(WEAPONS[bows[i]].n+' says it fires: '+notes);
+    if(!/shoots /.test(notes)) bad.push(WEAPONS[bows[i]].n+' does not say it shoots: '+notes);
+  }
+
+  /* the ring of battle luck says what it actually does */
+  var bl=null;
+  for(i=0;i<RINGS.length;i++) if(RINGS[i].n==='battle luck') bl=RINGS[i];
+  if(!bl) bad.push('there is no ring of battle luck');
+  else {
+    if(/and keep$/.test(bl.txt)) bad.push('the ring still trails off with "and keep"');
+    if(!/arrow/.test(bl.txt)) bad.push('the ring does not say the arrows come back: '+bl.txt);
+    if(!/double/.test(bl.txt)) bad.push('the ring does not say what the blows do: '+bl.txt);
+  }
+  return { bad:bad, room:room };
+}
+
+/* ------------------------------------------- a curse you can point at
+   Reported: five damage a turn in water, and no cursed object anywhere
+   to be seen.  The curse was in the list at the foot of the pack all
+   along - underneath the perks and the runes, in a panel that shows two
+   lines and counts the rest, so it might as well not have been written.
+
+   Three things have to be true.  The pack must say so in its first two
+   lines, it must name the thing carrying it, and the burn itself must
+   explain where it came from the first time it happens. */
+function cursePlainOK(){
+  var bad=[], i, c;
+  for(c=0;c<CURSES.length;c++){
+    var cd=CURSES[c];
+    bootTest(66000+c);
+    /* a helm you cannot take off, with this curse in it */
+    var hat=mkItem('head',0);
+    hat.known=1; hat.cursed=1; hat.curse=cd.id;
+    P.eq.head=hat;
+    /* and a few ordinary things going on at the same time, which is the
+       whole of the difficulty: the panel shows two lines, so a curse
+       listed after the hunger and the perks is a curse nobody sees */
+    G.hungerState=1; P.conf=4; P.blind=3; P.haste=5;
+    if(!hasCurse(cd.id)) bad.push('a worn curse of '+cd.n+' is not felt at all');
+    var lines=playerEffects();
+    var room=2;                       /* what the panel actually shows */
+    var top=lines.slice(0,room).map(function(e){ return e[0]; });
+    var said=top.join(' | ');
+    if(said.toLowerCase().indexOf('curse')<0)
+      bad.push('the curse of '+cd.n+' is not in the first '+room+' lines of the pack: '+said);
+    var src=shortItem(hat);
+    if(said.indexOf(src)<0)
+      bad.push('the pack does not name the '+src+' carrying the curse of '+cd.n+': '+said);
+    /* and the line that is always on the screen says something */
+    if(!cursesOnYou().length) bad.push('nothing is counted as cursed');
+    /* the item itself, read in the pack, names which curse it is */
+    var notes=itemNotes(hat).map(function(e){ return e[0]; }).join(' | ');
+    if(notes.indexOf('CURSED')<0) bad.push('a cursed helm does not say it is cursed');
+    if(notes.indexOf(cd.txt)<0)
+      bad.push('a cursed helm does not say which curse: '+notes);
+    P.eq.head=null;
+    G.hungerState=0; P.conf=0; P.blind=0; P.haste=0;
+  }
+
+  /* the water burn says what is doing it, the first time it burns */
+  bootTest(66100);
+  var hat2=mkItem('head',0); hat2.known=1; hat2.cursed=1; hat2.curse='water';
+  P.eq.head=hat2;
+  P.hp=P.mhp=900; G.saidWaterCurse=0; G.msgq=[];
+  soakPlayer();
+  var first=G.msgq.map(function(q){ return String(q.s||''); }).join(' | ');
+  if(first.indexOf('cursed')<0)
+    bad.push('the first burn does not say you are cursed: '+first);
+  if(first.indexOf(shortItem(hat2))<0)
+    bad.push('the first burn does not name what is cursed: '+first);
+  /* and it does not keep saying it */
+  G.msgq=[];
+  soakPlayer();
+  var again=G.msgq.map(function(q){ return String(q.s||''); }).join(' | ');
+  if(again.indexOf('cursed')>=0)
+    bad.push('the burn explains itself every single turn: '+again);
+  if(!/burns/.test(again)) bad.push('the burn stopped saying anything at all: '+again);
+  P.eq.head=null;
+  return { bad:bad, curses:CURSES.length };
+}
+
+/* -------------------------------------------------- keeping your feet
+   A rune cut into what you wear on your feet, and a creature born with
+   four of them.  Both come to the same thing: running headlong in a
+   fight is how you go over, and these never do. */
+function sureFootedOK(){
+  var bad=[], i, sf=null;
+  for(i=0;i<RUNES.length;i++) if(RUNES[i].n==='sure footed') sf=RUNES[i];
+  if(!sf){ bad.push('there is no sure footed rune'); return { bad:bad }; }
+  /* it belongs to footwear and to nothing else */
+  if(sf.t!=='f') bad.push('the sure footed rune is offered to '+sf.t+', not to boots alone');
+  var pools={};
+  ['g','gh','gf'].forEach(function(kind){
+    pools[kind]=0;
+    for(i=0;i<RUNES.length;i++){
+      var fits=0, c;
+      for(c=0;c<RUNES[i].t.length;c++) if(kind.indexOf(RUNES[i].t.charAt(c))>=0) fits=1;
+      if(fits && RUNES[i].n==='sure footed') pools[kind]=1;
+    }
+  });
+  if(pools.g) bad.push('a breastplate can be cut with sure footed');
+  if(pools.gh) bad.push('a helmet can be cut with sure footed');
+  if(!pools.gf) bad.push('boots cannot be cut with sure footed at all');
+  /* and the pool a boot asks from is the one that contains it */
+  bootTest(67000);
+  var boots=mkItem('feet',1);
+  if(gearRuneKind(boots)!=='gf') bad.push('boots ask the wrong pool: '+gearRuneKind(boots));
+  if(gearRuneKind(mkItem('head',0))!=='gh') bad.push('a helm no longer asks for its own rune');
+  if(gearRuneKind(mkItem('armor',0))!=='g') bad.push('a coat asks for something odd');
+
+  /* worn, you never go over; the same trial without them, you do */
+  function falls(withRune){
+    var fell=0, steps=0, s, t;
+    for(s=0;s<200 && steps<240;s++){
+      if(s%20===0) bootTest(67100+s); else bootRoll(67100+s);
+      var lane=null, d;
+      for(d=0;d<DIR4.length;d++){
+        var dx=DIR4[d][0], dy=DIR4[d][1], ok=1, n;
+        for(n=1;n<=3;n++){
+          if(!walkable(P.x+dx*n,P.y+dy*n)||!walkable(P.x-dx*n,P.y-dy*n)){ ok=0; break; }
+          if(inWater(P.x+dx*n,P.y+dy*n)||inWater(P.x-dx*n,P.y-dy*n)){ ok=0; break; }
+        }
+        if(ok && !inWater(P.x,P.y)){ lane={dx:dx,dy:dy}; break; }
+      }
+      if(!lane) continue;
+      var hx=P.x-lane.dx*2, hy=P.y-lane.dy*2;
+      L.mons.length=0;
+      var back=mkMonster('E',5,hx,hy);
+      back.hp=back.mhp=90000; back.state=2; back.still=1; L.mons.push(back);
+      P.hp=P.mhp=90000; P.dex=P.mdex=3; P.conf=0; P.blind=0;
+      var bt=mkItem('feet',1); bt.known=1;
+      if(withRune){ bt.br='sure footed'; bt.brKnown=1; }
+      P.eq.feet=bt;
+      computeVis();
+      if(!battleNear()) continue;
+      if(!(monSeesPlayer(back) && canSeeMon(back))) continue;
+      for(t=0;t<3 && steps<240;t++){
+        P.runSteps=RUN_AFTER+5;
+        back.x=hx; back.y=hy;
+        var px=P.x, py=P.y;
+        G.msgq=[]; G.beat=0;
+        playerMove(lane.dx, lane.dy);
+        steps++;
+        for(i=0;i<G.msgq.length;i++) if(/stumble/.test(String(G.msgq[i].s||''))) fell++;
+        P.x=px; P.y=py;
+      }
+    }
+    return { fell:fell, steps:steps };
+  }
+  var bare=falls(0), shod=falls(1);
+  if(!bare.steps||!shod.steps){ bad.push('never got a run going'); return { bad:bad }; }
+  if(!bare.fell) bad.push('barefoot you never stumbled either, so the rune proves nothing');
+  if(shod.fell) bad.push('you went over '+shod.fell+' times of '+shod.steps+' in sure footed boots');
+
+  /* a centaur keeps its feet, and something else does not */
+  var sure=[], plain=[];
+  for(i=0;i<MONS.length;i++) (MONS[i].sure?sure:plain).push(MONS[i].c);
+  if(sure.indexOf('C')<0) bad.push('a centaur is not sure footed');
+  function monFalls(c){
+    var fell=0, tries=0, s;
+    for(s=0;s<400;s++){
+      bootTest(67300+s%20); srand(67400+s);
+      L.mons.length=0;
+      var sp=null, d;
+      for(d=0;d<DIR4.length;d++)
+        if(walkable(P.x+DIR4[d][0],P.y+DIR4[d][1])) sp={x:P.x+DIR4[d][0],y:P.y+DIR4[d][1]};
+      if(!sp) continue;
+      var mm=mkMonster(c,5,sp.x,sp.y); mm.hp=mm.mhp=90000; mm.state=2; L.mons.push(mm);
+      mm.runSteps=RUN_AFTER+5; mm.flee=3;
+      tries++;
+      if(monStumbles(mm)) fell++;
+    }
+    return { fell:fell, tries:tries };
+  }
+  var cen=monFalls('C'), orc=monFalls('O');
+  if(!orc.fell) bad.push('nothing stumbles at all, so the centaur proves nothing');
+  if(cen.fell) bad.push('a centaur went over '+cen.fell+' times of '+cen.tries);
+  /* and it is written down where a player can read it */
+  var hinted=0;
+  for(i=0;i<HINTS.length;i++) if(/centaur never stumbles/i.test(HINTS[i])) hinted=1;
+  if(!hinted) bad.push('no hint says a centaur never stumbles');
+  return { bad:bad, bare:bare, shod:shod, cen:cen, orc:orc, sure:sure.length };
+}
+
+/* --------------------------------------------------- a wand run dry
+   The last charge goes and so does the wand: a stick of dead wood is a
+   slot in the pack you have to notice is useless and clear out. */
+function spentWandGoesOK(){
+  var bad=[], i, k, checked=0;
+  for(k=0;k<WANDS.length;k++){
+    bootTest(67500+k);
+    P.slots=new Array(N_SLOTS).fill(null);
+    L.mons.length=0;
+    var w=mkItem('wand',k); w.known=1; w.ch=1;
+    P.slots[0]=w;
+    G.msgq=[];
+    zapWand(w, 1, 0);
+    checked++;
+    var still=null, all=carriedItems();
+    for(i=0;i<all.length;i++) if(all[i]===w) still=all[i];
+    if(still) bad.push('a spent '+WANDS[k].n+' wand is still in the pack with '+still.ch+' charges');
+    var said=G.msgq.map(function(q){ return String(q.s||''); }).join(' | ');
+    if(!/crumbles/.test(said)) bad.push('nothing was said when the '+WANDS[k].n+' wand ran dry: '+said);
+  }
+  /* one with something left in it stays */
+  bootTest(67600);
+  P.slots=new Array(N_SLOTS).fill(null);
+  var w2=mkItem('wand',0); w2.known=1; w2.ch=3; P.slots[0]=w2;
+  G.msgq=[];
+  zapWand(w2, 1, 0);
+  if(carriedItems().indexOf(w2)<0) bad.push('a wand with charges left crumbled anyway');
+  if(w2.ch!==2) bad.push('a zap cost '+(3-w2.ch)+' charges');
+  return { bad:bad, checked:checked };
+}
+
+/* ------------------------------------------------ blind is blind
+   Everything the game says about what a place looks like is something
+   your eyes did.  With them shut it says none of it. */
+function blindQuietOK(){
+  var bad=[], i;
+  function said(){ return G.msgq.map(function(q){ return String(q.s||''); }).join(' | '); }
+  /* walking into the dark, and out again */
+  /* dark rooms are only one floor in six, so keep dealing until there is
+     a pitch dark square to walk into */
+  var dark=-1, sd;
+  for(sd=0;sd<40 && dark<0;sd++){
+    bootTest(67700+sd);
+    /* the lamps stay lit on the top floors, so go down to where they do not */
+    enterLevel(DARK_MIN_DEPTH + 2, 'down');
+    for(i=0;i<L.tiles.length;i++)
+      if(L.darkMap && L.darkMap[i] && walkTile(L.tiles[i])){ dark=i; break; }
+  }
+  if(dark<0) bad.push('found no pitch dark square on any of forty floors');
+  else {
+    var dx2=dark%MAP_W, dy2=(dark/MAP_W)|0;
+    /* sighted, crossing the line is worth a word */
+    P.blind=0; G.wasDark=0; P.x=dx2; P.y=dy2; G.msgq=[];
+    noteDarkness();
+    if(!/pitch dark/.test(said())) bad.push('walking into the dark said nothing: '+said());
+    /* blind, it is not */
+    P.blind=20; G.wasDark=0; G.msgq=[];
+    noteDarkness();
+    if(said()) bad.push('blind, walking into the dark still said: '+said());
+    /* and coming out of it */
+    G.wasDark=1; G.msgq=[];
+    P.x=dx2; P.y=dy2;
+    if(!darkAt(P.x,P.y)) { /* already out */ }
+    P.blind=20; G.wasDark=1;
+    var lit=-1;
+    for(i=0;i<L.tiles.length;i++)
+      if(walkTile(L.tiles[i]) && !(L.darkMap && L.darkMap[i])){ lit=i; break; }
+    if(lit>=0){
+      P.x=lit%MAP_W; P.y=(lit/MAP_W)|0; G.msgq=[];
+      noteDarkness();
+      if(said()) bad.push('blind, coming out of the dark still said: '+said());
+      P.blind=0; G.wasDark=1; G.msgq=[];
+      noteDarkness();
+      if(!/see again/.test(said())) bad.push('sighted, coming out of the dark said nothing');
+    }
+  }
+  /* a room somebody built: blind you walk in and know nothing, and it
+     keeps its secret until you can look at it */
+  var told=0, quiet=0, s;
+  for(s=0;s<20;s++){
+    bootTest(67800+s);
+    var ri=-1;
+    for(i=0;i<L.rooms.length;i++)
+      if(!L.rooms[i].gone && L.rooms[i].special && ROOM_ENTRY[L.rooms[i].special]) ri=i;
+    if(ri<0) continue;
+    var r=L.rooms[ri];
+    if(!r.floors||!r.floors.length) continue;
+    P.x=r.floors[0][0]; P.y=r.floors[0][1];
+    r.told=0; G.roomBox=null; P.blind=20; G.msgq=[];
+    announceRoom();
+    if(G.roomBox||said()) bad.push('blind, the '+r.special+' room described itself');
+    if(r.told) bad.push('blind, the '+r.special+' room counted itself as told');
+    quiet++;
+    /* eyes open, and there it is */
+    P.blind=0; G.msgq=[]; G.roomBox=null;
+    announceRoom();
+    if(!G.roomBox) bad.push('with your eyes open the '+r.special+' room said nothing');
+    else told++;
+  }
+  if(!quiet) bad.push('never found a built room to walk into');
+  P.blind=0;
+  return { bad:bad, rooms:told };
+}
+
+/* ------------------------------------------------- knock back, on a club
+   The rune is offered to every weapon, a mace included, and a mace is the
+   club of the set.  What is checked here is that a club can really be
+   dealt one and that a blow from it really shoves. */
+function knockBackClubOK(){
+  var bad=[], i, kb=null;
+  for(i=0;i<RUNES.length;i++) if(RUNES[i].n==='knockback') kb=RUNES[i];
+  if(!kb){ bad.push('there is no knock back rune'); return { bad:bad }; }
+  if(kb.t.indexOf('w')<0) bad.push('knock back is not offered to weapons at all');
+  var clubs=[];
+  for(i=0;i<WEAPONS.length;i++) if(WEAPONS[i].gen==='club') clubs.push(i);
+  if(!clubs.length) bad.push('there is no club to cut it into');
+  /* dealt by the dungeon, not conjured: the pool a weapon draws from has
+     to contain it */
+  bootTest(71000);
+  var dealt=0, carried=0, n;
+  for(n=0;n<120000 && carried<3;n++){
+    var it=newItem(6);
+    if(!it || it.t!=='weapon' || clubs.indexOf(it.k)<0) continue;
+    dealt++;
+    if(it.br==='knockback') carried++;
+  }
+  if(!dealt) bad.push('no club was ever dealt');
+  else if(!carried) bad.push('over '+dealt+' clubs not one carried knock back');
+  /* and it shoves */
+  var shoved=0, landed=0;
+  for(var s=0;s<300;s++){
+    bootTest(71100+s);
+    L.mons.length=0; P.hp=P.mhp=90000;
+    var sp=null, d;
+    for(d=0;d<DIR4.length;d++)
+      if(walkable(P.x+DIR4[d][0],P.y+DIR4[d][1]) && walkable(P.x+DIR4[d][0]*2,P.y+DIR4[d][1]*2))
+        sp={x:P.x+DIR4[d][0],y:P.y+DIR4[d][1]};
+    if(!sp) continue;
+    var club=mkItem('weapon',clubs[0]);
+    club.known=1; club.br='knockback'; club.brKnown=1;
+    P.eq.rh=club;
+    var m=mkMonster('O',3,sp.x,sp.y); m.hp=m.mhp=90000; m.state=2; L.mons.push(m);
+    var wx=m.x, wy=m.y;
+    G.msgq=[];
+    playerAttack(m);
+    var fx=G.msgq.map(function(q){ return q.fx||''; }).join(',');
+    if(!/damage|double|sneak/.test(fx)) continue;
+    landed++;
+    if(m.x!==wx||m.y!==wy) shoved++;
+  }
+  if(!landed) bad.push('never landed a blow with a club');
+  else if(!shoved) bad.push('a club of knock back shoved nothing over '+landed+' landed blows');
+  return { bad:bad, dealt:dealt, landed:landed, shoved:shoved };
+}
+
+/* ------------------------------------------------ you eat little
+   Wanderer boots used to stop hunger dead: the meter sat at 100% for a
+   whole run, which is not eating little, it is not eating.  Thirty per
+   cent longer is what they are worth. */
+function slowDigestionOK(){
+  var bad=[], k=-1, i;
+  for(i=0;i<FEET.length;i++) if(FEET[i].prop==='slow digestion') k=i;
+  if(k<0){ bad.push('nothing has slow digestion on it'); return { bad:bad }; }
+  function turnsTo(state, boots, perk){
+    bootTest(74000);
+    P.food=FOOD_MAX; G.hungerState=0; P.digCtr=0; P.abstCtr=0;
+    P.eq.feet=null; P.perks={};
+    if(boots){ var b=mkItem('feet',k); b.known=1; P.eq.feet=b; }
+    if(perk) P.perks['abstemious']=1;
+    var t=0;
+    while(G.hungerState<state && t<60000){ upkeep(); t++; }
+    P.eq.feet=null; P.perks={};
+    return t;
+  }
+  var bare=turnsTo(1,0,0), shod=turnsTo(1,1,0), both=turnsTo(1,1,1);
+  if(shod>=60000) bad.push('in the boots you never grow hungry at all');
+  var pct=Math.round((shod/bare-1)*100);
+  if(pct<20||pct>40) bad.push('the boots are worth '+pct+'% longer, not about 30%');
+  if(both<=shod) bad.push('the perk and the boots together are worth no more than the boots');
+  /* and they do not make you proof against starving */
+  var starve=turnsTo(3,1,0);
+  if(starve>=60000) bad.push('in the boots you never starve either');
+  return { bad:bad, bare:bare, shod:shod, both:both, pct:pct, starve:starve };
+}
+
+/* -------------------------------------------- fire runs through web
+   Nothing else in the dungeon catches from the square next door - a
+   table has to be standing in the flame.  Web is a room full of tinder
+   strung across the floor. */
+function webBurnsOK(){
+  var bad=[], i, d;
+  /* a lane of open floor to string it across */
+  var lane=null;
+  for(var sd=0;sd<40 && !lane;sd++){
+    bootTest(74100+sd);
+    L.mons.length=0; L.webs={}; L.clouds.length=0;
+    for(d=0;d<DIR4.length && !lane;d++){
+      var x=P.x, y=P.y, ok=1;
+      for(var n=1;n<=7;n++){
+        x+=DIR4[d][0]; y+=DIR4[d][1];
+        if(!walkable(x,y)||isDoorish(x,y)||inWater(x,y)||L.decor[y*MAP_W+x]){ ok=0; break; }
+      }
+      if(ok) lane=DIR4[d];
+    }
+  }
+  if(!lane){ bad.push('nowhere to string a line of web'); return { bad:bad }; }
+  P.hp=P.mhp=900000;
+  var cells=[];
+  for(i=1;i<=7;i++){
+    var cx=P.x+lane[0]*i, cy=P.y+lane[1]*i;
+    layWeb(cx,cy,0,0,WEB_LIFE_NEST);
+    cells.push([cx,cy]);
+  }
+  var laid=0;
+  for(i=0;i<cells.length;i++) if(webAt(cells[i][0],cells[i][1])) laid++;
+  if(laid<5){ bad.push('only '+laid+' squares of web went down'); return { bad:bad }; }
+  /* light the near end and let it run */
+  dropEmber(cells[0][0], cells[0][1], WEB_BURN_MIN);
+  var turns=0, left=laid;
+  while(left && turns<40){
+    ageClouds();
+    turns++;
+    left=0;
+    for(i=0;i<cells.length;i++) if(webAt(cells[i][0],cells[i][1])) left++;
+  }
+  if(left) bad.push('the fire stopped with '+left+' squares of web still there');
+  if(turns>laid*WEB_BURN_MAX)
+    bad.push('it took '+turns+' turns to run through '+laid+' squares - it is not spreading');
+  /* and it is really gone: the drawing and the patch that catches you */
+  for(i=0;i<cells.length;i++){
+    var j=cells[i][1]*MAP_W+cells[i][0];
+    if(L.decor[j]==='web') bad.push('burnt web is still drawn on the floor');
+    if(L.webs[j]) bad.push('burnt web still catches you');
+  }
+  /* nothing else jumps: a table beside a fire is a table */
+  bootTest(74200);
+  L.clouds.length=0; L.webs={};
+  var spot=null;
+  for(d=0;d<DIR4.length && !spot;d++){
+    var tx=P.x+DIR4[d][0], ty=P.y+DIR4[d][1];
+    var ux=P.x+DIR4[d][0]*2, uy=P.y+DIR4[d][1]*2;
+    if(walkable(tx,ty)&&walkable(ux,uy)&&!L.decor[ty*MAP_W+tx]&&!L.decor[uy*MAP_W+ux]&&
+       !inWater(tx,ty)&&!inWater(ux,uy)) spot={x:tx,y:ty,ux:ux,uy:uy};
+  }
+  if(spot){
+    L.decor[spot.uy*MAP_W+spot.ux]='table';
+    dropEmber(spot.x,spot.y,3);
+    for(i=0;i<3;i++) ageClouds();
+    if(L.decor[spot.uy*MAP_W+spot.ux]!=='table')
+      bad.push('a table caught fire from the square next to it');
+    delete L.decor[spot.uy*MAP_W+spot.ux];
+  }
+  return { bad:bad, squares:laid, turns:turns };
+}
+
+/* ----------------------------------------------- a spinner's nest
+   It sits in the corner of a room in a nest of its own web, so you meet
+   the web before you meet the thing that made it. */
+function spinNestOK(seeds){
+  var bad=[], i, k, floors=0, spinners=0, nested=0, sizes=[], corners=0;
+  for(var s=0;s<(seeds||40);s++){
+    bootTest(74300+s);
+    for(var d=2;d<=9;d++){
+      enterLevel(d,'down');
+      floors++;
+      /* how many nesting spinners each room holds, and how much web is
+         in it.  Two nests in one room run into each other, so the web is
+         counted per room rather than per creature. */
+      var perRoom={}, j;
+      for(i=0;i<L.mons.length;i++){
+        var m=L.mons[i];
+        if(!m.def || m.def.sp!=='web') continue;
+        spinners++;
+        if(!m.nest) continue;
+        nested++;
+        var ri=L.roomAt[m.y*MAP_W+m.x];
+        perRoom[ri]=(perRoom[ri]||0)+1;
+        if(!webAt(m.x,m.y)) bad.push('a nesting spinner is not sitting in its own web');
+        if(L.webs[m.y*MAP_W+m.x]>=0) bad.push('a nest rots away like a shot patch');
+        /* and it really is in a corner */
+        var walls=0;
+        for(k=0;k<DIR8.length;k++){
+          var wx=m.x+DIR8[k][0], wy=m.y+DIR8[k][1];
+          if(wx<0||wy<0||wx>=MAP_W||wy>=MAP_H){ walls++; continue; }
+          var t=L.tiles[wy*MAP_W+wx];
+          if(t===WALL||t===ROCK||t===SDOOR) walls++;
+        }
+        if(walls>=4) corners++;
+        else bad.push('a nesting spinner sits with only '+walls+' walls about it');
+      }
+      var webPerRoom={};
+      for(j in L.webs){
+        var rj=L.roomAt[j|0];
+        webPerRoom[rj]=(webPerRoom[rj]||0)+1;
+      }
+      for(j in perRoom){
+        var n=webPerRoom[j]||0, want=perRoom[j];
+        sizes.push(n/want);
+        if(n<want*NEST_MIN || n>want*NEST_MAX)
+          bad.push(want+' nest(s) in one room came to '+n+' squares, outside '+
+            (want*NEST_MIN)+'-'+(want*NEST_MAX));
+      }
+    }
+  }
+  if(!spinners) bad.push('no web spinner turned up on any floor');
+  else if(!nested) bad.push('not one of '+spinners+' spinners sat in a nest');
+  var pct=spinners?Math.round(100*nested/spinners):0;
+  if(spinners>=15 && (pct<40 || pct>95))
+    bad.push(pct+'% of spinners nested, which is not "often"');
+  var avg=sizes.length?sizes.reduce(function(a,b){return a+b;},0)/sizes.length:0;
+  return { bad:bad, floors:floors, spinners:spinners, nested:nested, pct:pct,
+           avg:avg, corners:corners };
 }

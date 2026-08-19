@@ -349,18 +349,467 @@ otherwise you walk over and take it on arrival (`walkTo` job
 own-square-opens-the-pack rule, so standing on stairs and clicking takes
 them.
 
-### A second step in a turn is a hurried one
+### A second step in a turn comes sooner, but is not a shorter stride
 
 Anything quick enough to move twice — hasted, or a flier taking its
-extra step — used to spend a full beat before the second step and a full
-`MOVE_ANIM_MS` crossing the square, so moving twice took twice as long
-as everything else and read as two ordinary creatures. Every step after
-the first now costs `EXTRA_STEP` (0.5) of an ordinary one, both in the
-pause before it and in the crossing.
+extra step — used to spend a full beat before the second step, so moving
+twice took twice as long as everything else. The **pause** before every
+step after the first is now `EXTRA_STEP` (0.5) of the usual one.
 
-The crossing time had to become per-step: `m.anim` entries carry a sixth
-number, the duration, and `monPixel` uses `a[5] || MOVE_ANIM_MS` so
-anything without one behaves exactly as before.
+The **stride** is unchanged: both steps cross their square at
+`MOVE_ANIM_MS`, because that is how fast a thing of that size moves.
+Halving that as well was tried and reverted — it read as a skip rather
+than a stride.
+
+### Nothing under a staircase
+
+Two things, both because the stairs are placed *and moved* after the
+floor has been furnished:
+
+- **Rugs.** The square under the up-stair was quietly struck off the rug
+  (`delete L.rugId[uj]`), which left the rest of the rug lying there with
+  a hole in the middle and the stairs standing in the hole — a staircase
+  on a rug, to anyone looking at it. `tidyRugs` already rolls up a whole
+  rug that has lost a square; it now runs again after the stairs are
+  settled, and the hole-punch is gone. Measured over 480 floors: 8
+  staircases in a hole in a rug, now 0, with 5,991 squares of rug still
+  laid elsewhere.
+- **Water.** `dryAroundStairs` pulls any pool square touching a staircase
+  back to bare floor, so the bank forms clear of the steps instead of
+  lapping at them. Bridges are left alone — a plank over the water is dry
+  too. Over 480 floors: 71 pool squares touching a staircase, now 0, with
+  15,610 squares of water still cut.
+
+Moss is deliberately not swept: it grows on the flagstones, and a
+staircase is drawn without its square's ground cover anyway, so a patch
+reaching under one is neither seen nor a mistake.
+
+`stairsClearOK` in the harness checks all of it from the soak suite, and
+guards the other way too — that the sweeps have not simply lifted every
+rug and drained every pool.
+
+## Pack and Wait buttons, walls, and a following view
+
+### A row of buttons along the floor of the panel
+
+The pack was a small picture squeezed onto the flags line, and waiting a
+turn had no way in at all without a keyboard. Two buttons now sit along
+the bottom of the panel — **Pack** and **Wait** — with the flags line
+above them. `fitBars` reserves the row (`PANEL_BTN_H`, `PANEL_BTN_Y`) and
+everything else stacks up from it.
+
+They are always drawn, not gated on `usingPointer()`: the panel is laid
+out around them, and a row that came and went would shuffle the stats and
+the log up and down as you touched the mouse. `waitTurn()` is now one
+function that both SPACE and the button call, so they cannot drift apart.
+
+This turned up a pre-existing collision: the look-mode hint
+("ARROWS look around, ENTER reads") was centred on the **whole screen**,
+so it began inside the panel and was written across whatever was there.
+It is centred on the map now (`textM`), which is where what it is about
+actually is.
+
+### Clicking a wall walks you up to it
+
+Pushing into stone is how a hidden door gives itself away, and with the
+keyboard that is simply walking at it. A click used to answer "You can't
+go there" and leave you standing — so a whole way of playing was shut to
+the mouse. A click on a wall now walks you over and puts your hands on it
+(`walkTo` job `{feel}`, carried out by `doWalkJob`), exactly as walking
+into it would. No turn is spent on plain stone; a secret door reveals
+itself, as ever.
+
+### The view follows you instead of jumping
+
+The player is pinned to the middle of the screen and the world moved a
+whole tile between one frame and the next, which is the jerk. `WALK_AT`
+is where the view has got to — your position, arrived at smoothly: it
+closes `WALK_CHASE` (0.22) of the distance each frame, and `walkLag()`
+feeds the remainder into `camSlip` so the world is drawn where the view
+has reached rather than where you already are. Twelve frames to cross a
+square, biggest step 1.8px of 8.
+
+Corners come free: the view is still coming out of the last square when
+you start into the next, so it cuts across rather than turning on the
+spot.
+
+It does **not** lag when `battleNear()` — in a fight the picture has to
+say exactly where you are — nor across a fall, a teleport or a new floor,
+where it snaps. `WALK_LAG_MAX` (1.4 squares) is the most it will ever
+trail by.
+
+`camWaiting` had to stop asking `camSlip`, which now includes the
+following, and ask `camSettled()` instead — otherwise an order waiting on
+the view would never fire while you were walking.
+
+Known and accepted: `mouseTile()` does not account for the slip, so
+mid-glide the hover frame sits on the settled grid, up to a square from
+the drawn tiles. That is the same pre-existing quirk the camera slide
+has.
+
+## Rooms announced in a box, a hint, and rounder holes
+
+### A box over the map when you walk into a built room
+
+`announceRoom` still writes its two lines to the log, and now also sets
+`G.roomBox = { kind }`. `resumeMode` puts the box up once the turn has
+finished playing out (the same place `G.ask` is handled), so it never
+lands in the middle of an animation and it stops an auto-walk dead.
+
+`drawRoomBox` centres a 148-wide panel on the **map**, not the screen,
+with the room's own picture drawn at 2x beside a heading. The words are
+`ROOM_ENTRY` joined and re-wrapped, so the box does not depend on where
+the log lines happened to break. Two new tables in `part1_core.js`:
+`ROOM_TITLE` and `ROOM_ICON` — six rooms, six sprites, all of them
+already on the sheet (`roomBoxOK` checks that, so a renamed sprite fails
+the suite rather than drawing nothing).
+
+ENTER, SPACE, TAB and ESC close it (`roomKey`), and so does a click or a
+touch anywhere at all. That last check sits at the **top** of `clickAt`,
+ahead of the Pack and Wait buttons: a click meant to dismiss the box must
+not also open the pack behind it. The test clicks exactly there.
+
+`room` is deliberately not in `MAP_MODES`, so the map cannot be dragged
+or wheeled while the box is up.
+
+### The hint about playing with the keys
+
+One more line in `HINTS`, 42 of them now.
+
+### Holes are rounded on the diagonal, not bitten square
+
+A hole's corners were already cut, but by `drawLiquidCorners`, which
+takes a **2x2 square** out. That does not remove the step - it moves it
+two pixels - so the floor kept a right angle of its own pointing back
+into the drop, and four of them round one hole read as a plus sign
+rather than a pit.
+
+`drawHoleCorners` replaces it for `HOLE` only: `cornerNib` takes **three
+pixels** off - the corner and the one either side of it along the two
+edges - which is a true 45 degree cut. Water keeps the square bite; a
+pool is a bigger, softer shape and nobody has complained of it.
+
+Nothing is taken off the squares around the hole. That was tried first
+(the literal reading of the request) and it leaves a detached speck of
+black in the floor at each corner, because the hole's own cut is still
+there two pixels away. Pictures settled it; the corners wanted cutting
+were the hole's own.
+
+The check is in `test_render.js`: it digs a hole in a patch of bare
+floor, finds the black 8x8 fill on screen, and requires exactly twelve
+one-pixel blits at the twelve corner positions, no 2x2 blits inside the
+hole, and **no one-pixel blit anywhere else on the frame**. On the old
+code: 0 pixels cut, 4 square bites.
+
+## Teleports, web, and words that meant nothing
+
+### The jump is half as long, and you cannot act during it
+
+`WARP_SHAKE` 300 -> 150 and `WARP_FLASH` 120 -> 60: the whole jump is
+210ms rather than 420.
+
+The real bug was that orders given during it went through. `beatWait`
+only paces the log; it holds nothing back from the keyboard. So you could
+press an arrow while the man was still shivering on the square he was
+leaving and walk out of the far end of a teleport before you had arrived
+at it. `warping()` (true while `warpPhase(P.warp)` is live) now guards
+`playKey`, the `play` branch of `clickAt`, and `walkTick`.
+
+### Web really holds you now - it held you for nothing at all
+
+Measured before touching anything: **0 turns lost**, every trial, walking
+into a patch of web on the floor.
+
+The cause is a difference between the two clocks. A monster's `stuck` is
+read at the top of its own turn, so `stuck = 1` costs it one turn. The
+player's counters are wound down in the `upkeep` that runs at the end of
+the **same turn the web caught him**, so `P.frozen = 1` was gone before he
+had a turn to lose. `WEB_FLOOR_HOLD` was 1, and the spat web rolled 1-2,
+so half the time that cost nothing either.
+
+`stickPlayer(turns)` now adds one to pay for that wind down, and
+`webHold()` (1-2 turns) is used for both the spat web and the floor
+patch. By the time anything is drawn the figure on the status line is the
+number of turns really left, so nothing lies to you. The suite counts
+turns actually lost - `turnsHeldAfter()` - rather than reading the
+counter, which is what let the old figure pass.
+
+**The same off-by-one is still in ice, sleep and the rest of `P.frozen`.**
+Left alone deliberately: those roll 2-5, so they always cost something,
+and changing them changes the balance of the game. Worth knowing about.
+
+`weaver: 1` on the spider and the web spinner: `webCatches(x, y, who)`
+returns false for them, so they walk their own silk without sticking and
+**without tearing it up**, which lets a spinner fight from inside the
+mess it has made. The old web probe used a spider as its test creature;
+it uses an orc now.
+
+### Words
+
+- The room box no longer says "ENTER to go on". Half the people playing
+  are holding a telephone.
+- A bow **shoots** arrows; it does not fire them.
+- Ring of battle luck: "your blows land better, and keep" -> "double
+  damage, arrows come back". The "keep" meant `LUCK_RECOVER_PCT` - shafts
+  you loose come back 35% of the time instead of 20%.
+- A blow that crits said "12 telling". It says "12 double", which is what
+  actually happens (`CRIT_MULT` is 2). The effect column is ten
+  characters, so "critical" does not fit.
+- Runes now carry an `eff` used only in the pack's EFFECTS list, because
+  that list is bare - there is nothing above a line for "it" to point at,
+  and "it bites your attacker" reads as something biting *you*. So
+  "armor bites your attacker". `knockback` is offered to blades as well
+  and says whichever this copy is. `effectWordsOK` fails the suite if any
+  worn rune's line starts with "it", or runs past the 29-character
+  column.
+
+### Not changed: the troll
+
+Asked about, and left alone on request. A troll is not taking extra
+turns - it has three attack dice (1d8/1d8/2d6, two claws and a bite,
+straight out of Rogue), so one round prints three lines. Averages 16 a
+round; medusa 21, ur-vile 20, dragon 25.5. Trolls start appearing around
+floor 4-5 and are common by 8.
+
+## A runed stone changed colour in the air
+
+Reported: a red stone with the freezing rune flew white; a blue one with
+the returning rune flew green.
+
+The look of a runed stone is dealt afresh every run - `APPEAR.stone`,
+a shuffle of the five carvings - and `itemSprite` respects it, so the one
+in your pack and the one on the floor were right. The **flight** was
+drawn from `WEAPONS[k].s`, the stone's true sprite, in all four places
+that put something in the air: `throwAtSquare`, `fireAt`, and both
+`G.ret` returns. So a stone changed carving the instant it left your hand
+and named its own rune on the way across the room - which is the whole of
+what identifying one is for.
+
+All four now use `itemSprite(it)`. Nothing else in the renderer was
+wrong; the floor and the pack already went through it.
+
+The effects were already unconnected to the look - the deal is
+reshuffled per run and `stoneLooksOK` has always checked that no two
+stones look alike and that runs differ. What it did not check was that a
+stone looks the same in the air as in the hand, which is why this got
+through. It does now, for the flight out and the flight home, and it
+fails unless at least one stone in the trial is actually wearing somebody
+else's carving - otherwise an identity deal would let it pass.
+
+## A curse you can point at, and a spinner that rushes
+
+### The curse was written down where nobody could read it
+
+Reported: five damage a turn in water, and no cursed object to be found.
+Nothing was broken - `playerEffects` had listed the curse all along.  It
+listed it **last**, after the hunger, the perks, the runes and the
+protected armour, in a panel that shows **two** lines and counts the rest
+as "+7".  So it was never once on the screen.
+
+Three changes, all about saying so:
+
+- Curses go to the **top** of `playerEffects`, and each one now takes two
+  lines: `CURSED: water burns you` and `from your leather cap`
+  (`curseSource(id)`).  It is the only entry in that list quietly costing
+  hit points.
+- `CURSED` on the panel flag line, which is always on the screen beside
+  Hungry and Stuck.
+- The first time the water burns you, an extra line: *"Your leather cap
+  is cursed: water burns you."*  Once only (`G.saidWaterCurse`) - every
+  turn would be noise, and the panel carries it after that.
+- And the item's own notes in the pack say which curse, not just
+  `CURSED - cannot be removed`.
+
+`cursePlainOK` puts a cursed helm on with hunger, confusion, blindness
+and haste all running, so the curse has four other lines competing with
+it, and fails unless it is inside the first two.  That is what the old
+code could not do.
+
+### The web spinner gathers itself and rushes
+
+`burst: 3` on the spinner: it banks an action a turn and spends three at
+once - three steps, or a step and two bites, or three bites.  Average
+speed is unchanged, it simply arrives all together.  Driven from
+`monstersMove`, and only while it is hunting (`state === 2`), so it still
+wakes up and patrols at the ordinary rate.
+
+`monWeb` came **out** of `monRanged`: the spit is no longer something it
+does in passing.  On its rush turn it asks `monCanCloseIn(m, 3)` - a
+three-deep breadth first search for a square beside you, because straight
+line distance says nothing about a wall - and if the answer is no, the
+whole rush buys one web.  If it can neither reach you nor shoot (out of
+`WEB_RANGE`, or no clear line) it spends the three on walking.
+
+The aimed shot now **lays web on your square and then catches you with
+it**, through the same `webCatches`/`stickPlayer` door that a patch on
+the floor uses - one rule, written once.  A shot that goes wide lays web
+on the ground *between* you and it, never under your own feet, which is
+what "watch where you tread" is supposed to mean.  Measured: of 365 spits
+at five squares, 163 landed on the player and held him every time.
+
+Retired `WEB_EVERY`; the burst is the cadence now.
+
+## Sure feet, spent wands, and blind is blind
+
+### A third line in the EFFECTS list
+
+It showed two, and a two-line entry was cut in half: "hands glow red:
+next hit" with the half that said *what for* counted as "+3".  There were
+ten spare pixels above the list doing nothing - the stats end at 96 and
+the divider was at 104 - so it starts at 100 now, which is a third line.
+`room` is worked out from the screen that is left rather than written
+down as 2, and it keeps a line back for the thing in your hand.  The red
+hands are one line again: "hands glow red: next hit confuses", 125px of
+the 128 there are.
+
+**The width checks were wrong in both directions and are now measured in
+pixels.**  `noteChars()` worked from a screen 320 across, which this game
+has never been: it allowed 29 letters where 21 of the widest fit.  And
+21 letters is itself far too strict for anything written in English,
+because the font is not fixed width - an 'i' is two pixels and an 'm' is
+six.  `textPx()` measures the real thing against `INV_COL_W`, which is
+now a constant in part1 that the drawing reads rather than a number
+worked out twice.
+
+### Sure footed, and a centaur
+
+A new rune, `t: 'f'` - footwear only, the way `clearwater` is `'h'` for
+headwear.  `gearRuneKind(it)` is the single place that decides which pool
+a piece of gear draws from, asked by both the dungeon and the scroll of
+enchantment, so they cannot drift apart.  Wearing it, `playerStumbles`
+returns false: measured 52 falls in 240 running steps barefoot, 0 in the
+boots.  Dealt to about 2% of the footwear that turns up.
+
+`sure: 1` on the centaur, read by `monStumbles`: 0 falls in 400 against
+an orc's 119.  And the hint "A centaur never stumbles."
+
+### The web spinner, 1 / 1 / 3 - a round of five turns
+
+Got wrong twice before it was right, both times by reading "1/1/3" as
+actions in a three turn round.  It is **three parts of a five turn
+round**: one turn spitting, one turn spitting, then three turns in which
+it either walks and bites - an ordinary turn at a time - or spits one
+more web and forfeits the other two, because there is nothing else it
+can do to somebody it cannot reach.
+
+    beside you   web web bite bite bite
+    six squares  web web web idle idle
+
+The reach is asked once, at the top of the three, and settles the rest of
+the round.  Asking it again each turn would let a spinner spit, take a
+step, and spit again.  `m.gather` is the phase, `m.rushing` the answer.
+
+`monWeb` lost its minimum range.  A spinner standing over you
+could not spit at all, so its gathering turns were spent on nothing
+whatever, which was the whole of the complaint.  Web in the face is
+exactly what it would do.
+
+And a web spat over you now **stays on your square** rather than coming
+away with you, so you can see what has hold of you.  It goes down over
+whatever you were standing on - moss, a cracked flagstone - and
+`L.webOver` remembers what it covered so `clearWeb` lays it back when the
+web rots.  A patch you walk into still comes away on your boots; that one
+you can see coming.
+
+A spit that laid no web says `no web` in the bar rather than `miss`: a
+blow that went wide and a shot that stuck to nothing are different
+things and looked identical.
+
+### A wand run dry crumbles
+
+`wandSpent(it, spent)` after the zap has been resolved, so the charge you
+paid for still does its work.  Both exits of `zapWand` go through it -
+the teleport branch returns early.
+
+### Blind is blind
+
+- `noteDarkness` says nothing.  Walking from a lit room into a pitch dark
+  one is not something you notice with your eyes shut.  The crossing is
+  still **recorded**, so the line comes at the right moment if your sight
+  is back before you cross again.
+- `announceRoom` says nothing and does **not** set `r.told`, so a built
+  room keeps its secret until you can look at it.
+- Everything a creature does was already quiet: `canSeeMonAt` returns
+  false when `P.blind`.
+
+### Not changed: the bat, and knock back
+
+The bat was measured over 300 one-on-one fights on floor 1 with the
+starting kit: armour 3, your blows land 63% against the spider's 86% and
+the ice monster's 92%, the fight drags 57 turns, and it kills you 10
+times in 300 - twice the spider, five times the rat.  It is the hardest
+thing on floor 1 to hit by a wide margin.  Armour 3 is the original Rogue
+value and it stays, on request.
+
+Knock back already existed and already worked on a club: 2.2% of the
+maces the dungeon deals carry it, and 66 of 205 landed blows shoved -
+`KNOCKBACK_PCT` is 35.  `knockBackClubOK` now holds both of those facts
+down.
+
+## A room announces itself at the door
+
+`announceRoom` asked `roomIndexAt(P.x, P.y)`, and a doorway belongs to no
+room - so the box came up on the step **after** you had walked in.
+`roomToAnnounce()` looks through from a doorway to the rooms it joins and
+takes the one with something to say, which is the moment the door is open
+and you can see in.  40 of 40 special rooms with a door on them now say
+so from the doorway.
+
+## Eating, saving, and a nest that burns
+
+### "You eat little" meant "you never eat"
+
+`hasProp('slow digestion')` set the hunger burn to **zero**, so wanderer
+boots stopped hunger dead - the meter sat at 100% for a whole run.  It
+is thirty per cent now, by the same arithmetic the abstemious perk uses:
+three turns in thirteen cost nothing, on a counter of its own so that
+having both is worth having both.  Measured: hungry after 1701 turns
+barefoot, 2213 in the boots (30% longer), 2878 with the perk as well.
+And you still starve in them, which the check also holds down.
+
+### SAVE AND QUIT does both
+
+It opened the slot picker, wrote the file, printed "Saved." and sat there
+with the run still going.  Now: the slot is asked for **once**, and
+`G.slot` remembers it - set by `saveInto` before the run is packed, so
+the save carries it, and by `loadFrom`, so a run taken out of slot two
+knows it lives in slot two.  After that SAVE AND QUIT writes that slot
+and drops you on the splash with no menus standing behind it
+(`quitToTitle`).  If writing the remembered slot fails, the picker opens
+with the reason.
+
+### Fire runs through web
+
+Web is the one thing in the dungeon that catches from the square next
+door - everything else has to be standing in the flame.  `catchWebNear`
+lights any of the eight neighbours that has web on it, two or three turns
+each, so a fire crosses a nest at about a square a turn: measured, seven
+squares in nine turns and none of it left.  A table beside a fire is
+still a table, and the check says so.
+
+Burning web goes through `clearWeb` rather than `delete L.decor[j]`: it
+is held in two places - the drawing and the patch that catches you - and
+deleting only the first left an invisible patch that still stuck you.
+
+### A spinner sits in a nest
+
+`spinNests` runs after `populate` and moves seven spinners in ten into a
+corner of the room they were rolled in - `roomCorners` looks for a floor
+square with five of its eight neighbours in the stone, which is what a
+corner comes to, and works from the room's floor list because half the
+rooms down here are not rectangles.  Then three or four squares of web
+spun out from it.
+
+Nest web is **permanent**: `L.webs[k] < 0` means `ageWebs` leaves it
+alone.  A patch that rotted in forty turns would be gone long before you
+walked across the floor to find it.  The creature is marked `m.nest` so
+the check can tell a spinner that lives there from one that wandered
+across somebody else's web.
+
+This turned up an old invariant that had to give: `decorHides` counted
+web as something you could lose an item under.  The drawing puts what is
+on a square over its decor, exactly as it does with moss, so a thing
+lying in a nest is in plain sight - a larder rather than a hiding place.
 
 ## A flaky render check, fixed
 

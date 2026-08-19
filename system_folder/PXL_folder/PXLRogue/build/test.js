@@ -107,8 +107,9 @@ check(longest.length <= 53, 'item name too long for the message line');
 /* --- 2b. effects panel and the stealth curve ----------------------- */
 ctx.bootTest(4242);
 const ew = ctx.effectsWidth();
-console.log('widest effect line :', ew);
-check(ew <= 29, 'effect line too wide for the panel: ' + ew);
+console.log('widest effect line : ' + ew.px + 'px of ' + ew.col + ' - "' + ew.s + '"');
+check(ew.px <= ew.col, 'effect line too wide for the panel: ' + ew.px + 'px of ' + ew.col +
+  ' - "' + ew.s + '"');
 console.log('turns to be spotted at 3 squares, by dex:', ctx.stealthCurve());
 
 /* --- 3. room shapes actually vary ---------------------------------- */
@@ -951,6 +952,12 @@ const vr = ctx.vaultRoomsOK(12);
 console.log('walled-in    : ' + vr.rooms + ' rooms over ' + vr.floors + ' floors, ' +
   vr.sq.toFixed(0) + ' squares and ' + vr.things.toFixed(1) + ' things in each');
 check(vr.bad.length === 0, 'walled-in rooms: ' + [...new Set(vr.bad)].slice(0, 4).join('; '));
+
+const sc = ctx.stairsClearOK(12);
+console.log('the stairs   : ' + sc.stairs + ' over ' + sc.floors + ' floors - nothing laid ' +
+  'under one, none standing in a hole in a rug (' + sc.rugSquares + ' squares of rug still ' +
+  'down), and the water stops short of every one (' + sc.waterSquares + ' squares still cut)');
+check(sc.bad.length === 0, 'the stairs: ' + [...new Set(sc.bad)].slice(0, 4).join('; '));
 
 const bi = ctx.blastIntoVaultOK(20);
 console.log('blasting in  : ' + (bi.bad.length ? bi.bad.length + ' problems' :
