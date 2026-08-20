@@ -12915,8 +12915,12 @@ function boot() {
   /* The painted title screen, a file beside the page like the sheet is.
      Nothing waits on it: if it never loads, drawTitle falls back to a
      plain dark screen and the menu works just the same. */
+  var addCacheBust = function (url) {
+    if (!url || url.indexOf('data:') === 0) return url;
+    return url + (url.indexOf('?') === -1 ? '?v=' + Date.now() : '&v=' + Date.now());
+  };
   splashImg = new Image();
-  splashImg.src = SPLASH_PNG;
+  splashImg.src = addCacheBust(SPLASH_PNG);
 
   atlasImg = new Image();
   /* The sheet is a file beside this one, not a copy welded into it: what
@@ -12938,7 +12942,7 @@ function boot() {
     playtestMenu();   /* ask, rather than open on the title */
     requestAnimationFrame(loop);
   };
-  atlasImg.src = ATLAS_PNG;
+  atlasImg.src = addCacheBust(ATLAS_PNG);
 
   window.addEventListener('resize', fit);
   window.addEventListener('keydown', onKey, false);
