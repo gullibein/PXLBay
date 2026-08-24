@@ -1574,7 +1574,7 @@ function flinchFirstOK(){
     computeVis();
     if(!canSeeMon(m)) return ['the creature cannot be seen'];
     G.beat=0;
-    var t0=Date.now();
+    var t0=nowMs();
     beatWait(BEAT_PLAYER);
     monstersMove();
     if(!m.hurt) continue;                    /* the burn missed it somehow */
@@ -1614,16 +1614,16 @@ function shotTimingOK(){
   fireAt(m);
   if(!G.beat) bad.push('the shot did not pause the turn, so monsters move while it flies');
   var flight=G.beat;
-  if(m.hp<400 && (!m.hurt || m.hurt.t <= Date.now()+1))
+  if(m.hp<400 && (!m.hurt || m.hurt.t <= nowMs()+1))
     bad.push('the target flinches before the arrow arrives');
   var lines=G.msgq.filter(function(x){return x.at;});
-  if(lines.length && lines[lines.length-1].at <= Date.now()+1)
+  if(lines.length && lines[lines.length-1].at <= nowMs()+1)
     bad.push('the text appears before the arrow lands');
   monstersMove();
   var moved=L.mons.filter(function(x){return x.anim&&x.anim.length;});
-  if(moved.length && stepAt(moved[0],0) <= Date.now()+1)
+  if(moved.length && stepAt(moved[0],0) <= nowMs()+1)
     bad.push('a monster starts moving before the arrow lands');
-  if(moved.length && stepAt(moved[0],0) < Date.now()+flight-5)
+  if(moved.length && stepAt(moved[0],0) < nowMs()+flight-5)
     bad.push('monsters wait less than the flight time');
   L.mons.length=0;
   return bad;
@@ -1654,7 +1654,7 @@ function turnPacingOK(){
   }
   computeVis();
   G.beat=0;
-  var t0=Date.now();
+  var t0=nowMs();
   beatWait(BEAT_PLAYER);
   monstersMove();
   var seen=L.mons.filter(function(m){return m.anim&&m.anim.length&&canSeeMon(m);});
@@ -2657,13 +2657,20 @@ function curseHiddenOK(){
       bad.push(kinds[i][0]+' does not show the usual '+usual+' for its kind');
     if(sc.indexOf(String(usual-3))>=0) bad.push('the curse is visible in the numbers');
 
-    /* worn, you find out */
+    /* Worn, you still do not find out what it is worth - only that it
+       is cursed, because it will not come off.  Wearing it used to give
+       you the real number, which is most of the identify game handed
+       over for the price of a moment's fumbling.  A scroll read over it
+       is what tells you. */
     P.eq.body=null; P.eq.head=null; P.eq.feet=null; P.eq.lh=null;
     var slot=kinds[i][0]==='armor'?'body':kinds[i][0]==='shield'?'lh':kinds[i][0];
     P.eq[slot]=cursed;
-    if(say(cursed).indexOf(String(usual-3))<0)
-      bad.push('wearing it did not reveal what it really does');
+    if(say(cursed).indexOf(String(usual-3))>=0)
+      bad.push('wearing a '+kinds[i][0]+' gave away what it really does');
     P.eq[slot]=null;
+    identifyItem(cursed);
+    if(say(cursed).indexOf(String(usual-3))<0)
+      bad.push('a scroll read over a '+kinds[i][0]+' did not tell you what it does');
   }
 
   /* a weapon keeps its secret too */
@@ -4079,7 +4086,7 @@ function perksOK(){
       computeVis();
       if(!perkReady()) bad.push('the screen never opened once it was quiet');
       /* and the wait really is about half a second */
-      G.perkPick.at = Date.now() + PERK_PAUSE;
+      G.perkPick.at = nowMs() + PERK_PAUSE;
       if(perkReady()) bad.push('the wait after the last blow is not honoured');
       G.perkPick=null;
     }
@@ -4467,8 +4474,12 @@ function hurlWeaponsOK(){
     return { w:w, m:m };
   }
 
-  /* thrown, it does what it does in the hand, and it is always there
-     afterwards - on the floor or back in your grip */
+  /* Thrown, it does what it does in the hand, and it comes through the
+     landing about four times in five - on the floor or back in your
+     grip.  It used to come through every time, which made a spear the
+     one weapon in the dungeon that cost nothing at all to use; see
+     hurlWear.  What is asked here is that it is the throw that takes it
+     and nothing else, so the share is measured rather than assumed. */
   var s = setup(spear, 0);
   if(!s) bad.push('nowhere to throw a spear');
   else {
@@ -4486,7 +4497,15 @@ function hurlWeaponsOK(){
       if(countOf(s.w) > 0) back = 1;
       if(back) kept++;
     }
-    if(kept!==N) bad.push('a thrown spear was lost '+(N-kept)+' times of '+N);
+    var lost = N - kept, lostPct = lost * 100 / N;
+    /* Two hundred throws, so the share it comes out at is worth reading:
+       a whole point either side of the rule is about three standard
+       errors, which is wide enough not to fail on the dice and narrow
+       enough to catch the rule being changed by accident. */
+    if(Math.abs(lostPct - THROWN_BREAK_PCT) > 9)
+      bad.push('a thrown spear was lost '+lost+' times of '+N+' - '+
+        lostPct.toFixed(1)+'%, against the '+THROWN_BREAK_PCT+'% it should break on');
+    if(!kept) bad.push('not one thrown spear of '+N+' was ever there afterwards');
     var avg = dmgs.length ? dmgs.reduce(function(a,b){return a+b;},0)/dmgs.length : 0;
     /* melee with the same spear, for comparison */
     s = setup(spear, 0);
@@ -4545,7 +4564,7 @@ function hurlWeaponsOK(){
   }
   if(came < M) bad.push('a charmed spear stayed on the floor '+(M-came)+' times of '+M);
   L.mons.length=0;
-  return { thrown:thrownAvg, melee:meleeAvg, bad:bad };
+  return { thrown:thrownAvg, melee:meleeAvg, lost:lostPct, bad:bad };
 }
 
 
@@ -7777,7 +7796,7 @@ function breathOK(){
         if(G.bolt.kind!=='fire'||G.bolt.mode!=='beam')
           bad.push('the dragon drew '+G.bolt.kind+' as a '+G.bolt.mode);
         if(G.bolt.path.length<2) bad.push('the dragon drew a jet '+G.bolt.path.length+' square long');
-        if(G.bolt.t < Date.now() + BREATH_LEAD - 40)
+        if(G.bolt.t < nowMs() + BREATH_LEAD - 40)
           bad.push('the dragon starts its flame before the wait is over');
         var last=G.bolt.path[G.bolt.path.length-1];
         if(last[0]!==P.x||last[1]!==P.y) bad.push('the dragon breathed past you');
@@ -7788,7 +7807,7 @@ function breathOK(){
       if(!G.shot) bad.push('the half dragon threw nothing');
       else {
         if(G.shot.spr!=='flame') bad.push('the half dragon threw a '+G.shot.spr);
-        if(G.shot.t < Date.now() + BREATH_LEAD - 40)
+        if(G.shot.t < nowMs() + BREATH_LEAD - 40)
           bad.push('the ball starts flying before the wait is over');
         if(G.shot.ex!==P.x||G.shot.ey!==P.y) bad.push('the ball was not aimed at you');
         burn=1;
@@ -8227,9 +8246,9 @@ function gearLooksOK(){
   G.msgq=[];
   autoEquip(a);
   if(a.known) bad.push('wearing it named it');
-  if(!numbersKnown(a)) bad.push('wearing it told you nothing of its worth');
+  if(numbersKnown(a)) bad.push('wearing it gave away what it was worth');
   if(itemName(a).indexOf('chain mail')>=0) bad.push('worn, it gives its name away');
-  if(itemName(a).indexOf('+2')<0) bad.push('worn, it still hides its numbers');
+  if(itemName(a).indexOf('+2')>=0) bad.push('worn, it shows its numbers: '+itemName(a));
   if(itemName(a).indexOf('[')>=0) bad.push('a worn thing still carries a bracket: '+itemName(a));
   var b=mkItem('armor',4);
   if(!hidesItsName(b))
@@ -8994,10 +9013,15 @@ function curseNamedOK(){
       bad.push(kinds[i][0]+' gives the curse away before you put it on');
     G.msgq=[];
     autoEquip(it);
-    if(!numbersKnown(it)) bad.push(kinds[i][0]+' told you nothing when worn');
+    /* the curse and nothing else: it will not come off, so you know
+       that much, and you know it for good */
+    if(numbersKnown(it)) bad.push(kinds[i][0]+' gave its plusses away when worn');
     if(it.known) bad.push(kinds[i][0]+' named itself merely by being worn');
     if(itemName(it).indexOf('cursed')<0)
       bad.push(kinds[i][0]+' does not read as cursed: '+itemName(it));
+    P.eq={rh:null,body:null,lh:null,head:null,feet:null};
+    if(itemName(it).indexOf('cursed')<0)
+      bad.push(kinds[i][0]+' forgot it was cursed once it was off: '+itemName(it));
     var said=G.msgq.map(function(m){return m.s||'';}).join(' ');
     if(said.indexOf('cursed')<0) bad.push(kinds[i][0]+' said nothing about the curse');
     var notes=itemNotes(it).map(function(n){return n[0];}).join(' ; ');
@@ -9883,7 +9907,7 @@ function thrownFireWaitsOK(){
     m.hp=m.mhp=900; m.state=2; m.cast=0; m.doused=0;
     L.mons.push(m);
     G.beat=0; G.bolt=null; G.shot=null; G.msgq=[];
-    var t0=Date.now();
+    var t0=nowMs();
     if(kind==='ball') throwFireball(m, 1); else breatheFire(m, 1);
     return { t0:t0, fires:L.clouds.filter(function(x){ return x.kind==='fire'; }) };
   }
@@ -10099,7 +10123,7 @@ function blastStoneOK(seeds){
       }
     L.clouds.length=0; L.fuses={}; L.burning={}; P.hp=P.mhp=90000;
     G.splash=null; G.beat=0; G.msgq=[];
-    var t0=Date.now();
+    var t0=nowMs();
     var before=L.mons.map(function(m){ return m.hp; });
     stoneRune('blast', {x:spot[0],y:spot[1]},
       mkItem('weapon',weaponIndex('blasting stone')), 0);
@@ -10342,7 +10366,7 @@ function effectsWaitOK(seeds){
     var w=mkMonster('k',6,sx,sy);
     w.hp=w.mhp=9000; w.state=2; L.mons.push(w);
     G.beat=0; G.msgq=[]; G.shot=null;
-    var t0=Date.now();
+    var t0=nowMs();
     if(!witchFlask(w)) continue;
     tried++;
     var gas=L.clouds.filter(function(c){ return c.kind==='poison'; });
@@ -10371,7 +10395,7 @@ function effectsWaitOK(seeds){
     var sp=mkMonster('w',4,wx,wy);
     sp.hp=sp.mhp=9000; sp.state=2; sp.cast=0; L.mons.push(sp);
     G.beat=0; G.msgq=[]; G.shot=null;
-    var t1=Date.now();
+    var t1=nowMs();
     if(!monWeb(sp)) continue;
     var laid=Object.keys(L.webs).map(Number);
     if(!laid.length) continue;              /* it stuck to you instead */
@@ -10396,7 +10420,7 @@ function effectsWaitOK(seeds){
       var hd=mkMonster('h',8,hx,hy);
       hd.hp=hd.mhp=900; hd.state=2; hd.cast=0; L.mons.push(hd);
       G.beat=0;
-      var t2=Date.now();
+      var t2=nowMs();
       throwFireball(hd, 1);
       var fires=L.clouds.filter(function(c){ return c.kind==='fire'; });
       if(!fires.length) bad.push('the fireball left no fire');
@@ -11228,7 +11252,7 @@ function runeSecretOK(){
   /* worn: the thing is known, the enchantment is not */
   var w1=fresh();
   equipTo('rh', w1);
-  if(!numbersKnown(w1)) bad.push('putting it on told you nothing about the thing itself');
+  if(numbersKnown(w1)) bad.push('putting it on gave its plusses away');
   if(w1.brKnown) bad.push('putting it on gave the enchantment away');
   if(activeRune(w1)) bad.push('the enchantment works from wearing it alone');
   if(/of fire/.test(itemName(w1))) bad.push('the name gives it away once worn');
@@ -11260,9 +11284,16 @@ function runeSecretOK(){
 
 /* --------------------------------- the name, the numbers and the magic
    Three separate things to know about a blade, and putting it on gives
-   you exactly one of them: what it is worth in the hand.  What it is
-   called, and what is worked into it, come from studying it or from a
-   scroll read over it. */
+   you exactly one of them - and it is not the numbers.  A cursed thing
+   announces itself the moment it is on you, because it will not come
+   off again.  What it is called, what it is worth, and what is worked
+   into it all come from studying it or from a scroll read over it.
+
+   It used to hand you the numbers as well, on the grounds that you can
+   feel the weight of a blade.  That was wrong twice over: taking it off
+   again took the knowledge back, and knowing every plus in the dungeon
+   for the price of a moment's wielding is most of the identify game
+   given away for nothing. */
 function threeKindsOfKnowingOK(){
   var bad=[], i;
   function fresh(kind, idx){
@@ -11289,8 +11320,18 @@ function threeKindsOfKnowingOK(){
     var worn=itemName(it);
     if(worn.indexOf(real)>=0) bad.push('putting a '+kind+' on named it: '+worn);
     if(worn.indexOf('cursed')<0) bad.push('putting a '+kind+' on hid the curse: '+worn);
-    if(!/\+/.test(worn)) bad.push('putting a '+kind+' on hid the plusses: '+worn);
+    if(/\+/.test(worn)) bad.push('putting a '+kind+' on gave its plusses away: '+worn);
     if(worn.indexOf('of fire')>=0) bad.push('putting a '+kind+' on gave the enchantment away');
+    /* And taking it off again does not un-tell you about the curse.
+       Knowledge does not run backwards; it used to, because what was
+       shown hung on whether the thing was in your hand at that moment
+       rather than on what you had learnt about it. */
+    P.eq[slot]=null;
+    var off=itemName(it);
+    if(off.indexOf('cursed')<0)
+      bad.push('taking a '+kind+' off forgot that it was cursed: '+off);
+    if(/\+/.test(off)) bad.push('a '+kind+' in the pack shows its plusses: '+off);
+    P.eq[slot]=it;
     identifyItem(it);
     var known=itemName(it);
     if(known.indexOf(real)<0) bad.push('identifying a '+kind+' did not name it: '+known);
@@ -12943,7 +12984,7 @@ function webEveryOtherTurnOK(seeds){
    The witch carries ten, and no more.  Every one that goes wide is
    lying on the floor afterwards, which is where the player finds them. */
 function witchStonesOK(seeds){
-  var bad=[], s, i, tried=0, thrown=[], onFloor=[], ranOut=0;
+  var bad=[], s, i, tried=0, thrown=[], onFloor=[], wide=[], ranOut=0;
   for(s=0;s<(seeds||40) && tried<5;s++){
     bootTest(81200+s);
     /* somewhere she can see you from, four squares off and in the open */
@@ -12960,11 +13001,19 @@ function witchStonesOK(seeds){
     tried++;
     if(w.stones!==WITCH_STONES)
       bad.push('she started with '+w.stones+' stones, not '+WITCH_STONES);
-    var threw=0;
+    var threw=0, missed=0;
     for(i=0;i<400 && w.stones>0;i++){
       P.hp=P.mhp=900000; G.msgq=[]; G.beat=0;
       w.blinkIn=999; w.spiderIn=999;
-      if(witchRock(w)) threw++;
+      if(witchRock(w)){
+        threw++;
+        /* A stone she lands is a stone she keeps; only the ones that go
+           wide end up on the floor.  Whether it landed is read off your
+           own hit points rather than off the log - the line she says is
+           trimmed to fit the panel, so on a long name the words "and
+           misses" are the first thing dropped. */
+        if(P.hp >= 900000) missed++;
+      }
     }
     thrown.push(threw);
     if(threw>WITCH_STONES) bad.push('she threw '+threw+' stones');
@@ -12979,12 +13028,20 @@ function witchStonesOK(seeds){
       if(L.items[i].t==='weapon' && WEAPONS[L.items[i].k].n==='stone')
         stones+=L.items[i].cnt||1;
     onFloor.push(stones);
-    if(!stones) bad.push('she threw '+threw+' stones and left none of them on the floor');
-    if(stones>threw) bad.push(stones+' stones on the floor from '+threw+' throws');
+    wide.push(missed);
+    /* This used to ask only that SOME stone was left lying about, which
+       is not the rule and is not even reliably true: she lands about
+       four throws in five, so a run of ten that all land is about one
+       seed in seven and the check failed on the dice rather than on the
+       game.  The rule is exact - every stone that went wide is on the
+       floor and no stone that landed is - so it is asked exactly. */
+    if(stones!==missed)
+      bad.push(stones+' stones on the floor from '+missed+' that went wide (of '+threw+' thrown)');
   }
   if(!tried) bad.push('never found anywhere to stand a witch');
   var sum=function(a){ var t=0,i; for(i=0;i<a.length;i++) t+=a[i]; return a.length?t/a.length:0; };
-  return { bad:bad, tried:tried, threw:sum(thrown), floor:sum(onFloor), ranOut:ranOut };
+  return { bad:bad, tried:tried, threw:sum(thrown), floor:sum(onFloor),
+           wide:sum(wide), ranOut:ranOut };
 }
 
 /* ------------------------------------------------- eyes for the dark
@@ -13594,4 +13651,163 @@ function cellarSaveOK(seeds){
   }
   if(!tried) bad.push('never got into a cellar to save one');
   return { bad:bad, tried:tried };
+}
+
+/* ---------------------------------------------------------------------
+   The roll of the ten best.  Everything about it that is a rule rather
+   than a network: what a table is worth once it has been read, which
+   runs get into it, where a run lands in it, and what a name is allowed
+   to be.  The bin the table is kept in is a file anybody with the key
+   can write to, so the names that come back out of it are treated as
+   somebody else's typing rather than as ours.  */
+function highscoreOK(){
+  var bad=[], i;
+  var seed=[{name:'Rodney',xp:10500,level:12},{name:'Anband',xp:8200,level:9},
+            {name:'NetHack',xp:7500,level:8},{name:'Pixel',xp:6100,level:7},
+            {name:'Crawl',xp:5400,level:5},{name:'Rogue',xp:4300,level:4},
+            {name:'Brogue',xp:3100,level:3},{name:'Siren',xp:2200,level:2},
+            {name:'Hero',xp:1000,level:1},{name:'Noob',xp:150,level:1}];
+  var t=hsClean(seed);
+  if(t.length!==HS_MAX) bad.push('a full table came back '+t.length+' long');
+  for(i=1;i<t.length;i++) if(t[i].xp>t[i-1].xp) bad.push('the table is not in order');
+  /* a table that arrives out of order is put in order */
+  var jumbled=hsClean([seed[4],seed[0],seed[9],seed[2]]);
+  if(jumbled[0].name!=='Rodney') bad.push('a jumbled table was not sorted');
+  /* a full table only takes something better than its last row, and
+     equal is not better - whoever got there first keeps the place */
+  if(hsQualifies(seed,150)) bad.push('a run equal to the last row got in');
+  if(hsQualifies(seed,149)) bad.push('a run worse than the last row got in');
+  if(!hsQualifies(seed,151)) bad.push('a run better than the last row was kept out');
+  /* a table with room takes anybody at all */
+  if(!hsQualifies(seed.slice(0,3),1)) bad.push('a table with room turned a run away');
+  if(!hsQualifies([],0)) bad.push('an empty table turned a run away');
+  /* one more run: sorted in, and the table still ten long */
+  var withMe=hsWith(seed,{name:'Gulli',xp:9000,level:11});
+  if(withMe.length!==HS_MAX) bad.push('the table grew to '+withMe.length);
+  if(withMe[1].name!=='Gulli') bad.push('the new run landed at row '+
+    (withMe.map(function(e){return e.name;}).indexOf('Gulli')+1)+', not two');
+  if(withMe[withMe.length-1].name==='Noob'&&withMe.length===HS_MAX&&
+     hsWith(seed,{name:'Gulli',xp:9000,level:11}).length!==HS_MAX)
+    bad.push('the last row was not pushed off');
+  if(hsPlace(seed,{name:'Gulli',xp:9000,level:11})!==2)
+    bad.push('the run was told it came '+hsPlace(seed,{name:'Gulli',xp:9000,level:11}));
+  if(hsPlace(seed,{name:'Gulli',xp:1,level:1})!==0)
+    bad.push('a run that did not get in was told it had');
+  /* names: cut to length, and nothing in them the font has not got */
+  if(hsName('        ')!=='') bad.push('a name of spaces came back as something');
+  if(hsName('a'.repeat(40)).length!==HS_NAME_MAX)
+    bad.push('a long name came back '+hsName('a'.repeat(40)).length+' long');
+  if(/[<>\/]/.test(hsName('<script>x</script>')))
+    bad.push('a name kept its brackets: '+hsName('<script>x</script>'));
+  if(hsName('  Gulli  ')!=='Gulli') bad.push('a name kept its spaces');
+  /* and a table full of rubbish is still a table */
+  var junk=hsClean([null,{},{name:'<b>',xp:'12',level:null},{name:5,xp:-1,level:1}]);
+  for(i=0;i<junk.length;i++){
+    if(typeof junk[i].name!=='string'||!junk[i].name) bad.push('a row came back nameless');
+    if(typeof junk[i].xp!=='number'||junk[i].xp!==(junk[i].xp|0))
+      bad.push('a row came back with '+junk[i].xp+' for experience');
+  }
+  return bad;
+}
+
+/* ------------------------------------------------- a thrown weapon wears
+   A spear used to be the one weapon in the dungeon with no cost attached
+   to using it: throw it, walk over, pick it up, throw it again, for
+   ever.  Now a throw can be the last one it takes - and a well made one
+   is worth carrying because it takes that break for you once and comes
+   out of it worn.  A worn one is an ordinary one from then on. */
+function thrownWearOK(){
+  var bad=[], i;
+  bootTest(58200);
+  var spearK = weaponIndex('spear');
+
+  /* what the three of them are called */
+  var sp = mkItem('weapon', spearK); sp.known = 1;
+  KNOWN.weap[spearK] = 1;
+  if(/well made|worn/.test(itemName(sp)))
+    bad.push('a plain spear reads as something else: '+itemName(sp));
+  sp.make = 1;
+  if(itemName(sp).indexOf('well made spear')<0)
+    bad.push('a well made spear reads "'+itemName(sp)+'"');
+  sp.make = -1;
+  if(itemName(sp).indexOf('worn spear')<0)
+    bad.push('a worn spear reads "'+itemName(sp)+'"');
+
+  /* an ordinary one: it breaks about as often as it is meant to, and
+     when it breaks it is gone rather than worn */
+  var tries=6000, broke=0, worn=0;
+  for(i=0;i<tries;i++){
+    var it=mkItem('weapon', spearK);
+    var w=hurlWear(it);
+    if(w===2) broke++; else if(w===1) worn++;
+  }
+  var pct = broke*100/tries;
+  if(Math.abs(pct - THROWN_BREAK_PCT) > 2.5)
+    bad.push('an ordinary spear broke on '+pct.toFixed(1)+'% of throws, not '+
+      THROWN_BREAK_PCT+'%');
+  if(worn) bad.push('an ordinary spear came out worn '+worn+' times');
+
+  /* a well made one: the same odds, but the first one only wears it */
+  var brokeW=0, wornW=0;
+  for(i=0;i<tries;i++){
+    var it2=mkItem('weapon', spearK); it2.make=1;
+    var w2=hurlWear(it2);
+    if(w2===2) brokeW++;
+    else if(w2===1){
+      wornW++;
+      if(it2.make!==-1) bad.push('a well made spear took a blow and is not worn');
+    }
+  }
+  if(brokeW) bad.push('a well made spear broke outright '+brokeW+' times');
+  var pctW = wornW*100/tries;
+  if(Math.abs(pctW - THROWN_BREAK_PCT) > 2.5)
+    bad.push('a well made spear took a blow on '+pctW.toFixed(1)+'% of throws, not '+
+      THROWN_BREAK_PCT+'%');
+
+  /* and end to end: worn, then gone, and nothing after that */
+  var it3=mkItem('weapon', spearK); it3.make=1;
+  var steps=[], guard=0;
+  while(guard++ < 2000){
+    var w3=hurlWear(it3);
+    if(!w3) continue;
+    steps.push(w3);
+    if(w3===2) break;
+  }
+  if(steps.join(',')!=='1,2')
+    bad.push('a well made spear went '+steps.join(',')+' rather than worn and then gone');
+
+  /* nothing you cannot throw carries workmanship at all */
+  var sword=mkItem('weapon', weaponIndex('long sword'));
+  if(hurlWear(sword)) bad.push('a long sword broke from being thrown');
+  rollMake(sword);
+  if(sword.make) bad.push('a long sword was made well or badly');
+
+  /* How many are made well, asked of the roll itself: a spear is a rare
+     enough find that a floor's worth of them is far too small a handful
+     to read a share of a quarter off - fifty of them would come out
+     anywhere between one in six and one in three on the dice alone. */
+  var fine=0;
+  for(i=0;i<6000;i++) if(rollMake(mkItem('weapon', spearK)).make > 0) fine++;
+  var pctFine = fine*100/6000;
+  if(Math.abs(pctFine - WELL_MADE_PCT) > 2.5)
+    bad.push(pctFine.toFixed(1)+'% of them were made well, not '+WELL_MADE_PCT+'%');
+  /* and that the dungeon actually asks: some of what it deals out is */
+  var hurls=0, dealtFine=0;
+  for(i=0;i<4000;i++){
+    var g=newItem(4);
+    if(!isHurlWeapon(g)) continue;
+    hurls++; if(g.make>0) dealtFine++;
+  }
+  if(!hurls) bad.push('the dungeon dealt out no weapon you can throw at all');
+  else if(!dealtFine)
+    bad.push('none of the '+hurls+' it dealt out was well made - the roll is not wired in');
+
+  /* the workmanship survives the landing: what you pick up is what you
+     threw, not a fresh one out of the table */
+  var thrown=mkItem('weapon', spearK); thrown.make=-1; thrown.hp=2; thrown.dp=1;
+  var landed=likeItem(thrown);
+  if(landed.make!==-1) bad.push('a worn spear came back off the floor unworn');
+
+  return { bad:bad, broke:pct, worn:pctW, fine:pctFine,
+           hurls:hurls, dealtFine:dealtFine };
 }

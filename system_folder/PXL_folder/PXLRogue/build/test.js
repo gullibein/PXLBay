@@ -820,7 +820,8 @@ check(hunt.bad.length === 0, 'hunters: ' + [...new Set(hunt.bad)].slice(0, 4).jo
 
 const hw = ctx.hurlWeaponsOK();
 console.log('thrown arms  : a spear does ' + (hw.thrown || 0).toFixed(1) +
-  ' in the air against ' + (hw.melee || 0).toFixed(1) + ' in the hand, and always keeps; ' +
+  ' in the air against ' + (hw.melee || 0).toFixed(1) + ' in the hand, and ' +
+  (100 - (hw.lost || 0)).toFixed(0) + '% of throws leave it there to pick up; ' +
   'the scroll of return charms one thing at a time');
 check(hw.bad.length === 0, 'thrown arms: ' + [...new Set(hw.bad)].slice(0, 4).join('; '));
 

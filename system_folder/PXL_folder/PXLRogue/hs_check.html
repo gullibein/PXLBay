@@ -1,0 +1,93 @@
+<title>PXLRogue - roll check</title>
+<meta charset="utf-8">
+<style>
+  body { background:#0b0d1c; color:#c3ccd9; font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;
+         margin:0; padding:24px; }
+  h1 { font-size:16px; color:#fad039; margin:0 0 4px; letter-spacing:.08em; }
+  p.sub { color:#636d85; margin:0 0 20px; }
+  .step { border:1px solid #2b3352; border-radius:6px; padding:12px 14px; margin:0 0 12px; }
+  .step h2 { font-size:13px; margin:0 0 6px; color:#74d6e8; font-weight:600; }
+  .ok { color:#93bd27; } .bad { color:#d82b2b; } .warn { color:#f59e0b; }
+  pre { white-space:pre-wrap; word-break:break-all; margin:6px 0 0; color:#8690a4; }
+  button { background:#2b3352; color:#e6edf5; border:1px solid #636d85; border-radius:4px;
+           padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { background:#3f4966; }
+  .note { color:#636d85; margin-top:18px; border-top:1px solid #2b3352; padding-top:12px; }
+</style>
+
+<h1>PXLROGUE &mdash; ROLL CHECK</h1>
+<p class="sub">Checks that the game can read and write the highscore bin from this browser.
+Open it the same way you open the game.</p>
+
+<div class="step" id="where"><h2>0. how this page was opened</h2><pre id="whereOut">...</pre></div>
+<div class="step" id="read"><h2>1. read the bin</h2><pre id="readOut">...</pre></div>
+<div class="step" id="write">
+  <h2>2. write the bin</h2>
+  <p style="margin:0 0 8px;color:#636d85">This rewrites the table with exactly what step&nbsp;1 read back,
+  so nothing is lost &mdash; but it is a real write.</p>
+  <button id="go">write it back unchanged</button>
+  <pre id="writeOut">not tried</pre>
+</div>
+
+<p class="note">If the read fails with <b>401</b> the key is wrong or has no read right.
+If it fails with a <b>CORS</b> or <b>Failed to fetch</b> error and the page was opened from
+<code>file://</code>, that is the browser refusing the request because the page has no origin
+&mdash; serve the folder over http instead (<code>python -m http.server</code> in the PXLRogue
+folder, then open <code>http://localhost:8000/</code>) and try again.</p>
+
+<script>
+var HS_BIN = '6a8c44f9da38895dfe0a98c0';
+var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
+var URL_BASE = 'https://api.jsonbin.io/v3/b/' + HS_BIN;
+
+function say(id, cls, text) {
+  var el = document.getElementById(id);
+  el.className = cls;
+  el.textContent = text;
+}
+
+say('whereOut', location.protocol === 'file:' ? 'warn' : 'ok',
+  location.protocol === 'file:'
+    ? 'file:// - the browser sends Origin: null, which some APIs refuse.\n' +
+      'If step 1 fails with a network or CORS error, serve the folder over http and retry.'
+    : location.origin + ' - a real origin, which is what the API expects.');
+
+var got = null;
+
+fetch(URL_BASE + '/latest', { headers: { 'X-Bin-Meta': 'false', 'X-Access-Key': HS_KEY } })
+  .then(function (r) {
+    return r.text().then(function (body) { return { ok: r.ok, status: r.status, body: body }; });
+  })
+  .then(function (r) {
+    if (!r.ok) {
+      say('readOut', 'bad', 'HTTP ' + r.status + '\n' + r.body);
+      return;
+    }
+    var j = null;
+    try { j = JSON.parse(r.body); } catch (e) { }
+    var list = (j && j.record) ? j.record : j;
+    got = list;
+    say('readOut', 'ok', 'HTTP 200 - ' + (list && list.length ? list.length + ' rows' : 'empty') +
+      '\n' + JSON.stringify(list, null, 1));
+  })
+  .catch(function (e) {
+    say('readOut', 'bad', 'could not reach it at all: ' + e.message +
+      '\n(network blocked, or CORS refused the request)');
+  });
+
+document.getElementById('go').onclick = function () {
+  if (!got) { say('writeOut', 'bad', 'nothing was read, so there is nothing safe to write back'); return; }
+  say('writeOut', 'warn', 'writing...');
+  fetch(URL_BASE, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Access-Key': HS_KEY },
+    body: JSON.stringify(got)
+  }).then(function (r) {
+    return r.text().then(function (body) { return { ok: r.ok, status: r.status, body: body }; });
+  }).then(function (r) {
+    say('writeOut', r.ok ? 'ok' : 'bad', 'HTTP ' + r.status + '\n' + r.body.slice(0, 400));
+  }).catch(function (e) {
+    say('writeOut', 'bad', 'could not reach it at all: ' + e.message);
+  });
+};
+</script>

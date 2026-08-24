@@ -74,7 +74,7 @@ function playerMove(dx, dy) {
   if (playerStumbles(dx, dy)) return true;
   P.runSteps = battleNear() ? (P.runSteps || 0) + 1 : 0;
   P.x = nx; P.y = ny;
-  P.walkT = Date.now();
+  P.walkT = nowMs();
   /* web on the floor holds the first thing into it, and comes away */
   if (webCatches(nx, ny)) {
     var whold = stickPlayer(webHold());
@@ -345,6 +345,7 @@ function equipFromFloor(it) {
   if (!key) return false;
   var cur = P.eq[key];
   if (cur && cur.cursed) {
+    seeCurse(cur);
     msg('You cannot remove your ' + itemDef(cur).n + '. It is cursed.', 'R');
     return false;
   }
@@ -352,6 +353,7 @@ function equipFromFloor(it) {
   var off = null;
   if (key === 'rh' && twoHanded(it) && P.eq.lh) {
     if (P.eq.lh.cursed) {
+      seeCurse(P.eq.lh);
       msg('You cannot let go of your ' + itemDef(P.eq.lh).n + '. It is cursed.', 'R');
       return false;
     }
@@ -369,6 +371,7 @@ function equipFromFloor(it) {
   if (it.cursed) {
     /* what kind of cursed it is, settled now that it is on you */
     settleCurse(it);
+    seeCurse(it);
     msg('You feel a malignant aura. It is cursed!', 'R');
     var cd = it.curse ? curseDef(it.curse) : null;
     if (cd) msg('A curse of ' + cd.n + '. ' + cap(cd.txt) + '.', 'R');
@@ -883,7 +886,7 @@ function useStairs() {
       return true;
     }
     if (G.depth <= 1) {
-      if (P.amulet) { G.mode = 'win'; return false; }
+      if (P.amulet) { G.mode = 'win'; clearSlot(G.slot); hsPrepare(); return false; }
       msg('The staircase has collapsed. You cannot get out!', 'R');
       return false;
     }
@@ -894,7 +897,7 @@ function useStairs() {
 
   if (t !== STAIR) return false;
   if (inCellar()) return false;             /* a cellar has no way further down */
-  if (P.amulet && G.depth === 1) { G.mode = 'win'; return false; }
+  if (P.amulet && G.depth === 1) { G.mode = 'win'; clearSlot(G.slot); hsPrepare(); return false; }
   enterLevel(G.depth + 1, 'down');
   msg('You descend to floor ' + floorName() + '.', 'c');
   return true;
@@ -927,7 +930,7 @@ function unequipTo(it) {
   var key = null, i;
   for (i = 0; i < EQ_ORDER.length; i++) if (P.eq[EQ_ORDER[i]] === it) key = EQ_ORDER[i];
   if (!key) return false;
-  if (it.cursed) { it.known = 1; msg('You cannot. It is cursed.', 'R'); return false; }
+  if (it.cursed) { seeCurse(it); msg('You cannot. It is cursed.', 'R'); return false; }
   P.eq[key] = null;
   takeOffEffects(it);
   if (stow(it)) return true;                 /* it went on the floor */
@@ -943,6 +946,7 @@ function equipTo(key, it) {
   }
   var cur = P.eq[key];
   if (cur && cur.cursed) {
+    seeCurse(cur);
     msg('You cannot remove your ' + itemDef(cur).n + '. It is cursed.', 'R');
     return false;
   }
@@ -950,6 +954,7 @@ function equipTo(key, it) {
   var off = null;
   if (key === 'rh' && twoHanded(it) && P.eq.lh) {
     if (P.eq.lh.cursed) {
+      seeCurse(P.eq.lh);
       msg('You cannot let go of your ' + itemDef(P.eq.lh).n + '. It is cursed.', 'R');
       return false;
     }
@@ -971,6 +976,7 @@ function equipTo(key, it) {
   msg('You are now using ' + itemName(it) + '.', 'w');
   if (it.cursed) {
     settleCurse(it);
+    seeCurse(it);
     msg('You feel a malignant aura. It is cursed!', 'R');
     var cdef = it.curse ? curseDef(it.curse) : null;
     if (cdef) msg('A curse of ' + cdef.n + '. ' + cap(cdef.txt) + '.', 'R');
@@ -1328,6 +1334,11 @@ function blowBarrel(bx, by) {
      out of two sprites rather than one, and it throws light a good deal
      further than anything else down here. */
   G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
+  /* and the room itself takes the blow.  Seeded off the square it went
+     up on rather than off the dice, so two barrels in one turn shake
+     differently and nothing about the floor changes for having watched
+     one go up. */
+  shakeScreen(SHAKE_MS, SHAKE_AMP, bx * 73856093 + by * 19349663);
   sound('boom');
   msgTrap('A barrel of powder goes up!', 'R', 'blast', 'R');
   /* the neighbours catch before the blast clears them away */
@@ -1523,7 +1534,7 @@ function zapWand(it, dx, dy) {
     if (stopsAtPowder && barrelAt(x, y)) break;
   }
   G.bolt = { path: path.slice(), kind: n, mode: pierce ? 'beam' : 'fly',
-             dir: [dx, dy], t: Date.now() };
+             dir: [dx, dy], t: nowMs() };
   sound(n === 'lightning' ? 'lightning' : 'magic');
   var first = null;
   for (i = 0; i < path.length; i++) { var mm = monAt(L, path[i][0], path[i][1]); if (mm) { first = mm; break; } }
@@ -1864,8 +1875,11 @@ function throwAtSquare(it, tx, ty) {
       if (WEAPONS[it.k].rune !== 'return' && (runeChg > 0 || rnd(100) < runeKeepPct()))
         keepRuneStone(it, tx, ty, runeChg > 0 ? runeChg - 1 : 0);
     } else if (!flyHome(it, tx, ty, flight)) {
-      msg(cap(WEAPONS[it.k].n) + ' clatters to the ground.', '6');
-      dropNear(tx, ty, likeItem(it));
+      /* the same rule as a throw at something: one flight, one roll */
+      var wear2 = hurlWear(it);
+      if (wear2) hurlSays(it, wear2);
+      else msg(cap(WEAPONS[it.k].n) + ' clatters to the ground.', '6');
+      if (wear2 !== 2) dropNear(tx, ty, likeItem(it));
     }
     return true;
   }
@@ -1986,9 +2000,19 @@ function keepRuneStone(am, x, y, chg) {
 function likeItem(am) {
   var c = mkItem('weapon', am.k);
   c.cnt = 1; c.hp = am.hp; c.dp = am.dp; c.known = am.known;
+  /* the workmanship travels with it - a worn spear that has landed is
+     still a worn spear when you pick it up again */
+  if (am.make) c.make = am.make;
   if (am.homing) c.homing = 1;
   if (am.ret !== undefined) c.ret = am.ret;
   return c;
+}
+/* What a landing did to a hurled weapon, said in the log.  Nothing at
+   all for an ordinary flight - it is only worth a line when the thing
+   has changed. */
+function hurlSays(it, wear) {
+  if (wear === 2) msg(cap(WEAPONS[it.k].n) + ' breaks apart where it falls.', 'O');
+  else if (wear === 1) msg(cap(WEAPONS[it.k].n) + ' holds, but it is worn now.', '6');
 }
 /* The scroll of return brings it home rather than leaving it where it
    fell.  Returns true if it handled the landing. */
@@ -2084,6 +2108,12 @@ function fireAt(best) {
   /* everything waits for the arrow to arrive */
   beatWait(flight);
 
+  /* One throw, one roll.  Whether the shaft comes through this flight is
+     settled before we know whether it hit, so a hit, a miss and a lob at
+     bare floor all wear it the same - it is being thrown that breaks a
+     spear, not what it happens to land on. */
+  var wear = hurlWear(am);
+
   /* Too close to draw properly: one square away is the worst of it, and
      it eases off with every step of room you have. */
   var gap = Math.max(Math.abs(best.x - P.x), Math.abs(best.y - P.y));
@@ -2108,11 +2138,14 @@ function fireAt(best) {
     if (wasCharged && isPlainAmmo(am)) keepPct = 100 - (100 - keepPct) / 2;
     /* a scavenger picks his shafts back out of the wall */
     if (hasPerk('scavenger')) keepPct = 100 - (100 - keepPct) / 2;
-    /* A spear does not shatter.  It is there to be picked up, every
-       time, which is the whole point of throwing one. */
-    if (isHurlWeapon(am)) keepPct = 100;
-    if (!W.rune && !flyHome(am, best.x, best.y, flight) && rnd(100) < keepPct)
-      dropNear(best.x, best.y, likeItem(am));
+    /* A spear is not lost in the wall the way a shaft is: if it came
+       through the throw at all it is lying there to be picked up.  What
+       can take it is the throw itself - see hurlWear above. */
+    if (isHurlWeapon(am)) keepPct = (wear === 2 ? 0 : 100);
+    if (!W.rune && !flyHome(am, best.x, best.y, flight)) {
+      hurlSays(am, wear);
+      if (rnd(100) < keepPct) dropNear(best.x, best.y, likeItem(am));
+    }
     if (aflame) {
       /* the square first: it burns whether or not the shot killed it */
       var bx0 = best.x, by0 = best.y;
@@ -2148,8 +2181,10 @@ function fireAt(best) {
     beatWait(sail);
     landed = { x: fx, y: fy };
     if (aflame) dropEmber(fx, fy);
-    if (W.rune !== 'return' && !flyHome(am, fx, fy, flight))
-      dropNear(fx, fy, likeItem(am));
+    if (W.rune !== 'return' && !flyHome(am, fx, fy, flight)) {
+      hurlSays(am, wear);
+      if (wear !== 2) dropNear(fx, fy, likeItem(am));
+    }
   }
   /* and it comes home from where it landed, not from what it missed */
   if (W.rune) stoneRune(W.rune, landed || best, am, flight);
@@ -2411,6 +2446,7 @@ function pinOnto(it) {
     /* a curse */
     it.ap -= 1 + rnd(2);
     layCurse(it);
+    seeCurse(it);              /* you watched it happen */
     msg('The pin bites you. ' + cap(itemName(it)) + '.', 'R');
     msg('It is cursed!', 'R');
   } else {
@@ -2575,7 +2611,7 @@ function zapRing(it, dx, dy) {
     if (blocksShot(x, y)) break;
     path.push([x, y]);
   }
-  G.bolt = { path: path.slice(), kind: kind, mode: 'beam', dir: [dx, dy], t: Date.now() };
+  G.bolt = { path: path.slice(), kind: kind, mode: 'beam', dir: [dx, dy], t: nowMs() };
   sound('magic');
   var word = kind === 'fire' ? 'flame' : 'frost';
   var col = kind === 'fire' ? 'R' : 'c';
@@ -2793,7 +2829,7 @@ function itemNotes(it) {
     case 'amulet': out.push(['carry it out to win', 'y']); break;
   }
   /* the weight in your hand tells you this much, name or no name */
-  if (it.cursed && numbersKnown(it)) {
+  if (it.cursed && curseKnown(it)) {
     out.push(['CURSED - cannot be removed', 'R']);
     /* and which curse, once it is on you and has therefore been settled.
        "Cursed" on its own does not tell you why you are losing hit
@@ -2918,7 +2954,8 @@ function itemDetail(it) {
      printing the price over an unknown one hands you the answer. */
   if (d && d.w && worthKnown(it)) add('worth about ' + d.w + ' gold', 'y');
   if (it.br && !it.brKnown) add('there is magic in it you cannot read', 'p');
-  if (isGear(it) && !numbersKnown(it)) add('put it on to learn what it is worth', '4');
+  if (!numbersKnown(it) && (isGear(it) || it.t === 'weapon'))
+    add('study it, or read a scroll over it, to learn its worth', '4');
   return out;
 }
 

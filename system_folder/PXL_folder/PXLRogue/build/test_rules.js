@@ -500,8 +500,9 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
 
   const witch = ctx.witchStonesOK(40);
   console.log('the witch    : ' + witch.tried + ' of them threw ' + witch.threw.toFixed(1) +
-    ' stones and then had none left; ' + witch.floor.toFixed(1) +
-    ' of them were lying on the floor afterwards');
+    ' stones and then had none left; ' + witch.wide.toFixed(1) +
+    ' went wide and exactly those ' + witch.floor.toFixed(1) +
+    ' were lying on the floor afterwards');
   check(witch.bad.length === 0, 'the witch: ' + [...new Set(witch.bad)].slice(0, 4).join('; '));
 
   const glass = ctx.glassArmourOK();
@@ -1021,6 +1022,27 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   console.log('fire and water: ' + (fw.length ? fw.length + ' problems' :
     'water will not catch, nothing standing in it catches, and a wade puts you out'));
   check(fw.length === 0, 'fire and water: ' + [...new Set(fw)].slice(0, 3).join('; '));
+}
+
+/* --- the roll of the ten best ----------------------------------------- */
+{
+  const hs = ctx.highscoreOK();
+  console.log('the ten best: ' + (hs.length ? hs.length + ' problems' :
+    'ten rows in order, a full table takes only what beats its last row, ' +
+    'equal does not count, and a name out of the bin is cut to ' +
+    ctx.HS_NAME_MAX + ' letters with nothing in it but letters, digits and spaces'));
+  check(hs.length === 0, 'highscore: ' + [...new Set(hs)].slice(0, 3).join('; '));
+}
+
+/* --- a thrown weapon wears out ---------------------------------------- */
+{
+  const tw = ctx.thrownWearOK();
+  console.log('thrown weapons: an ordinary spear is gone after ' + tw.broke.toFixed(1) +
+    '% of throws and a well made one is only worn by ' + tw.worn.toFixed(1) +
+    '% of them, then gone the next time; ' + tw.fine.toFixed(1) +
+    '% are made well and ' + tw.dealtFine + ' of the ' + tw.hurls +
+    ' the dungeon dealt out were, and the workmanship survives the landing');
+  check(tw.bad.length === 0, 'thrown wear: ' + [...new Set(tw.bad)].slice(0, 4).join('; '));
 }
 
 if (errors.length) {

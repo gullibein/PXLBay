@@ -1943,6 +1943,179 @@ band, the spread it achieves, and the rule behind the number - a beam has
 to vary by more than a fire, whose light is twice as strong.  Setting it
 back to a fire's share fails that.
 
+## Three tiles for fire, a current that spreads, four save slots and a roll of the ten best (24 Aug 2026)
+
+Four things asked for at once.
+
+### A third fire tile and a second spark
+
+`FIRE_TILES = ['fire_wall', 'flame', 'flame2']` and `SHOCK_TILES =
+['bolt', 'bolt2']` in part1, with `fireSprite(x, y)` in part2 as the one
+place that turns a square and the clock into a tile.  Every fire in the
+game goes through it now: a burning cloud, a lit fuse, a creature
+alight, the ring of a fire shield.  Two tiles read as a switch, three
+read as movement, which is the whole reason for asking.
+
+Two bugs came out of it, both of them the kind that only show up when
+the number of tiles stops being two.
+
+**The count went negative.**  `flameFrame` was
+`((Date.now() / FIRE_ANIM_MS + x * 3 + y * 5) | 0)`.  `|0` is ToInt32:
+everything above the thirty-second bit thrown away, the rest read as
+signed.  The clock divided by 120 passes two thousand million partway
+through **1 March 2027** and stays past it until **30 April 2035** - so
+for eight years that count is negative.  It did no harm while the tile
+was picked with `frame ? a : b`, because a negative number is truthy.
+As an index into a list of three it is nothing at all, and fire would
+have drawn as bare floor for eight years, starting six months from now.
+Now `Math.floor`, which is exact to nine thousand years.  The probe
+winds the clock to 2027, 2031 and 2034 and asks the fire to draw itself.
+
+**The offsets did nothing.**  `x * 3` is no offset at all on a cycle of
+three, so a whole row of fire showed the same tile as one another and a
+wall of flame came out in horizontal stripes.  Seven and five are
+coprime with two, three and four alike; the probe checks that a row and
+a column of fire each show all three tiles at once.
+
+### A current that spreads, and blinks
+
+`shockOrder(cells, sx, sy)` walks the water breadth-first from the
+square the current went in at and stamps every square with how many
+steps of water away it is - round a rock the way the water goes, not as
+the crow flies.  `shockSplash` builds the whole thing once when the
+current is let loose; `shockLit(sp, i, now)` answers whether a square is
+drawn this instant, and it has to pass two tests: the front has reached
+it, and its turn has come round in the blink.
+
+The blink is a three-beat cycle offset by a hash of the square, so a
+third of the reached squares are lit at any moment, a different third
+every 70ms, and the same third for every frame inside one beat - it
+crackles rather than fizzes.  A current on **one** square does not blink
+at all; two frames of nothing out of three is not a spark, it is a
+missing sprite.
+
+The light follows the sparks: a square the front has not reached, or one
+blinked off this beat, throws none.  And the splash outlives the usual
+flash by however long the front takes to cross - `shockLife` - so a lake
+is not gone before its far side has lit.
+
+Measured on the real build: a 24-square pool, the far corner nine steps
+from where the current went in, 33% of it lit at a time over four angles
+and both tiles.
+
+`shockSprite` had the same ToInt32 bug and was fixed the same way; it
+now counts from the splash's own age rather than from the epoch.
+
+### Four save slots, chosen once
+
+- `SAVE_SLOTS = 4`.
+- **START** opens the slot list (`what: 'new'`) over the **title
+  screen**, not over the boot dungeon.  An empty slot starts at once; a
+  full one warns and takes the same key again to write over it.
+- The run belongs to that slot from its first turn and cannot leave it.
+  **LOAD is gone from the pause menu** - loading another slot mid-run
+  would leave two runs sharing one, with the autosave writing to
+  whichever it had last been told about.  LOAD stays on the title menu,
+  which is where resuming belongs.
+- `autosave()` at the very end of `tick`, every `AUTOSAVE_EVERY` (2)
+  turns.  At the end, because a save taken mid-turn comes back with half
+  a turn played.
+- **SAVE AND QUIT** writes `G.slot` and quits.  No question - it was
+  answered at START.
+- **RESTART** keeps the slot: `newGame` reads `G.slot` before `freshG`
+  wipes it.
+- Dying, or winning, frees the slot (`clearSlot`).  A save that can only
+  ever load you back onto your own gravestone is a slot you cannot use.
+
+### The roll of the ten best
+
+The table lives in a bin on jsonbin.io.  One config block at the top of
+part1 decides how it is reached:
+
+    var HS_BIN   = '6a8c44f9da38895dfe0a98c0';
+    var HS_KEY   = '';   // jsonbin Access Key: this bin, read+update only
+    var HS_PROXY = '';   // if set, posts go here and the key stays server-side
+
+**A page served as one HTML file cannot keep a secret.**  Whatever key
+is written there is readable by anyone who opens the file.  So:
+
+- `HS_KEY` must be an **Access** Key restricted to this one bin with read
+  and update rights.  The worst anyone can then do is rewrite the
+  highscore table, and it can be rotated from the dashboard.  A Master
+  Key must never go there: it opens the whole account.
+- `HS_PROXY` is the way to have no key in the page at all - a small
+  function of your own that holds the key and does the writing.  If it is
+  set it is used and `HS_KEY` is ignored.
+- With neither set the game still reads the table if the bin is public,
+  and keeps new scores on the machine they were made on.
+
+**The bin is private as of writing.**  An unauthenticated read of
+`https://api.jsonbin.io/v3/b/6a8c44f9da38895dfe0a98c0/latest` returns
+401, so the game cannot even read it yet.  Either set the bin to Public
+(then reads need no key at all and only writes need one) or put a
+read+update Access Key in `HS_KEY`.
+
+The rules of the table are kept apart from the fetching so they can be
+tested without a network: `hsClean` (sort, trim to ten, and treat every
+name as somebody else's typing - letters, digits and spaces, cut to
+twelve), `hsQualifies` (a full table takes only what **beats** its last
+row; equal is not better, the rogue who got there first keeps the
+place), `hsWith`, `hsPlace`.  `hsFetch` and `hsSubmit` both hand back
+through a callback and neither ever fails outwardly - a table that could
+not be fetched is the local one, a score that could not be sent is still
+written down here.  A game is not the place to be told that somebody
+else's website is down.
+
+The screen (`mode: 'score'`) stands between the gravestone and the next
+run.  If the run belongs on the roll there is a row with a cursor in it
+waiting for a name; otherwise it is just the table.  It is also on the
+title menu as HIGHSCORE, where it never asks for a name - the rogue on
+the splash has not taken a step.
+
+Four lines under the table, for four different things, because they are
+four different things: `sent to the roll`, `sending...`, `the roll could
+not be reached`, `no roll set up: kept on this machine`.  The last one is
+the game admitting it did not manage to reach the bin, not the way it is
+supposed to work.
+
+One bug worth remembering: once the score has been sent, `G.hs.list`
+**is** the table with the run in it.  Drawing it with `hsWith` again put
+the rogue on the roll twice.  The probe counts what was drawn, off
+`TEXTS`, not what is in the table behind it.
+
+### Sprites
+
+`flame2` and `bolt2` added to `gen_atlas.py`, placed in `effects` and
+`arms`.  Both are placeholders in the palettes of the tiles beside them -
+`flame2` a middling flame leaning, `bolt2` a blue crackle arranged
+differently from the first.  `spritesheet.png` came down from the device
+first (Gulli had touched up `gas`), then
+`cp atlas.json atlas_layout_before.json`, `gen_atlas.py`,
+`migrate_sheet.py` - `graphics altered: none`, 193 carried, 2 newly
+drawn, sheet still 128x146.
+
+    flame  row 11 col 0   flame2 row 11 col 1
+    bolt   row  7 col 10  bolt2  row  7 col 11
+
+### Probes, and what each of them catches
+
+Every one was proved to fail on a copy of the build with that one thing
+put back:
+
+| probe | reverted | says |
+|---|---|---|
+| fire in 2027 | `|0` counter | the flame count went negative (-2081469008) |
+| fire in 2027 | `x * 3` offset | a row of fire shows only 1 of its 3 tiles at a time |
+| a current in water | splash without dist/blink | the whole pool lit at once: 24 of 24 |
+| a current in water | one spark tile | only 1 of the 2 spark tiles were used |
+| save and quit | LOAD back on pause | LOAD is still on the pause menu |
+| save and quit | `SAVE_SLOTS = 3` | there are 3 slots, not four |
+| the autosave | save every turn | saved itself on every turn, not every other |
+| the autosave | no `clearSlot` on death | a dead run was left sitting in its slot |
+| the roll | `hsWith` when already sent | the name is drawn 2 times on the roll |
+| the ten best | `>=` in `hsQualifies` | a run equal to the last row got in |
+| the ten best | name not scrubbed | a name kept its brackets |
+
 ## Still to convert, in likely order of worth
 
 From profiling `test_rules.js` (boots remaining by caller):
@@ -1986,3 +2159,87 @@ a probe ever passes alone and fails in the suite, look here first.
 - Measure a supposed optimisation more than once. Two of these read as
   wins on a single run and were losses on three; run-to-run noise here
   is about half a second.
+
+## Round 11 - fire at range, a stopped clock, thrown arms, a shake
+
+**Fire and lightning are seen wherever there is a clear line.**  Everything
+else in the dungeon is drawn only where the lamp reaches; fire is its own
+light.  `blazeSeen(x,y)` in part2 is the single rule (`F_VIS ||
+sightClear`), and it is what `glowPut` already meant - now it is written
+once and asked by every place that draws a flame or a current: lit fuses,
+fire clouds, the blast and zap splashes, and a burning creature you
+cannot otherwise see (drawn as the flame alone, with nothing behind it).
+Fumes and frost keep the old rule; they have no light of their own.  It
+deliberately does NOT cache: a blast opens walls in the middle of its own
+animation, so an answer kept from the start of the turn is a lie by the
+time the flames are drawn.
+
+**A dialog box stops the world.**  Every world timestamp now comes from
+`nowMs()` - the wall clock less however long has been spent behind a box -
+and `worldPaused()` is true for the eleven modes in `PAUSE_MODES`.  A run
+that has ENDED (dying, dead, win, score, title, choose) keeps the wall
+clock or the stone never rises.  UI chrome - blinking cursors, panel
+slides, button flashes - deliberately keeps `Date.now()`; there is a
+keep-list in the round-11 conversion and the rule is written above
+`nowMs`.  `underBox` exists because a notice draws its own backdrop by
+putting the mode back to what was underneath and re-entering `drawFrame`:
+for that one frame it looked exactly like a game with no box on it.
+
+`nowMs` guards against the clock jumping backwards, because the render
+suite drives probes on made-up clocks.  Any probe that installs one also
+does `ctx.pauseFrom = ctx.pauseOwed = 0`, and probes that stamp world
+timestamps use `ctx.nowMs()` rather than `Date.now()`.
+
+**Thrown weapons wear out.**  `THROWN_BREAK_PCT = 20`, `WELL_MADE_PCT =
+25`.  `it.make` is 1 for well made, -1 for worn, absent for ordinary;
+`makeWord` puts it in the name, `rollMake` deals it out where a hurl
+weapon enters the world, `hurlWear` decides a landing (0 whole, 1 worn,
+2 gone).  One roll per throw, taken before the hit is known, so a hit, a
+miss and a lob at bare floor all wear it the same.
+
+**A barrel shakes the view** for `SHAKE_MS` 300ms up to `SHAKE_AMP` 3px,
+falling away as it goes, seeded off the square rather than off the dice.
+It goes through the same door as the map slide - clipped, translated -
+so the panel does not move with it.  It is on the world clock, so a box
+freezes it mid-shake.
+
+**`BEAT_PLAYER` is 360ms**, not the full `BEAT` of 500.  It is the one gap
+you sit through on every single step.  It may not go below
+`WALK_ANIM_MS`, or the answer treads on the end of your own step; the
+sound suite now asks for exactly that relationship and no longer demands
+one number for all four beats.
+
+**The identify game.**  `numbersKnown(it)` is now `it.known` alone.
+Wielding or wearing tells you one thing - whether it is cursed, because a
+cursed thing will not come off - and `curseKnown`/`seeCurse` remember
+that for good.  Plusses, properties and enchantments come from studying
+it, an antiquarian's eye, or a scroll.  Four probes encoded the old rule
+and were rewritten, not loosened.
+
+**Also:** one line per kill (the executioner said "You finish it off" and
+then let `killMonster` say "You slay it", both stamped 'executed'); the
+look now reaches the whole floor (`panMaxX/panMaxY` off `MAP_W`/`MAP_H`
+instead of a flat `PAN_MAX = 40`, which was narrower than a large map);
+`'note'` joined `dialogUp()` so a drag over a notice selects its words.
+
+### Probes that were failing on the dice, not on the game
+
+The wear roll shifts the item stream, which shifted four probes.  Each
+was measured and pinned rather than loosened:
+
+- **witch stones** asked only that SOME stone was left lying about.  She
+  lands about four throws in five, so ten that all land is about one seed
+  in seven.  It now counts the misses - off your own hit points, because
+  the line she says is trimmed to fit the panel - and asks that exactly
+  those are on the floor.
+- **a second step** placed the creature on a walkable square three away
+  without checking it could be seen.  The gap between a quick creature's
+  two steps is only inserted when the step is watched, so an unseen spot
+  made both steps share one instant.
+- **lightning** measured its lane with `walkable()`.  A door is walkable
+  and stops a shot dead.  It uses `blocksShot()` now, and measures the
+  span against the part of the path that is on the screen - a wand fired
+  down a long hall outruns the view.
+- **the shake probe** (new) split panel from map by pixel column, and the
+  fake canvas only pretends to clip, so a shaken map tile slid into the
+  panel's column.  The panel is read by its words instead.

@@ -1004,6 +1004,20 @@ spr('bolt', [
     "........",
     "........"])
 
+# The second spark, for the current running through water.  Painted in the
+# blues the first one is painted in rather than in the yellow of a crossbow
+# bolt, so the two sit together in a pool - the fork is arranged
+# differently, which is the point of having a second one at all.
+spr('bolt2', [
+    "B.c.B.cB",
+    ".BWcWB..",
+    "cB.Bc.Bc",
+    "..BcWB..",
+    "BcB.BcB.",
+    ".BWcWB.c",
+    "cB...B.B",
+    "..B...B."])
+
 # ----- flying crossbow bolts (one per facing) ---------------------------
 spr('bolt_e', [
     "........",
@@ -1565,6 +1579,20 @@ spr('flame', [
     "...R....",
     "........"])
 
+# A third tile for a fire, so a flame has three pictures to move through
+# rather than two to switch between.  Placeholder art in the same reds and
+# yellows as the sheet of flame beside it: a middling flame leaning the
+# other way, so the three read wide, narrow, leaning.
+spr('flame2', [
+    "...RR...",
+    "..RoOR..",
+    ".RoOOR..",
+    ".RoOyOR.",
+    "RoOyyOR.",
+    "RoOyOR..",
+    ".RRoOR..",
+    "..RRR..."])
+
 spr('frost', [
     "........",
     "...c....",
@@ -2074,7 +2102,7 @@ LAYOUT = [
                    'pot_p', 'pot_c', 'pot_w', 'pot_o']),
 
     ('arms',      ['sword', 'dagger', 'dagger_throw', 'mace', 'axe', 'spear',
-                   'bow', 'bow_long', 'crossbow', 'arrow', 'bolt',
+                   'bow', 'bow_long', 'crossbow', 'arrow', 'bolt', 'bolt2',
                    'stone', 'stone_blast', 'stone_slow', 'stone_return',
                    'stone_fire', 'stone_ice', 'stone_shock']),
 
@@ -2089,7 +2117,7 @@ LAYOUT = [
                   ['mon_' + c for c in 'hwk']),
 
     # the crossbow bolt doubles as the lightning streak 
-    ('effects',   ['flame', 'frost', 'magic', 'gas', 'icecube',
+    ('effects',   ['flame', 'flame2', 'frost', 'magic', 'gas', 'icecube',
                    'flash1', 'flash2', 'flash3']),
 
     ('interface', ['mouse', 'mouse_get', 'cursor', 'point', 'heart', 'pan_cross',

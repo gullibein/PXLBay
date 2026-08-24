@@ -82,12 +82,8 @@ function boot() {
   /* The painted title screen, a file beside the page like the sheet is.
      Nothing waits on it: if it never loads, drawTitle falls back to a
      plain dark screen and the menu works just the same. */
-  var addCacheBust = function (url) {
-    if (!url || url.indexOf('data:') === 0) return url;
-    return url + (url.indexOf('?') === -1 ? '?v=' + Date.now() : '&v=' + Date.now());
-  };
   splashImg = new Image();
-  splashImg.src = addCacheBust(SPLASH_PNG);
+  splashImg.src = SPLASH_PNG;
 
   atlasImg = new Image();
   /* The sheet is a file beside this one, not a copy welded into it: what
@@ -109,7 +105,7 @@ function boot() {
     newGame(true);
     requestAnimationFrame(loop);
   };
-  atlasImg.src = addCacheBust(ATLAS_PNG);
+  atlasImg.src = ATLAS_PNG;
 
   window.addEventListener('resize', fit);
   window.addEventListener('keydown', onKey, false);
@@ -352,8 +348,8 @@ function onMouseMove(e) {
      Rounding the offset to whole tiles here is what made a drag stutter:
      the map only moved once the hand had crossed half a square, and then
      it moved a whole one. */
-  var ex = clamp(MOUSE.held.ex - dx / TS, -PAN_MAX, PAN_MAX);
-  var ey = clamp(MOUSE.held.ey - dy / TS, -PAN_MAX, PAN_MAX);
+  var ex = clamp(MOUSE.held.ex - dx / TS, -panMaxX(), panMaxX());
+  var ey = clamp(MOUSE.held.ey - dy / TS, -panMaxY(), panMaxY());
   G.drag.dx = Math.round(ex);
   G.drag.dy = Math.round(ey);
   CAM_AT.x = ex; CAM_AT.y = ey;
@@ -448,8 +444,8 @@ function onWheel(e) {
   G.waiting = null;
   WHEEL_T = Date.now();
   G.drag = G.drag || { dx: 0, dy: 0 };
-  var ex = clamp(CAM_AT.x + dx / TS, -PAN_MAX, PAN_MAX);
-  var ey = clamp(CAM_AT.y + dy / TS, -PAN_MAX, PAN_MAX);
+  var ex = clamp(CAM_AT.x + dx / TS, -panMaxX(), panMaxX());
+  var ey = clamp(CAM_AT.y + dy / TS, -panMaxY(), panMaxY());
   G.drag.dx = Math.round(ex);
   G.drag.dy = Math.round(ey);
   CAM_AT.x = ex; CAM_AT.y = ey;
@@ -629,6 +625,13 @@ function clickAt(mx, my, right) {
     case 'slots':
       if (h && h.what === 'slot') { G.slots.i = h.i; slotsKey('Enter'); }
       else if (!h) slotsKey('Escape');
+      return;
+    /* Nothing on this one is picked with a finger except going on, and a
+       name has to be typed - but a tap must not do nothing at all, so a
+       tap anywhere is the same as ENTER once the name is in. */
+    case 'score':
+      if (G.hs && G.hs.typing) return;
+      scoreKey('Enter');
       return;
     case 'hint':
       hintKey(h && h.what === 'hint' && h.i === 1 ? 'Escape' : ' ');
@@ -1100,7 +1103,12 @@ function wrap(s, w) {
 }
 
 /* ---------------------------------------------------------- new game */
-function newGame(first) {
+function newGame(first, slot) {
+  /* RESTART starts another run in the slot the last one was in: you
+     chose that slot once, at START, and the choice stands for as long as
+     you are playing.  freshG wipes it, so it is kept here first. */
+  var wasSlot = (typeof G !== 'undefined' && G) ? G.slot : null;
+  if (slot === undefined || slot === null) slot = wasSlot;
   /* A run is seeded from the clock.  FORCED_SEED overrides it, which is
      how a test gets the same dungeon twice and how a strange floor can be
      looked at again instead of described from memory. */
@@ -1127,6 +1135,11 @@ function newGame(first) {
 
   enterLevel(1);
   if (first) { G.msgq = []; G.mode = 'title'; return; }
+  /* A run belongs to the slot it was started in from its very first
+     turn, and never moves out of it.  That is what makes the autosave
+     safe to do without asking: there is only ever one place it can go. */
+  G.slot = (slot === undefined || slot === null) ? null : slot;
+  if (G.slot !== null && G.slot !== undefined) saveInto(G.slot);
   msg('Welcome to the Dungeons of Doom.', 'c');
   msg('Arrows move. TAB opens your pack. ? for help.', '6');
   finishMsgs();
@@ -1155,7 +1168,7 @@ function logPush(m) {
    Called when you press a key: if you are going faster than the pacing,
    you get the words immediately rather than out of order. */
 function settleLog() {
-  var now = Date.now(), i;
+  var now = nowMs(), i;
   for (i = 0; i < G.log.length; i++) if (G.log[i].at > now) G.log[i].at = now;
   soundSettle();       /* and drop the noises that went with them */
 }
@@ -1493,7 +1506,7 @@ function doWalkJob(job) {
 function walkTick() {
   if (!G.walk) return;
   if (G.dead || G.mode !== 'play') { G.walk = null; return; }
-  if (Date.now() < G.walk.at) return;
+  if (nowMs() < G.walk.at) return;
   /* and a walk under way holds its breath until you have landed */
   if (warping()) return;
   var w = G.walk;
@@ -1526,7 +1539,7 @@ function walkTick() {
   w.hp = P.hp; w.hunger = G.hungerState;
   /* the beat has already been squeezed by beatScale, so what is left is
      how long this square actually takes */
-  w.at = Date.now() + Math.max(20, G.beat);
+  w.at = nowMs() + Math.max(20, G.beat);
   if (G.mode !== 'play') { G.walk = null; return; }
 }
 
@@ -1573,6 +1586,9 @@ function tick(took) {
   if (!G.dead && !freeStep && !(P.haste > 0 && (G.turn & 1))) monstersMove();
   if (!G.dead) upkeep();
   if (!G.dead) computeVis();
+  /* Last of all, once the turn is entirely finished: a save taken in the
+     middle of one would come back with half a turn played. */
+  autosave();
   finishMsgs();
 }
 
@@ -1629,7 +1645,7 @@ function onKey(e) {
      mode is whatever screen you happened to be on when it happened - if
      you died with the pack open, the pack was still taking orders, and
      a corpse was swinging its sword. */
-  if (G.dead && G.mode !== 'dead' && G.mode !== 'win') return;
+  if (G.dead && G.mode !== 'dead' && G.mode !== 'win' && G.mode !== 'score') return;
 
   switch (G.mode) {
     case 'ask': askKey(k); return;
@@ -1646,8 +1662,11 @@ function onKey(e) {
        whichever key you happened to be holding when you died. */
     case 'dying': return;
     case 'dead': case 'win':
-      if (k === 'Enter' || k === ' ' || k === 'r' || k === 'R') newGame(false);
+      /* the table of the ten best runs stands between the gravestone and
+         the next rogue, because that is the moment it means anything */
+      if (k === 'Enter' || k === ' ' || k === 'r' || k === 'R') openScores();
       return;
+    case 'score': scoreKey(k); return;
     case 'perk': perkKey(k); return;
     case 'choose': chooseKey(k); return;
     case 'pause': pauseKey(k); return;
@@ -1872,11 +1891,15 @@ function chooseKey(k) {
 
 /* ------------------------------------------------------- the pause menu
    ESC out in the dungeon stops the game and asks what you want. */
-var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['load', 'LOAD'], ['hints', 'HINTS'],
+/* No LOAD here.  A run lives in the slot it was started in and cannot be
+   moved out of it, so loading a different one mid-run is the one thing
+   this menu must not offer: it would leave two runs sharing a slot and
+   the autosave writing over whichever it had last been told about. */
+var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['hints', 'HINTS'],
                   ['restart', 'RESTART'], ['help', 'HELP'], ['exit', 'EXIT']];
 /* and the same menu on the title screen, where there is no run to save */
-var TITLE_OPTS = [['start', 'START'], ['load', 'LOAD'], ['hints', 'HINTS'],
-                  ['help', 'HELP'], ['exit', 'EXIT']];
+var TITLE_OPTS = [['start', 'START'], ['load', 'LOAD'], ['scores', 'HIGHSCORE'],
+                  ['hints', 'HINTS'], ['help', 'HELP'], ['exit', 'EXIT']];
 function openPause() { G.pause = { i: 0 }; G.titleMenu = null; G.mode = 'pause'; }
 /* Out of the run and back to the splash, with nothing of the menus left
    standing behind it. */
@@ -1897,13 +1920,15 @@ function pauseKey(k) {
      for.  The slot is asked for once; after that the run knows which
      one it lives in. */
   if (pick === 'save') {
+    /* The slot was chosen at START, so there is nothing to ask.  It saves
+       and it quits: it used to open the picker, write the file, print
+       "Saved." and sit there with the run still going. */
     if (G.slot === null || G.slot === undefined) { openSlots('save', 'pause'); return; }
     var serr = saveInto(G.slot);
     if (serr) { openSlots('save', 'pause'); G.slots.msg = serr; return; }
     quitToTitle();
     return;
   }
-  if (pick === 'load') { openSlots(pick, 'pause'); return; }
   if (pick === 'hints') { openHints('pause'); return; }
   G.pause = null;
   if (pick === 'help') { G.mode = 'help'; return; }
@@ -1938,14 +1963,15 @@ function titleKey(k) {
   }
   if (k !== 'Enter' && k !== ' ') return;
   var pick = TITLE_OPTS[G.titleMenu.i][0];
-  if (pick === 'start') { G.titleMenu = null; newGame(false); return; }
+  if (pick === 'start') { openSlots('new', 'title'); return; }
   if (pick === 'load') { openSlots('load', 'title'); return; }
+  if (pick === 'scores') { openScores('title'); return; }
   if (pick === 'hints') { openHints('title'); return; }
   if (pick === 'help') { G.mode = 'help'; return; }
   if (pick === 'exit') { G.titleMenu = null; return; }
 }
 function drawTitleMenu() {
-  var i, w = 70, h = 12 + TITLE_OPTS.length * 10 + 4;
+  var i, w = 76, h = 12 + TITLE_OPTS.length * 10 + 4;
   var x = ((SW - w) >> 1), y = ((SH - h) >> 1);
   rect(x, y, w, h, '#0b0d1c');
   frame(x, y, w, h, '#636d85');
@@ -1968,7 +1994,7 @@ function drawTitleMenu() {
    whatever global happens to be set: a stale flag sent BACK to a pause
    menu for a run that had not started. */
 function openSlots(what, from) {
-  G.slots = { what: what, i: 0, msg: '', from: from || 'pause' };
+  G.slots = { what: what, i: 0, msg: '', from: from || 'pause', warn: -1 };
   G.mode = 'slots';
 }
 function slotRows() {
@@ -1985,10 +2011,29 @@ function closeSlots() {
 function slotsKey(k) {
   var d = keyDir(k), n = SAVE_SLOTS + 1;      /* the slots, then BACK */
   if (k === 'Escape' || k === 'Tab') { closeSlots(); return; }
-  if (d && d[1]) { G.slots.i = (G.slots.i + d[1] + n) % n; G.slots.msg = ''; return; }
+  if (d && d[1]) {
+    G.slots.i = (G.slots.i + d[1] + n) % n;
+    G.slots.msg = ''; G.slots.warn = -1;      /* moving off it is a no */
+    return;
+  }
   if (k !== 'Enter' && k !== ' ') return;
   if (G.slots.i === SAVE_SLOTS) { closeSlots(); return; }
   var err;
+  /* START.  An empty slot begins at once; one with a run in it is a
+     question, and the answer is the same key pressed twice.  Anything
+     else - a yes/no box, a second menu - is one more screen between
+     pressing START and playing, and this one is already two. */
+  if (G.slots.what === 'new') {
+    if (slotUsed(G.slots.i) && G.slots.warn !== G.slots.i) {
+      G.slots.warn = G.slots.i;
+      G.slots.msg = 'Press again to write over it.';
+      return;
+    }
+    var pickSlot = G.slots.i;
+    G.slots = null; G.titleMenu = null;
+    newGame(false, pickSlot);
+    return;
+  }
   if (G.slots.what === 'save') {
     err = saveInto(G.slots.i);
     if (err) { G.slots.msg = err; return; }
@@ -2004,13 +2049,20 @@ function slotsKey(k) {
 }
 function drawSlots() {
   var rows = slotRows(), i;
-  var w = 132, h = 14 + (SAVE_SLOTS + 1) * 10 + 12;
-  /* over the dungeon, not over the panel: the panel is text, and text
-     under a box is still text you cannot read */
-  var x = VIEW_PX + ((VIEW_W * TS - w) >> 1), y = ((SH - h) >> 1);
+  /* room under the rows for the line about writing over a run, which is
+     two lines' worth of words at this width */
+  var w = 152, h = 14 + (SAVE_SLOTS + 1) * 10 + 12;
+  /* Over the dungeon, not over the panel: the panel is text, and text
+     under a box is still text you cannot read.  Over the title screen
+     there is no panel and the whole width is the picture, so it goes in
+     the middle of that instead. */
+  var overTitle = G.slots.from === 'title';
+  var x = overTitle ? ((SW - w) >> 1) : VIEW_PX + ((VIEW_W * TS - w) >> 1);
+  var y = ((SH - h) >> 1);
   rect(x, y, w, h, '#0b0d1c');
   frame(x, y, w, h, '#636d85');
-  text(G.slots.what === 'save' ? 'SAVE GAME' : 'LOAD GAME', x + 5, y + 4, 'y');
+  text(G.slots.what === 'new' ? 'CHOOSE A SLOT' :
+    G.slots.what === 'save' ? 'SAVE GAME' : 'LOAD GAME', x + 5, y + 4, 'y');
   for (i = 0; i < rows.length; i++) {
     var cur = G.slots.i === i;
     if (cur) rect(x + 2, y + 14 + i * 10, w - 4, 10, '#2b3352');
@@ -2024,6 +2076,167 @@ function drawSlots() {
   text((G.slots.i === SAVE_SLOTS ? '>' : ' ') + ' BACK', x + 5, by + 2,
     G.slots.i === SAVE_SLOTS ? 'w' : '4');
   if (G.slots.msg) text(G.slots.msg, x + 5, by + 13, 'C');
+}
+
+/* ------------------------------------------------------- the highscore
+   The table goes up after the gravestone and before the next run.  If
+   the run that just ended belongs in it, the first thing on the screen
+   is a row with nothing in the name of it and a cursor blinking there.
+
+   The table may not have arrived yet - it comes off somebody else's
+   website - so the screen has three states and says which it is in
+   rather than sitting blank: waiting, asking for a name, showing.  It is
+   never a wall: ENTER goes on from any of them. */
+function hsEntryNow() {
+  return { name: '', xp: P.exp | 0, level: P.lv | 0 };
+}
+function openScores(from) {
+  var e = hsEntryNow();
+  G.hs = {
+    list: G.hsBoard || null, entry: e, from: from || 'end',
+    typing: 0, sent: 0, where: '', place: 0
+  };
+  G.mode = 'score';
+  if (G.hs.list) hsReady(G.hs.list);
+  else hsFetch(function (list, where) {
+    G.hsBoard = list; G.hsRead = where;
+    if (G.hs && !G.hs.list) { G.hs.list = list; hsReady(list); }
+  });
+}
+/* the table has arrived: either it wants a name or it does not */
+function hsReady(list) {
+  if (!G.hs || G.hs.sent) return;
+  /* Read from the title screen it is a table and nothing else.  There is
+     no run to put in it - the rogue standing on the splash has not taken
+     a step - and an empty table would otherwise ask a player who had
+     never played for their name. */
+  if (G.hs.from === 'title') { G.hs.typing = 0; return; }
+  if (hsQualifies(list, G.hs.entry.xp)) { G.hs.typing = 1; return; }
+  G.hs.typing = 0;
+  G.hs.place = 0;
+}
+function hsSend() {
+  if (!G.hs || G.hs.sent || !G.hs.list) return;
+  var entry = G.hs.entry;
+  if (!hsName(entry.name)) entry.name = 'rogue';
+  G.hs.place = hsPlace(G.hs.list, entry);
+  G.hs.sent = 1; G.hs.typing = 0; G.hs.where = 'sending';
+  hsSubmit(G.hs.list, entry, function (t, where) {
+    if (!G.hs) return;
+    G.hs.list = t; G.hs.where = where;
+    G.hsBoard = t;
+  });
+}
+/* Away from the table and on with it.  Where that goes depends on what
+   put the table up: the end of a run starts another, and the title
+   screen it was read from goes back to the title screen. */
+function hsLeave() {
+  var from = (G.hs && G.hs.from) || 'end';
+  G.hs = null;
+  if (from === 'title') { G.mode = 'title'; return; }
+  newGame(false);
+}
+function scoreKey(k) {
+  if (G.hs && G.hs.typing) {
+    if (k === 'Enter') { hsSend(); return; }
+    if (k === 'Backspace') {
+      G.hs.entry.name = G.hs.entry.name.slice(0, -1);
+      return;
+    }
+    if (k === 'Escape') { G.hs.entry.name = 'rogue'; hsSend(); return; }
+    /* one character at a time, and only the ones the font has */
+    if (k.length === 1 && /[A-Za-z0-9 ]/.test(k) &&
+        G.hs.entry.name.length < HS_NAME_MAX)
+      G.hs.entry.name += k;
+    return;
+  }
+  if (k === 'Enter' || k === ' ' || k === 'Escape' || k === 'r' || k === 'R')
+    hsLeave();
+}
+function drawScores() {
+  /* Ten rows at eight pixels apiece, a heading and two lines under them:
+     that is 114 of the 128 the screen has, and it has to be, because the
+     table is the one box in the game with ten rows in it.  It shrinks to
+     what it is actually holding, so a roll with three runs on it is not
+     a tall empty frame with three lines at the top. */
+  var i, w = 150;
+  var rows = (G.hs && (G.hs.typing || G.hs.sent) && G.hs.list) ?
+    hsWith(G.hs.list, G.hs.entry).length :
+    ((G.hs && G.hs.list) ? G.hs.list.length : 0);
+  rows = Math.max(3, Math.min(HS_MAX, rows));
+  var h = 12 + rows * 8 + 22;
+  var x = ((SW - w) >> 1), y = ((SH - h) >> 1);
+  rect(x, y, w, h, '#0b0d1c');
+  frame(x, y, w, h, '#636d85');
+  textIn('THE TEN BEST', x, w, y + 3, 'y');
+  hit(x, y, w, h, 'score', 0);
+  var list = (G.hs && G.hs.list) || null;
+  /* Three things can be true here and the screen has to say which:
+     the roll has not come back yet, it came back with nobody in it, or
+     it came back.  A box with a heading and nothing under it reads as
+     something broken. */
+  if (!list || (!list.length && !G.hs.typing && !G.hs.sent)) {
+    textIn(!list ? 'reading the roll...' :
+      G.hsRead === 'offline' ? 'the roll could not be reached' :
+      'nobody has come back up yet', x, w, y + 24,
+      G.hsRead === 'offline' ? 'C' : '6');
+    if (list && !HS_KEY && !HS_PROXY)
+      textIn('(no roll set up: this machine only)', x, w, y + 34, '4');
+    textIn(G.hs && G.hs.from === 'title' ? 'ENTER to go back' : 'ENTER to rise again',
+      x, w, y + h - 9, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
+    return;
+  }
+  /* the run being typed in is shown in its place in the table while it
+     is being typed, so you can see where you came */
+  var shown = list, mine = -1;
+  if (G.hs.sent) {
+    /* Once it has been sent, the table already has the run in it - it is
+       what was sent.  Adding it again put the rogue on the roll twice. */
+    mine = G.hs.place - 1;
+  } else if (G.hs.typing) {
+    shown = hsWith(list, G.hs.entry);
+    var want = hsName(G.hs.entry.name);
+    for (i = 0; i < shown.length; i++)
+      if (mine < 0 && shown[i].xp === (G.hs.entry.xp | 0) &&
+          shown[i].name === (want || '-')) mine = i;
+    if (mine < 0)
+      for (i = 0; i < shown.length; i++)
+        if (mine < 0 && shown[i].xp === (G.hs.entry.xp | 0)) mine = i;
+  }
+  var ty = y + 12;
+  for (i = 0; i < shown.length; i++) {
+    var e = shown[i], row = i === mine;
+    if (row) rect(x + 2, ty - 1, w - 4, 8, '#2b3352');
+    var nm = e.name;
+    if (row && G.hs.typing) {
+      nm = G.hs.entry.name + (((Date.now() / 400) | 0) % 2 ? '_' : '');
+      if (!G.hs.entry.name && ((Date.now() / 400) | 0) % 2 === 0) nm = '';
+    }
+    text((i + 1) + '.', x + 5, ty, row ? 'w' : '4');
+    text(nm, x + 18, ty, row ? 'w' : '3');
+    var xp = String(e.xp);
+    text(xp, x + w - 12 - textW(xp) - 26, ty, row ? 'w' : 'y');
+    text('lv ' + e.level, x + w - 8 - textW('lv ' + e.level), ty, row ? 'w' : 'c');
+    ty += 8;
+  }
+  if (G.hs.typing) {
+    textIn('type your name, ENTER to set it', x, w, ty + 3, 'C');
+    return;
+  }
+  if (G.hs.sent) {
+    /* Sent, being sent, could not be sent, or never had anywhere to send
+       it: four different things and four different lines.  The roll is
+       kept in one place for everybody, so "kept on this machine" is the
+       game admitting it did not manage that, not the way it works. */
+    textIn(G.hs.where === 'bin' ? 'sent to the roll' :
+      G.hs.where === 'sending' ? 'sending...' :
+      G.hs.where === 'offline' ? 'the roll could not be reached' :
+      'no roll set up: kept on this machine', x, w, ty + 3,
+      G.hs.where === 'bin' ? 'G' : G.hs.where === 'sending' ? '6' : 'C');
+    ty += 8;
+  }
+  textIn(G.hs.from === 'title' ? 'ENTER to go back' : 'ENTER to rise again',
+    x, w, ty + 3, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
 }
 
 /* ------------------------------------------------------------- hints
@@ -3015,7 +3228,8 @@ function dialogUp() {
   var m = G.mode;
   return m === 'hint' || m === 'help' || m === 'story' || m === 'room' ||
          m === 'pause' || m === 'slots' || m === 'perk' || m === 'ask' ||
-         m === 'ctx' || m === 'dead' || m === 'dying' || m === 'win' ||
+         m === 'ctx' || m === 'note' || m === 'dead' || m === 'dying' ||
+         m === 'win' || m === 'score' ||
          m === 'title' || m === 'choose' || !!G.inspect;
 }
 /* which character of a run the pointer is over, counting from the left
@@ -3142,13 +3356,26 @@ function drawFrame() {
   if (G.mode === 'note' && G.note) {
     var back = G.note.back && G.note.back !== 'note' ? G.note.back : 'play';
     G.mode = back;
+    underBox++;                /* still behind a box, whatever the mode says */
     drawFrame();
+    underBox--;
     G.mode = 'note';
     drawNote();
     return;
   }
   if (G.mode === 'title') { drawTitle(); return; }
+  /* The slot list opened from the title screen belongs over the title
+     screen.  It used to be drawn over the dungeon behind it, which is
+     the run the game makes at boot so that something is there - so
+     pressing START showed you a rogue standing in a room and a panel
+     with his gold on it, before you had chosen anything. */
+  if (G.mode === 'slots' && G.slots && G.slots.from === 'title') {
+    drawTitle();
+    drawSlots();
+    return;
+  }
   if (G.mode === 'win') { drawWin(); return; }
+  if (G.mode === 'score') { drawScores(); return; }
   if (G.mode === 'help') { drawHelp(); return; }
   if (G.mode === 'perk') { drawPerkPick(); return; }
   if (G.mode === 'inv') { drawInv(); return; }
@@ -3161,7 +3388,7 @@ function drawFrame() {
     drawMap(); drawKeyBelt(); drawSidePanel(); drawCtxMenu(); return;
   }
   /* the last words have been read; raise the stone */
-  if (G.mode === 'dying' && Date.now() >= G.deadAt) G.mode = 'dead';
+  if (G.mode === 'dying' && nowMs() >= G.deadAt) G.mode = 'dead';
   drawMap();
   drawKeyBelt();
   drawSidePanel();
@@ -3223,7 +3450,7 @@ function panelPrompt() {
    so every frame of the same instant agrees with itself. */
 function warpPhase(w) {
   if (!w) return null;
-  var age = Date.now() - w.t;
+  var age = nowMs() - w.t;
   if (age < 0) return { part: 'before' };
   if (age < WARP_SHAKE) return { part: 'shake', age: age };
   if (age < WARP_SHAKE + WARP_FLASH) return { part: 'flash', age: age - WARP_SHAKE };
@@ -3272,7 +3499,7 @@ function drawWarpFlash(x, y, camx, camy, cols, age) {
 function monBetween(m) {
   var here = [m.x, m.y, m.x, m.y];
   if (!m.anim || !m.anim.length) return here;
-  var now = Date.now(), i;
+  var now = nowMs(), i;
   for (i = 0; i < m.anim.length; i++) {
     var a = m.anim[i], t0 = a[4];
     if (now < t0) return [a[0], a[1], a[0], a[1]];      /* not started yet */
@@ -3291,7 +3518,7 @@ function monShown(m) {
 function monPixel(m, camx, camy) {
   var px = VIEW_PX + (m.x - camx) * TS, py = VIEW_PY + (m.y - camy) * TS;
   if (!m.anim || !m.anim.length) return [px, py];
-  var now = Date.now(), i;
+  var now = nowMs(), i;
   for (i = 0; i < m.anim.length; i++) {
     var a = m.anim[i], t0 = a[4];
     if (now < t0) {                      /* this step has not happened yet */
@@ -3766,7 +3993,7 @@ function drawHole(mx, my, px, py, a) {
    again as the victim settles back. */
 function hurtPhase(ent) {
   if (!ent || !ent.hurt) return 0;
-  var age = Date.now() - ent.hurt.t;
+  var age = nowMs() - ent.hurt.t;
   if (age < 0) return 0;                 /* the shot has not landed yet */
   if (age > HURT_MS) { ent.hurt = null; return 0; }
   return 1 - age / HURT_MS;
@@ -3776,7 +4003,7 @@ function hurtPhase(ent) {
 /* how far into the lunge, 1 at the moment of the swing down to 0 */
 function lungePhase(ent) {
   if (!ent || !ent.lunge) return 0;
-  var age = Date.now() - ent.lunge.t;
+  var age = nowMs() - ent.lunge.t;
   if (age < 0) return 0;
   if (age > LUNGE_MS) { ent.lunge = null; return 0; }
   return 1 - age / LUNGE_MS;
@@ -3863,8 +4090,8 @@ function panKey(k) {
   if (!G.pan) return false;
   var d = keyDir(k);
   if (!d) return false;
-  G.pan.dx = clamp(G.pan.dx + d[0], -PAN_MAX, PAN_MAX);
-  G.pan.dy = clamp(G.pan.dy + d[1], -PAN_MAX, PAN_MAX);
+  G.pan.dx = clamp(G.pan.dx + d[0], -panMaxX(), panMaxX());
+  G.pan.dy = clamp(G.pan.dy + d[1], -panMaxY(), panMaxY());
   return true;
 }
 
@@ -3883,15 +4110,20 @@ function drawMap() {
      screen shifts the picture by far more than that, so most of the
      screen had nothing drawn on it and the map went black exactly when
      you wanted to watch it travel. */
-  var slip = camSlip();
-  if (slip.x || slip.y) {
+  var slip = camSlip(), sh = shakeOff();
+  /* A shake is a slide that changes its mind every few frames, so it
+     goes through the very same door: the map drawn off its grid, clipped
+     so nothing spills onto the panel, with enough tiles beyond the edges
+     to fill what the offset opens up. */
+  var ox = slip.x + sh[0], oy = slip.y + sh[1];
+  if (ox || oy) {
     cx.save();
     cx.beginPath();
     cx.rect(0, 0, SW, SH);
     cx.clip();
-    cx.translate(slip.x, slip.y);
-    drawMapAt(Math.ceil(Math.abs(slip.x) / TS) + 1,
-              Math.ceil(Math.abs(slip.y) / TS) + 1);
+    cx.translate(ox, oy);
+    drawMapAt(Math.ceil(Math.abs(ox) / TS) + 1,
+              Math.ceil(Math.abs(oy) / TS) + 1);
     cx.restore();
     return;
   }
@@ -3978,7 +4210,7 @@ function drawMapAt(overX, overY) {
           spr(floorSprite(mx, my), px, py, a);
           drawWallEdging(mx, my, px, py, a);
           drawEdging(mx, my, px, py, a);
-          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && Date.now() < L.showAt[idx]))
+          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx]))
             drawDecor(L.decor[idx], mx, my, px, py, a);
           break;
         case WATER:
@@ -3986,7 +4218,7 @@ function drawMapAt(overX, overY) {
           drawLiquidCorners(mx, my, px, py, a);
           break;
         case HOLY:
-          spr(((mx + my + ((Date.now() / 420) | 0)) & 1) ? 'holy' : 'holy2', px, py, a);
+          spr(((mx + my + ((nowMs() / 420) | 0)) & 1) ? 'holy' : 'holy2', px, py, a);
           break;
         case HOLE:
           drawHole(mx, my, px, py, a);
@@ -4018,7 +4250,7 @@ function drawMapAt(overX, overY) {
              flagstone in the middle of the pattern - which is the one
              thing a rug over a trapdoor must not look like, since hiding
              it is the whole point of laying it there. */
-          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && Date.now() < L.showAt[idx]))
+          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx]))
             drawDecor(L.decor[idx], mx, my, px, py, a);
           break;
       }
@@ -4043,7 +4275,7 @@ function drawMapAt(overX, overY) {
   /* the dead linger for a moment, blinking, so you see what you hit */
   for (i = L.corpses.length - 1; i >= 0; i--) {
     var co = L.corpses[i];
-    var age = Date.now() - co.t;
+    var age = nowMs() - co.t;
     if (age > 620) { L.corpses.splice(i, 1); continue; }
     var cvx = co.x - camx, cvy = co.y - camy;
     if (cvx < -pcols - overX || cvy < -overY ||
@@ -4059,7 +4291,7 @@ function drawMapAt(overX, overY) {
     var see = monShown(m), det = sensedMon(m);
     if (!see && !det) continue;
     /* conjured a moment ago and not there yet */
-    if (m.showAt && Date.now() < m.showAt) continue;
+    if (m.showAt && nowMs() < m.showAt) continue;
     /* Both ends of the step it is taking, because it is drawn somewhere
        between them.  This used to throw it out on the square it ends on:
        one that walks a long way out of the view - or is picked up and
@@ -4106,11 +4338,28 @@ function drawMapAt(overX, overY) {
     }
     /* alight, or frozen where it stands: both drawn over the creature
        so you can tell at a glance what is happening to it */
-    if (see && m.burn > 0) spr('flame', pos[0], pos[1], 0.85);
+    if (see && m.burn > 0) spr(fireSprite(m.x, m.y), pos[0], pos[1], 0.85);
     /* web looks like web and ice looks like ice: the block of ice used
        to be drawn over anything held for any reason at all */
     else if (see && m.webbed > 0) spr('web', pos[0], pos[1], 0.9);
     else if (see && m.stuck > 0) spr('icecube', pos[0], pos[1], 0.7);
+  }
+  /* A thing that is alight is carrying a light, and the dark does not
+     hide a light.  You do not see the creature - it is round a corner of
+     the dark, or invisible, and the loop above passed it over - but the
+     fire on it is fire like any other, and fire is seen the length of
+     the hall.  So the flame is drawn on its own: a torch moving in the
+     black, with nothing behind it, which is exactly what it is. */
+  for (i = 0; i < L.mons.length; i++) {
+    var bm = L.mons[i];
+    if (!(bm.burn > 0)) continue;
+    if (monShown(bm) || sensedMon(bm)) continue;   /* already drawn above */
+    if (bm.showAt && nowMs() < bm.showAt) continue;
+    if (!blazeSeen(bm.x, bm.y)) continue;
+    var bp = monPixel(bm, camx, camy);
+    if (bp[0] < VIEW_PX - shift - TS || bp[1] < VIEW_PY - TS ||
+        bp[0] > VIEW_PX + VIEW_W * TS || bp[1] > VIEW_PY + VIEW_H * TS) continue;
+    spr(fireSprite(bm.x, bm.y), bp[0], bp[1], 0.85);
   }
   /* drawn last so they sit on top of whatever is behind them */
   for (i = 0; i < markers.length; i++)
@@ -4131,7 +4380,7 @@ function drawMapAt(overX, overY) {
     if (!mcol) continue;
     for (var q = 0; q < MOTES_PER_ROOM; q++) {
       /* its own drift, its own pace, its own corner of the room */
-      var ph = (Date.now() / MOTE_MS) + q * 0.61803;
+      var ph = (nowMs() / MOTE_MS) + q * 0.61803;
       var swirl = Math.sin(ph * 2.1 + q) * 0.5 + 0.5;
       var rise = (ph + q * 0.137) % 1;
       var fx2 = mr.x + 0.5 + (mr.w - 1) * (((q * 0.7548 + swirl * 0.22) % 1));
@@ -4158,9 +4407,8 @@ function drawMapAt(overX, overY) {
     var fcx = fbx - camx, fcy = fby - camy;
     if (fcx < -pcols - overX || fcy < -overY ||
         fcx >= VIEW_W + overX || fcy >= VIEW_H + overY) continue;
-    if (!(L.flags[fj] & F_VIS)) continue;
-    var fz = ((Date.now() / 90 + fbx * 3 + fby * 5) | 0) % 2;
-    spr(fz ? 'flame' : 'fire_wall', VIEW_PX + fcx * TS, VIEW_PY + fcy * TS, 1);
+    if (!blazeSeen(fbx, fby)) continue;
+    spr(fireSprite(fbx, fby), VIEW_PX + fcx * TS, VIEW_PY + fcy * TS, 1);
   }
   /* lingering gas */
   for (i = 0; i < L.clouds.length; i++) {
@@ -4168,18 +4416,22 @@ function drawMapAt(overX, overY) {
     var clx = cl.x - camx, cly = cl.y - camy;
     if (clx < -pcols - overX || cly < -overY ||
         clx >= VIEW_W + overX || cly >= VIEW_H + overY) continue;
-    if (!(L.flags[cl.y * MAP_W + cl.x] & F_VIS)) continue;
+    /* Fire is seen down the whole length of a hall; fumes are not.
+       Smoke and gas have no light of their own, so they stay behind the
+       same rule as everything else and are only drawn where you can
+       already see. */
+    if (cl.kind === 'fire' ? !blazeSeen(cl.x, cl.y)
+                           : !(L.flags[cl.y * MAP_W + cl.x] & F_VIS)) continue;
     /* thrown fire is worked out at once and arrives a beat later */
-    if (cl.at && Date.now() < cl.at) continue;
+    if (cl.at && nowMs() < cl.at) continue;
     if (cl.kind === 'fire') {
       /* flames flicker, so no two squares look stamped from the same die.
          The same count decides the light it throws - see flameFrame. */
-      var ff = flameFrame(cl.x, cl.y) % 2;
-      spr(ff ? 'flame' : 'fire_wall', VIEW_PX + clx * TS, VIEW_PY + cly * TS, 0.9);
+      spr(fireSprite(cl.x, cl.y), VIEW_PX + clx * TS, VIEW_PY + cly * TS, 0.9);
     } else {
       /* Fumes roll: each square drifts on its own phase and breathes in
          and out, so a cloud never sits there as a grid of stamps. */
-      var ph = (Date.now() / 260) + (cl.seed || 0);
+      var ph = (nowMs() / 260) + (cl.seed || 0);
       var bob = Math.round(Math.sin(ph) * 1.4);
       var sway = Math.round(Math.cos(ph * 0.7) * 1.2);
       var puff = 0.52 + 0.28 * (0.5 + 0.5 * Math.sin(ph * 1.3));
@@ -4200,7 +4452,10 @@ function drawMapAt(overX, overY) {
 
   /* water that has just been frozen or electrified */
   if (G.splash) {
-    if (Date.now() - G.splash.t > BLAST_FLASH_MS) G.splash = null;
+    /* a current outlives the flash by however long it takes to cross the
+       water it was let loose in - see shockLife */
+    var splashLife = G.splash.kind === 'zap' ? shockLife(G.splash) : BLAST_FLASH_MS;
+    if (nowMs() - G.splash.t > splashLife) G.splash = null;
     else {
       var sn = G.splash.kind === 'cold' ? 'frost' :
         G.splash.kind === 'blast' ? 'flame' : 'bolt';
@@ -4208,15 +4463,21 @@ function drawMapAt(overX, overY) {
         var scx = G.splash.cells[i][0], scy = G.splash.cells[i][1];
         var sx2 = scx - camx, sy2 = scy - camy;
         if (sx2 < 0 || sy2 < 0 || sx2 >= VIEW_W || sy2 >= VIEW_H) continue;
-        if (!(L.flags[scy * MAP_W + scx] & F_VIS)) continue;
+        /* the same rule: a blast and a current are their own light and
+           are seen the length of the hall, ice on water is not */
+        if (G.splash.kind === 'cold' ? !(L.flags[scy * MAP_W + scx] & F_VIS)
+                                     : !blazeSeen(scx, scy)) continue;
+        /* the front of the current has to have got here, and this has to
+           be one of the squares lit on this beat of the blink */
+        if (sn === 'bolt' && !shockLit(G.splash, i, nowMs())) continue;
         /* A barrel is not a flask: the same picture stamped over twenty
            squares reads as a pattern, not as an explosion.  Two sprites
            dealt by the square's own hash, so it is a different mix every
            time and the same one every frame while it lasts. */
         var use = sn;
         if (G.splash.big) {
-          var mix = (scx * 7 + scy * 13 + ((Date.now() - G.splash.t) / 110 | 0) * 5) % 3;
-          use = mix === 0 ? 'flame' : mix === 1 ? 'fire_wall' : 'flash2';
+          var mix = (scx * 7 + scy * 13 + ((nowMs() - G.splash.t) / 110 | 0) * 5) % 4;
+          use = mix === 3 ? 'flash2' : FIRE_TILES[mix];
         }
         /* A current running through a pool covers a great many squares at
            once, and the same little fork stamped on every one of them
@@ -4225,7 +4486,8 @@ function drawMapAt(overX, overY) {
            it is the same every frame while it lasts and different from
            its neighbour's. */
         if (use === 'bolt')
-          sprSpin(use, VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1,
+          sprSpin(shockSprite(scx, scy, nowMs() - G.splash.t),
+            VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1,
             ((scx * 5 + scy * 11) & 3) * (Math.PI / 4));
         else spr(use, VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1);
       }
@@ -4233,7 +4495,7 @@ function drawMapAt(overX, overY) {
   }
   /* one projectile, flying, facing the way it was sent */
   if (G.bolt) {
-    var age = Date.now() - G.bolt.t;
+    var age = nowMs() - G.bolt.t;
     var life = G.bolt.mode === 'beam'
       ? (beamDrawn(G.bolt.kind) ? beamLife(G.bolt.kind) : 220)
       : 40 * G.bolt.path.length + 90;
@@ -4261,8 +4523,8 @@ function drawMapAt(overX, overY) {
     }
   }
   /* The walk cycle belongs to walking.  Standing still, you stand still. */
-  var stepping = P.walkT && Date.now() - P.walkT < WALK_ANIM_MS;
-  var frame = stepping ? (((Date.now() - P.walkT) / 90 | 0) % 2) : 0;
+  var stepping = P.walkT && nowMs() - P.walkT < WALK_ANIM_MS;
+  var frame = stepping ? (((nowMs() - P.walkT) / 90 | 0) % 2) : 0;
   /* Off centre the map is held still and the glide is his, so he is
      drawn where the walk has got to rather than on the square the rules
      have already put him on. */
@@ -4274,8 +4536,8 @@ function drawMapAt(overX, overY) {
   var onScreen = hpx > -TS - shift && hpx < SW && hpy > -TS && hpy < SH;
   /* Dying, you flicker out.  It is the one thing that needs no caption. */
   /* and not before the blow that did it has been seen to land */
-  var dyingNow = G.mode === 'dying' && Date.now() >= (G.deadFrom || 0);
-  var goneNow = (dyingNow && ((Date.now() / DEATH_BLINK_MS) | 0) % 2) || !onScreen;
+  var dyingNow = G.mode === 'dying' && nowMs() >= (G.deadFrom || 0);
+  var goneNow = (dyingNow && ((nowMs() / DEATH_BLINK_MS) | 0) % 2) || !onScreen;
   /* Unseen: you are still there, and you still need to see where you
      are, so you go translucent rather than away. */
   /* Shaded with everything else when you are standing in the dark: a
@@ -4314,14 +4576,14 @@ function drawMapAt(overX, overY) {
       if (rvx < -pcols - overX || rvy < -overY ||
           rvx >= VIEW_W + overX || rvy >= VIEW_H + overY) continue;
       /* flicker, so it reads as flame rather than a painted tile */
-      var fa = 0.7 + 0.3 * Math.sin((Date.now() / 90) + ri);
-      spr('flame', VIEW_PX + rvx * TS, VIEW_PY + rvy * TS, fa);
+      var fa = 0.7 + 0.3 * Math.sin((nowMs() / 90) + ri);
+      spr(fireSprite(ring[ri][0], ring[ri][1]), VIEW_PX + rvx * TS, VIEW_PY + rvy * TS, fa);
     }
   }
 
   /* a flask bursting: droplets thrown out and falling back */
   if (G.drops) {
-    var df = (Date.now() - G.drops.t) / G.drops.dur;
+    var df = (nowMs() - G.drops.t) / G.drops.dur;
     if (df >= 1) G.drops = null;
     else if (df >= 0) {
       var ox = VIEW_PX + (G.drops.x - camx) * TS + 4;
@@ -4342,7 +4604,7 @@ function drawMapAt(overX, overY) {
 
   /* a runed stone on its way back to your hand */
   if (G.ret) {
-    var rf = (Date.now() - G.ret.t) / G.ret.dur;
+    var rf = (nowMs() - G.ret.t) / G.ret.dur;
     if (rf >= 1 || rf < 0) { if (rf >= 1) G.ret = null; }
     else {
       var rx = G.ret.fx + (G.ret.tx - G.ret.fx) * rf;
@@ -4356,7 +4618,7 @@ function drawMapAt(overX, overY) {
 
   /* the arrow: a short line segment sliding along its true flight path */
   if (G.shot) {
-    var f = (Date.now() - G.shot.t) / G.shot.dur;
+    var f = (nowMs() - G.shot.t) / G.shot.dur;
     if (f >= 1) G.shot = null;
     else if (f < 0) { /* thrown on a later beat: nothing in the air yet */ }
     else {
@@ -4503,7 +4765,7 @@ function drawBattle(foes, y0) {
 /* Flatten the log into panel rows, newest last.  A fight or trap line
    contributes its text, then an indented line for what it did. */
 function logRows(maxRows) {
-  var rows = [], i, j, now = Date.now();
+  var rows = [], i, j, now = nowMs();
   for (i = G.log.length - 1; i >= 0; i--) {
     var e = G.log[i];
     if (e.at && e.at > now) continue;    /* has not happened yet */
@@ -5185,6 +5447,11 @@ function drawTitle() {
   } else {
     rect(0, 0, SW, SH, '#0b0d1c');
   }
+  /* The menu is not drawn under something that stands over it.  The
+     slot list and the roll are both opened from the menu and both cover
+     it, and a menu drawn underneath shows through as words behind
+     words. */
+  if (G.mode === 'slots' || G.mode === 'score') return;
   if (G.titleMenu) {
     drawTitleMenu();
   } else {

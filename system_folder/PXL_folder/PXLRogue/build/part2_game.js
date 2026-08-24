@@ -128,6 +128,7 @@ function freshG() {
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
     menu: null, invMode: 'normal', aim: null, invOpen: 0, splash: null,
     slots: null, hint: null, pan: null, wasDark: 0,
+    hs: null, hsBoard: null, hsRead: '',
     shot: null, targets: [], tIdx: 0, bl: null, pouchMade: 0, throwing: null,
     monUid: 0,
     aimSq: null, drops: null,
@@ -195,7 +196,21 @@ function isEquipped(it) {
    caught by one.  Until you have worn it or identified it you are told
    what is ordinary for its kind, which is all you could really know by
    looking. */
-function numbersKnown(it) { return !!(it.known || isEquipped(it)); }
+/* What a thing is worth is a thing you learn, not a thing you feel.
+   This used to be `it.known || isEquipped(it)`: picking a blade up told
+   you its plusses, and putting it back in the pack took the knowledge
+   away again - which is both backwards (knowledge does not run in
+   reverse) and, more to the point, hands you the whole identify game for
+   nothing.  In Rogue, wielding a sword tells you exactly one thing:
+   whether it is cursed, because a cursed one will not let go.  The
+   numbers come from studying it, from an antiquarian's eye, or from a
+   scroll read over it. */
+function numbersKnown(it) { return !!(it && it.known); }
+/* The one thing wearing it does tell you, and once told it stays told:
+   the curse announces itself the moment the thing is on you, or the
+   moment you try to take it off and cannot. */
+function curseKnown(it) { return !!(it && (it.known || it.curseSeen)); }
+function seeCurse(it) { if (it) it.curseSeen = 1; return it; }
 function shownAC(it) {
   return numbersKnown(it) ? gearAC(it) : (itemDef(it).a || 0);
 }
@@ -424,6 +439,7 @@ function newItem(depth) {
          something you shoot can be rolled onto one and onto nothing
          else. */
       if (!WEAPONS[k].grp) addRune(it, WEAPONS[k].launch ? 'wb' : 'w', 16);
+      rollMake(it);
       break;
     }
     case 'armor': k = weightedPick(ARMORS); it = mkItem('armor', k); enchantGear(it, ARMORS[k]); break;
@@ -502,7 +518,7 @@ function itemName(it) {
         /* You cannot name it, but you can feel what it is worth: a thing
            you are holding shows its plusses and its curse against the
            word for what it looks like. */
-        var lk = numsPrefix(it) + looksLike(it);
+        var lk = numsPrefix(it) + makeWord(it) + looksLike(it);
         s = (n > 1) ? (n + ' ' + lk + 's') : artic(lk);
         break;
       }
@@ -525,7 +541,7 @@ function itemName(it) {
          gives you one of them.  Its weight in the hand tells you what it
          is worth and whether it will come off again; what it is called
          and what is worked into it are still its own business. */
-      var curse = (numbersKnown(it) && it.cursed) ? 'cursed ' : '';
+      var curse = (curseKnown(it) && it.cursed) ? 'cursed ' : '';
       var pfx = curse + ((numbersKnown(it) && (it.hp || it.dp))
         ? (sgn(it.hp) + ',' + sgn(it.dp) + ' ') : '');
       /* a blasting stone is already named for what it does */
@@ -536,6 +552,7 @@ function itemName(it) {
          already says "no enchantment" against the one and "enchantment
          unknown" against the other, so the word was only ever making
          "normal arrows" out of arrows. */
+      pfx += makeWord(it);
       s = (n > 1) ? (n + ' ' + pfx + W.n + 's' + sfx) : artic(pfx + W.n + sfx);
       break;
     }
@@ -544,7 +561,7 @@ function itemName(it) {
         var A = itemDef(it);
         /* Not yet identified: all you can say is what it looks like. */
         if (hidesItsName(it)) { s = articPl(numsPrefix(it) + looksLike(it), A.pl); break; }
-        var pfx2 = ((numbersKnown(it) && it.cursed) ? 'cursed ' : '') +
+        var pfx2 = ((curseKnown(it) && it.cursed) ? 'cursed ' : '') +
                    ((numbersKnown(it) && it.ap) ? (sgn(it.ap) + ' ') : '');
         var sfx2 = (it.brKnown && it.br) ? ' of ' + it.br : '';
         /* The total protection used to be tacked on the end in brackets.
@@ -918,8 +935,8 @@ function kindKnown(it) {
 /* What a thing in your hand tells you about itself before you can put a
    name to it: the curse, and the plusses. */
 function numsPrefix(it) {
-  if (!numbersKnown(it)) return '';
-  var out = it.cursed ? 'cursed ' : '';
+  var out = (curseKnown(it) && it.cursed) ? 'cursed ' : '';
+  if (!numbersKnown(it)) return out;
   if (it.t === 'weapon') {
     if (it.hp || it.dp) out += sgn(it.hp) + ',' + sgn(it.dp) + ' ';
   } else if (it.ap) out += sgn(it.ap) + ' ';
@@ -1062,6 +1079,31 @@ function isThrowable(it) {
 }
 /* a weapon that fights in the hand and flies from it */
 function isHurlWeapon(it) { return !!(it && it.t === 'weapon' && WEAPONS[it.k].hurl); }
+/* ------------------------------------------------ how well it was made
+   Only a weapon you throw carries this, because it is the only one that
+   has anything to survive.  1 is well made, -1 is worn, and nothing at
+   all is an ordinary one.  It is a plain fact about the object rather
+   than an enchantment, so it shows in the name whether or not you have
+   worked out what the thing is: you can see the workmanship on a shaft
+   in your hands without knowing what is cut into it. */
+function makeWord(it) {
+  if (!it || !it.make) return '';
+  return it.make > 0 ? 'well made ' : 'worn ';
+}
+function rollMake(it) {
+  if (!isHurlWeapon(it)) return it;
+  if (rnd(100) < WELL_MADE_PCT) it.make = 1;
+  return it;
+}
+/* What a landing does to it: 0 - it came through whole; 1 - a well made
+   one took the blow and is worn now; 2 - it is in pieces.  Rolled once
+   per throw, wherever the throw ends up. */
+function hurlWear(it) {
+  if (!isHurlWeapon(it)) return 0;
+  if (rnd(100) >= THROWN_BREAK_PCT) return 0;
+  if (it.make > 0) { it.make = -1; return 1; }
+  return 2;
+}
 
 /* ------------------------------------------------- the scroll of return
    One thing at a time carries the charm.  It is a property of the item,
@@ -1591,7 +1633,12 @@ function lookAt(x, y) {
    save.  And the half-open screens (a chest you were looking in, a thing
    you were carrying between squares) are dropped: you save from the
    pause menu, where none of them are open.  */
-var SAVE_KEY = 'rogue8.saves', SAVE_SLOTS = 3, SAVE_VERSION = 1;
+var SAVE_KEY = 'rogue8.saves', SAVE_SLOTS = 4, SAVE_VERSION = 1;
+/* A run is put in a slot at START and saves itself into that slot every
+   other turn from then on.  Every other rather than every turn because a
+   save is the whole dungeon written out as text, and doing that on every
+   keypress is felt in the fingers on a long floor. */
+var AUTOSAVE_EVERY = 2;
 
 function b64FromBytes(arr) {
   var s = '', i, CH = 8192;
@@ -1665,7 +1712,8 @@ function packRun() {
                box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1, note: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
-               queuePick: 1, pickJob: 1, aimSq: 1, slots: 1, hint: 1, pan: 1 };
+               queuePick: 1, pickJob: 1, aimSq: 1, slots: 1, hint: 1, pan: 1,
+               hs: 1, hsBoard: 1, hsRead: 1, shake: 1 };
   for (k in G) if (!skip[k]) g[k] = G[k];
   var floors = {}, d;
   for (d in G.floors) floors[d] = packLevel(G.floors[d]);
@@ -1743,12 +1791,266 @@ function slotLabel(i) {
   if (!s) return 'empty';
   return 'floor -' + s.depth + '  level ' + s.lv + '  ' + s.gold + ' gold';
 }
+function slotUsed(i) {
+  var store = saveStore();
+  return !!(store && store.slots[i]);
+}
+/* Nothing left of a run that ended.  A dead rogue in a slot is a slot
+   you cannot start a new run in without being asked whether you meant
+   it, for the sake of a save that can only ever load you back onto your
+   own gravestone. */
+function clearSlot(i) {
+  if (i === null || i === undefined) return;
+  var store = saveStore();
+  if (!store || !store.slots[i]) return;
+  store.slots[i] = null;
+  writeStore(store);
+}
+/* Every other turn, into the slot this run belongs to and no other.
+   Quiet: it says nothing and costs no turn, so the only way to notice it
+   is to close the tab and come back. */
+function autosave() {
+  if (G.dead || G.mode === 'win') return;
+  if (G.slot === null || G.slot === undefined) return;
+  if (G.turn % AUTOSAVE_EVERY !== 0) return;
+  saveInto(G.slot);
+}
+
+/* ------------------------------------------------------- the highscore
+   Ten rows of name, experience and level.  The rules of the table are
+   here and the fetching is kept apart from them, so the sorting, the
+   trimming and the question of whether a run got in can all be worked
+   out and tested without a network anywhere near them. */
+function hsClean(list) {
+  var out = [], i;
+  if (!list || !list.length) return out;
+  for (i = 0; i < list.length; i++) {
+    var e = list[i];
+    if (!e) continue;
+    var xp = e.xp | 0, lv = e.level | 0;
+    var nm = String(e.name === undefined || e.name === null ? '' : e.name);
+    /* A name comes back from a bin anybody with the key can write to, so
+       it is treated as somebody else's typing and not as ours: cut to
+       length, and anything that is not a letter, a digit or a space
+       thrown away.  It is drawn from a sprite font that has nothing else
+       in it anyway, but that is not the reason to do it. */
+    nm = hsName(nm);
+    if (!nm) nm = '-';
+    out.push({ name: nm, xp: xp, level: lv });
+  }
+  out.sort(function (a, b) { return b.xp - a.xp || b.level - a.level; });
+  return out.slice(0, HS_MAX);
+}
+function hsName(s) {
+  s = String(s === undefined || s === null ? '' : s)
+    .replace(/[^A-Za-z0-9 ]/g, '').replace(/\s+/g, ' ');
+  s = s.replace(/^ +/, '').replace(/ +$/, '');
+  return s.slice(0, HS_NAME_MAX);
+}
+/* Whether a run of this many points belongs in the table.  A table with
+   room in it takes anybody; a full one wants more than its last row.
+   Equal is not more: the rogue who got there first keeps the place. */
+function hsQualifies(list, xp) {
+  var t = hsClean(list);
+  if (t.length < HS_MAX) return true;
+  return xp > t[t.length - 1].xp;
+}
+/* the table with one more run in it, sorted and cut back to ten */
+function hsWith(list, entry) {
+  var t = hsClean(list);
+  t.push({ name: hsName(entry.name) || '-', xp: entry.xp | 0, level: entry.level | 0 });
+  t.sort(function (a, b) { return b.xp - a.xp || b.level - a.level; });
+  return t.slice(0, HS_MAX);
+}
+/* which row a run ended up in, counting from one, or 0 if it did not */
+function hsPlace(list, entry) {
+  var t = hsWith(list, entry), i;
+  for (i = 0; i < t.length; i++)
+    if (t[i].xp === (entry.xp | 0) && t[i].name === (hsName(entry.name) || '-'))
+      return i + 1;
+  return 0;
+}
+
+/* --- the copy kept on this machine ---------------------------------
+   The table is read from the bin when there is a bin to read, and this
+   is what stands in for it when there is not: no network, no key, a
+   browser with storage turned off.  It is also what makes the table work
+   at all for somebody who has taken the file home and is playing it off
+   their own disk. */
+function hsLocal() {
+  try {
+    var raw = window.localStorage.getItem(HS_LOCAL);
+    return hsClean(raw ? JSON.parse(raw) : []);
+  } catch (e) { return []; }
+}
+function hsLocalPut(list) {
+  try { window.localStorage.setItem(HS_LOCAL, JSON.stringify(hsClean(list))); return true; }
+  catch (e) { return false; }
+}
+
+/* --- the bin -------------------------------------------------------
+   Both of these hand back through a callback and neither of them ever
+   fails outwardly: a table that could not be fetched is the local one,
+   and a score that could not be sent is still written down here.  A game
+   is not the place to be told that somebody else's website is down. */
+function hsCan() { return typeof fetch === 'function' && !!HS_BIN; }
+/* Sent for the moment the run ends rather than when the screen goes up,
+   so the fetch has the length of the death pause to come back in.  It
+   lives here beside the fetching rather than with the screen: dying is
+   part of the game and the rules half of it is loaded on its own. */
+function hsPrepare() {
+  G.hsBoard = null; G.hsRead = '';
+  hsFetch(function (list, where) { G.hsBoard = list; G.hsRead = where; });
+}
+function hsHeaders(extra) {
+  var h = extra || {};
+  if (HS_KEY) h[HS_KEY_HEADER] = HS_KEY;
+  return h;
+}
+function hsFetch(cb) {
+  if (!hsCan()) { cb(hsLocal(), 'local'); return; }
+  var done = 0;
+  var finish = function (list, where) { if (done) return; done = 1; cb(list, where); };
+  /* Having tried and failed is a different thing from never having had
+     anywhere to look, and the screen says which.  Otherwise a bin that
+     cannot be reached looks exactly like a roll nobody has got onto
+     yet, which is the one thing you must not have to guess about. */
+  setTimeout(function () { finish(hsLocal(), 'offline'); }, HS_TIMEOUT_MS);
+  try {
+    fetch('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest',
+      { headers: hsHeaders({ 'X-Bin-Meta': 'false' }) })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        /* with X-Bin-Meta off the bin answers with the record itself; a
+           proxy or an older bin answers with it wrapped in one */
+        var list = j && j.record ? j.record : j;
+        if (!list) { finish(hsLocal(), 'offline'); return; }
+        var t = hsClean(list);
+        hsLocalPut(t);
+        finish(t, 'bin');
+      })
+      .catch(function () { finish(hsLocal(), 'offline'); });
+  } catch (e) { finish(hsLocal(), 'offline'); }
+}
+/* Send one run.  Through the proxy if there is one, so the key stays on
+   the far side of it; straight at the bin if there is a key here; and
+   into this machine's own copy either way, so the table you see is the
+   table you just got into even when nothing was sent anywhere. */
+function hsSubmit(list, entry, cb) {
+  var t = hsWith(list, entry);
+  hsLocalPut(t);
+  /* Nothing to send it with is a different thing from having tried and
+     failed, and the screen says which: one is how the game is set up and
+     the other is somebody's website being down. */
+  if (!hsCan() || (!HS_PROXY && !HS_KEY)) { cb(t, 'local'); return; }
+  var done = 0;
+  var finish = function (where) { if (done) return; done = 1; cb(t, where); };
+  setTimeout(function () { finish('offline'); }, HS_TIMEOUT_MS);
+  try {
+    var url = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN);
+    /* the proxy is given the one run and works the table out itself,
+       since it is the only one of the two that can be trusted to */
+    var body = HS_PROXY ? { name: hsName(entry.name) || '-', xp: entry.xp | 0,
+                            level: entry.level | 0 } : t;
+    fetch(url, {
+      method: HS_PROXY ? 'POST' : 'PUT',
+      headers: hsHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    }).then(function (r) { finish(r && r.ok ? 'bin' : 'offline'); })
+      .catch(function () { finish('offline'); });
+  } catch (e) { finish('offline'); }
+}
+
+/* -------------------------------------------------------------- shake
+   Knocking the view about for a moment.  The offset is worked out from
+   the age rather than stepped and kept, like everything else that moves
+   on its own: there is nothing to save, nothing to tick, and it carries
+   on correctly through a frame that was dropped.
+
+   It is on the world's clock, so a box on the screen holds it still
+   along with everything else - a blast frozen mid-shake stays frozen
+   rather than rattling behind the dialog you opened. */
+function shakeScreen(ms, amp, seed) {
+  G.shake = { t: beatNow(), ms: ms || SHAKE_MS, amp: amp || SHAKE_AMP,
+              seed: (seed || 1) >>> 0 };
+}
+function shakeOff() {
+  if (!G || !G.shake) return [0, 0];
+  var age = nowMs() - G.shake.t;
+  if (age < 0) return [0, 0];              /* stamped a beat ahead, not yet */
+  if (age >= G.shake.ms) { G.shake = null; return [0, 0]; }
+  /* hardest at the start and gone by the end */
+  var amp = G.shake.amp * (1 - age / G.shake.ms);
+  var n = (age / SHAKE_STEP_MS) | 0;
+  var h = (n * 2654435761 + G.shake.seed * 40507) >>> 0;
+  var dx = Math.round(amp * (((h & 7) / 7) * 2 - 1));
+  var dy = Math.round(amp * ((((h >> 3) & 7) / 7) * 2 - 1));
+  /* never nowhere: an offset of zero in the middle of a shake reads as a
+     stutter rather than as part of the shake */
+  if (!dx && !dy) dx = (h & 1) ? 1 : -1;
+  return [dx, dy];
+}
 
 /* -------------------------------------------------------------- clock
-   G.beat is how far into the turn we are, in milliseconds.  Everything
+   Everything in the world is stamped with the moment it happens and is
+   drawn from that stamp, which is what lets one turn play out over a
+   few hundred milliseconds instead of arriving all at once.
+
+   Which means a dialog box has to stop the clock, not merely cover the
+   screen.  Covering it was what used to happen, and a creature that had
+   been told to take a step went on taking it behind the box: you opened
+   your pack and something moved while you were reading, which reads as
+   the game carrying on without you.
+
+   nowMs is that clock.  It is the wall clock less however long has been
+   spent behind a box, and it stops dead the instant one goes up.  A run
+   that has ENDED is not paused, it is over, so the dying, death, win,
+   score and title screens are left on the wall clock - freeze those and
+   the stone never rises off the dying screen.
+
+   Anything that is the box's own animation - a blinking cursor, a panel
+   sliding, a button lighting up when it is pressed - keeps Date.now on
+   purpose, because it has to go on moving while the world does not. */
+var PAUSE_MODES = { hint: 1, help: 1, story: 1, room: 1, pause: 1, slots: 1,
+                    perk: 1, ask: 1, ctx: 1, note: 1, inv: 1 };
+/* A notice is drawn over whatever it interrupted, and the way it does
+   that is to put the mode back to what was underneath and draw the whole
+   frame again.  For the length of that it looks exactly like a game with
+   no box on it - which had the world running for the one frame in which
+   it was supposed to be stopped, and a creature crossed the screen
+   behind a notice while the clock said it had not moved.  So the drawing
+   says plainly when it is underneath a box, and that outranks the mode. */
+var underBox = 0;
+function worldPaused() {
+  if (underBox > 0) return true;
+  if (typeof G === 'undefined' || !G) return false;
+  return !!(PAUSE_MODES[G.mode] || G.inspect);
+}
+var pauseFrom = 0, pauseOwed = 0;
+function nowMs() {
+  var real = Date.now();
+  if (worldPaused()) {
+    /* the moment the box went up, held for as long as it is up.  A clock
+       that has jumped backwards under us - a test running on a made-up
+       one, or a machine that has just corrected itself - is taken at its
+       word rather than argued with. */
+    if (!pauseFrom || pauseFrom > real) pauseFrom = real;
+    return pauseFrom - pauseOwed;
+  }
+  if (pauseFrom) {
+    var owed = real - pauseFrom;
+    /* only ever forwards: time that ran backwards is owed nothing, and
+       letting it count would put the whole world's clock in the future
+       and every pending step in it with them */
+    if (owed > 0) pauseOwed += owed;
+    pauseFrom = 0;
+  }
+  return real - pauseOwed;
+}
+/* G.beat is how far into the turn we are, in milliseconds.  Everything
    that happens stamps itself with that instant so the picture and the
    words arrive together. */
-function beatNow() { return Date.now() + (G.beat || 0); }
+function beatNow() { return nowMs() + (G.beat || 0); }
 /* An auto-walk plays the same turn out, only faster: every wait in it is
    scaled so the step, the lines of text and the creatures' own moves all
    stay in step with each other rather than the walk running ahead of the
@@ -2094,6 +2396,7 @@ function newGoodItem(depth) {
     case 'weapon':
       do { k = weightedPick(WEAPONS); } while (WEAPONS[k].grp);
       it = mkItem('weapon', k); it.hp = 1 + rnd(3); it.dp = rnd(3);
+      rollMake(it);
       break;
     default:
       k = weightedPick(t === 'armor' ? ARMORS : t === 'head' ? HEADS : t === 'feet' ? FEET : SHIELDS);
@@ -3099,12 +3402,123 @@ function glowVary(x, y, amount, phase) {
      would come out identical after all. */
   return 1 - (h % 1000) / 999 * (amount === undefined ? GLOW_VARY : amount);
 }
-/* Which of its two tiles a flame on this square is showing.  The
-   drawing picks the tile with it and the light is dealt with it, so the
-   two cannot drift apart - which is the whole rule: a flame's light
-   changes when the flame does, and at no other moment. */
+/* Which of its tiles a flame on this square is showing.  The drawing
+   picks the tile with it and the light is dealt with it, so the two
+   cannot drift apart - which is the whole rule: a flame's light changes
+   when the flame does, and at no other moment.
+
+   Counted with Math.floor and not with |0, and the reason is worth
+   writing down.  |0 is ToInt32: it throws away everything above the
+   thirty-second bit and reads the rest as signed.  The clock divided by
+   a tenth of a second is past two thousand million already, so the count
+   spends about three days in every six negative - and a negative count
+   was harmless while the tile was chosen with `frame ? this : that`, and
+   is not harmless at all now that it is an index into a list of three.
+   Three days of fire drawn as nothing, starting on a date nobody could
+   have named.  Math.floor is exact to nine thousand years. */
 function flameFrame(x, y) {
-  return ((Date.now() / FIRE_ANIM_MS + x * 3 + y * 5) | 0);
+  /* Seven and five, not three and five.  The offsets only pull squares
+     apart if they are coprime with the length of the cycle, and three
+     squares along on a cycle of three is no offset at all: with x * 3 a
+     whole row of fire showed the same tile as one another and the wall
+     of flame came out in stripes.  Seven and five are coprime with two,
+     three and four alike, so the row breaks up however many tiles the
+     fire is given. */
+  return Math.floor(nowMs() / FIRE_ANIM_MS) + x * 7 + y * 5;
+}
+/* and which tile that count comes out as.  One place, so a fire on the
+   floor, a lit fuse and a sheet of conjured flame all burn the same. */
+function fireSprite(x, y) {
+  return FIRE_TILES[flameFrame(x, y) % FIRE_TILES.length];
+}
+/* -------------------------------------------------- a current in water
+   A current does not appear all over a pool at once.  It goes in at the
+   square the stone landed on - or the square you were standing in - and
+   runs outwards through the water from there, and what the eye reads as
+   "the water is live" is the front of it moving, not the end state.
+
+   So every square of the body is stamped with how many steps of water it
+   is from the square the current entered, walked breadth-first through
+   the water itself rather than measured as the crow flies: a current
+   goes round a rock the same way the water does.  The drawing shows a
+   square once the front has reached it and not before. */
+function shockOrder(cells, sx, sy) {
+  var i, at = {}, dist = [], q = [], head = 0, reach = 0;
+  for (i = 0; i < cells.length; i++) at[cells[i][1] * MAP_W + cells[i][0]] = i;
+  for (i = 0; i < cells.length; i++) dist.push(-1);
+  var start = at[sy * MAP_W + sx];
+  /* the current has to go in somewhere.  If the square it was let loose
+     on is not itself part of the body - a stone that fell on the kerb -
+     the nearest square of the body stands in for it. */
+  if (start === undefined) {
+    var best = -1, bd = 1e9;
+    for (i = 0; i < cells.length; i++) {
+      var d2 = Math.abs(cells[i][0] - sx) + Math.abs(cells[i][1] - sy);
+      if (d2 < bd) { bd = d2; best = i; }
+    }
+    start = best;
+  }
+  if (start < 0) return { dist: dist, reach: 0 };
+  dist[start] = 0; q.push(start);
+  while (head < q.length) {
+    var j = q[head++], jx = cells[j][0], jy = cells[j][1], d;
+    for (d = 0; d < 4; d++) {
+      var k = at[(jy + DIR4[d][1]) * MAP_W + (jx + DIR4[d][0])];
+      if (k === undefined || dist[k] >= 0) continue;
+      dist[k] = dist[j] + 1;
+      if (dist[k] > reach) reach = dist[k];
+      q.push(k);
+    }
+  }
+  /* Water bodies are joined by more than the four sides in places - a
+     pool that pinches to a diagonal.  Anything the walk never reached
+     goes on one step past the far end rather than never showing at all. */
+  var stray = 0;
+  for (i = 0; i < dist.length; i++) if (dist[i] < 0) { dist[i] = reach + 1; stray = 1; }
+  return { dist: dist, reach: reach + stray };
+}
+/* How long a current is on the screen: the flash, plus however long the
+   front of it takes to cross the pool.  A current in a puddle is the
+   same length it always was; one across a lake waits for its own far
+   side. */
+function shockLife(sp) {
+  return BLAST_FLASH_MS + (sp && sp.reach ? sp.reach : 0) * SHOCK_STEP_MS;
+}
+/* Whether the square at index i of a splash is drawn this instant.
+   Two things have to be true: the front has reached it, and its turn has
+   come round in the blink.  The blink is a three-beat cycle offset by a
+   hash of the square, so a third of the reached squares are lit at any
+   moment, a different third every SHOCK_BLINK_MS, and the same third for
+   every frame inside one beat rather than fizzing.
+
+   A current on one square does not blink.  Blinking is for a pool, where
+   there is always something else lit to carry the eye; on its own it
+   would just be a sprite that is missing two frames out of three. */
+function shockLit(sp, i, now) {
+  if (!sp || !sp.blink) return true;
+  var age = now - sp.t;
+  if (sp.dist && age < sp.dist[i] * SHOCK_STEP_MS) return false;
+  var c = sp.cells[i];
+  var h = (c[0] * 73856093) ^ (c[1] * 19349663);
+  return (((h >>> 0) % SHOCK_ON) + ((age / SHOCK_BLINK_MS) | 0)) % SHOCK_ON === 0;
+}
+/* and which of its tiles it shows.  Dealt off the square as well as the
+   clock, so neighbours are not stamped from the same die. */
+function shockSprite(x, y, age) {
+  return SHOCK_TILES[(Math.floor(age / SHOCK_BLINK_MS) + x + y * 2) % SHOCK_TILES.length];
+}
+/* Everything a zap splash needs to animate, worked out once when it is
+   let loose rather than every frame. */
+function shockSplash(cells, sx, sy) {
+  var sp = { cells: cells.slice(), t: beatNow(), kind: 'zap' };
+  if (cells.length > 1) {
+    sp.blink = 1;
+    if (sx !== undefined) {
+      var o = shockOrder(cells, sx, sy);
+      sp.dist = o.dist; sp.reach = o.reach;
+    }
+  }
+  return sp;
 }
 /* The variation is put on at the end rather than here, and the reason is
    worth writing down: a square in the middle of a burning row is lit by
@@ -3116,6 +3530,30 @@ function flameFrame(x, y) {
 
    So what is kept here is which source won and what it was worth, and
    the square is dealt its own share once, afterwards. */
+/* --------------------------------------------------------- seeing fire
+   Everything else in the dungeon is drawn only where the lamp reaches,
+   because everything else has to be lit to be seen.  Fire and lightning
+   do not: they are their own light.  A hall you have never set foot in
+   is black, but a barrel going up in it is not, and neither is a bolt
+   crossing it - if nothing stands between you and the square you see the
+   flames themselves, and not only the glow they throw on the walls near
+   you.
+
+   This is the one rule that lets a thing be drawn outside what you can
+   see, so it is written down once, here, and everything that draws fire
+   or a current asks it rather than asking F_VIS.
+
+   It asks afresh every time rather than keeping the answer.  Holding it
+   was tried and thrown away: a blast opens walls in the middle of its
+   own animation, so any answer kept from the start of the turn is a lie
+   by the time the flames are drawn - and the walk is the same one the
+   light already does for every lit square on the floor, several hundred
+   times a frame, so one more for each flame costs nothing worth having. */
+function blazeSeen(x, y) {
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return false;
+  if (L.flags[y * MAP_W + x] & F_VIS) return true;
+  return sightClear(P.x, P.y, x, y);
+}
 function glowPut(g, x, y, v, col, vary, phase) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return;
   if (v <= 0) return;
@@ -3123,7 +3561,7 @@ function glowPut(g, x, y, v, col, vary, phase) {
   /* Light you have no line to is light you do not see.  A square already
      in sight needs no second look; anything else is asked for properly,
      which is what keeps a fire round the corner off your screen. */
-  if (!(L.flags[j] & F_VIS) && !sightClear(P.x, P.y, x, y)) return;
+  if (!blazeSeen(x, y)) return;
   var had = g[j];
   if (had && had.v >= v) return;
   g[j] = { v: v, col: col, vary: vary, phase: phase };
@@ -3240,7 +3678,7 @@ function lightMap(standing) {
   if (standing) return glowShades(g);
 
   /* ------------------------------------------------------- the flashes */
-  if (G.splash && G.splash.kind === 'blast' && Date.now() <= G.splash.t + BLAST_FLASH_MS)
+  if (G.splash && G.splash.kind === 'blast' && nowMs() <= G.splash.t + BLAST_FLASH_MS)
     for (i = 0; i < G.splash.cells.length; i++) {
       if (G.splash.big) glowBoom(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
       else glowBlast(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
@@ -3249,15 +3687,21 @@ function lightMap(standing) {
      of flame, either way half the light of a fire that is really
      burning, and gone the instant the beam is. */
   if (G.bolt && G.bolt.path && beamDrawn(G.bolt.kind) &&
-      Date.now() <= G.bolt.t + beamLife(G.bolt.kind))
+      nowMs() <= G.bolt.t + beamLife(G.bolt.kind))
     for (i = 0; i < G.bolt.path.length; i++)
       glowFlame(g, G.bolt.path[i][0], G.bolt.path[i][1],
         G.bolt.kind === 'lightning' ? GLOW_BOLT : GLOW_FIRE, GLOW_BEAM,
-        GLOW_VARY_BEAM, ((Date.now() - G.bolt.t) / GLOW_BEAM_MS) | 0);
-  if (G.splash && G.splash.kind === 'zap' && Date.now() <= G.splash.t + BLAST_FLASH_MS)
-    for (i = 0; i < G.splash.cells.length; i++)
+        GLOW_VARY_BEAM, ((nowMs() - G.bolt.t) / GLOW_BEAM_MS) | 0);
+  /* The light of a current follows the current: a square the front has
+     not reached yet is dark water, and a square blinked off this beat
+     throws no light either.  Light that stayed on while the spark it
+     came from was not there is a lamp with nothing in it. */
+  if (G.splash && G.splash.kind === 'zap' && nowMs() <= G.splash.t + shockLife(G.splash))
+    for (i = 0; i < G.splash.cells.length; i++) {
+      if (!shockLit(G.splash, i, nowMs())) continue;
       glowFlame(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BOLT, GLOW_BEAM,
-        GLOW_VARY_BEAM, ((Date.now() - G.splash.t) / GLOW_BEAM_MS) | 0);
+        GLOW_VARY_BEAM, ((nowMs() - G.splash.t) / GLOW_BEAM_MS) | 0);
+    }
   return glowShades(g);
 }
 /* The two wands whose beam is drawn as one thing running down the row
@@ -3907,9 +4351,11 @@ function playerAttack(m) {
     var fx = dm + (extra ? ' sneak' : crit ? ' double' : ' damage');
     if (m.hp <= 0) { killMonster(m, true, fx); return; }
     /* An executioner finishes what is already almost finished. */
+    /* One kill, one line.  This used to say "You finish it off" here and
+       then let killMonster say "You slay it" straight afterwards, both
+       of them stamped 'executed' - the same death announced twice. */
     if (hasPerk('executioner') && m.hp * PERK_EXECUTE_FRAC <= m.mhp &&
         rnd(100) < PERK_EXECUTE_PCT) {
-      msgFight(fightLine('You finish ', name, ' off.'), 'y', 'executed', 'R', m);
       killMonster(m, true, 'executed');
       return;
     }
@@ -4035,7 +4481,12 @@ function killMonster(m, byPlayer, fx, delay) {
   if (byPlayer) {
     m.hp = 0;
     sound('kill');                 /* four notes over the fallen */
-    msgFight(fightLine('You slay ', monShort(m), '.'), 'G', fx || 'slain', 'y', m);
+    /* An execution has its own words: it is the perk doing the work
+       rather than the blow, and the line is the only place that shows. */
+    if (fx === 'executed')
+      msgFight(fightLine('You finish ', monShort(m), ' off.'), 'G', fx, 'y', m);
+    else
+      msgFight(fightLine('You slay ', monShort(m), '.'), 'G', fx || 'slain', 'y', m);
     P.exp += m.xp + (m.lv > 1 ? ((m.lv - 1) * m.xp / 10) | 0 : 0);
     checkLevelUp();
   }
@@ -4098,7 +4549,7 @@ function checkLevelUp() {
 function perkReady() {
   var job = G.perkPick;
   if (!job) return false;
-  if (Date.now() < (job.at || 0)) return false;
+  if (nowMs() < (job.at || 0)) return false;
   if (battleFoes().length) return false;
   return true;
 }
@@ -4166,14 +4617,14 @@ function hurtAt(ent, delay, sx, sy) {
    appears at once - the meter can never get stuck on a stale number. */
 function holdHp(hp, mhp) {
   var at = beatNow();
-  if (at <= Date.now()) return;          /* nothing to wait for */
+  if (at <= nowMs()) return;          /* nothing to wait for */
   if (!G.hpq) G.hpq = [];
   G.hpq.push({ at: at, hp: hp, mhp: mhp });
   if (G.hpq.length > 40) G.hpq.splice(0, G.hpq.length - 40);
 }
 /* what the meter should read this instant */
 function shownHp() {
-  var q = G.hpq, now = Date.now(), i;
+  var q = G.hpq, now = nowMs(), i;
   if (!q || !q.length) return { hp: P.hp, mhp: P.mhp };
   for (i = 0; i < q.length; i++) if (q[i].at > now) break;
   if (i > 0) q.splice(0, i);             /* those moments have passed */
@@ -4242,6 +4693,11 @@ function healPlayer(n) {
 function die(src) {
   G.dead = 1; G.deathBy = src;
   G.mode = 'dying';
+  /* the run is over, so the slot it lived in is free again */
+  clearSlot(G.slot);
+  /* and the roll is sent for now rather than when the stone goes up, so
+     it has the length of the death pause to come back */
+  hsPrepare();
   /* The moment the killing blow actually lands, on the same clock the
      log is paced by.  A turn is worked out all at once and played back
      over the next second or so, so the game knows you are dead long
@@ -4417,9 +4873,9 @@ function shockCells(x, y) {
   for (i = 0; i < body.length; i++) out.push(body[i]);
   return out;
 }
-function shockSquares(cells, src) {
+function shockSquares(cells, src, sx, sy) {
   var i, hit = 0;
-  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'zap' };
+  G.splash = shockSplash(cells, sx, sy);
   sound('lightning');
   for (i = 0; i < cells.length; i++) {
     var cx2 = cells[i][0], cy2 = cells[i][1];
@@ -4446,7 +4902,8 @@ function shockSquares(cells, src) {
 function thunderDischarge(gear) {
   var cells = thunderCells(), i, hit = 0;
   var wet = tileAt(P.x, P.y) === WATER;
-  G.splash = { cells: cells, t: beatNow(), kind: 'zap' };
+  /* thunder goes off where you stand, so that is where it runs out from */
+  G.splash = shockSplash(cells, P.x, P.y);
   sound('lightning');
   for (i = 0; i < cells.length; i++) {
     var m2 = monAt(L, cells[i][0], cells[i][1]);
@@ -4490,7 +4947,7 @@ function knockPlayer(fromx, fromy) {
   if (!d.dx && !d.dy) return 0;
   if (!walkable(nx, ny) || monAt(L, nx, ny)) return 0;
   P.x = nx; P.y = ny;
-  P.walkT = Date.now();
+  P.walkT = nowMs();
   P.held = 0; P.heldBy = null;
   computeVis();
   return 1;
@@ -6139,7 +6596,7 @@ function cloudsOnYou() {
   for (i = 0; i < L.clouds.length; i++) {
     var c = L.clouds[i];
     if (c.x !== P.x || c.y !== P.y) continue;
-    if (c.at && Date.now() < c.at) continue;    /* still on its way */
+    if (c.at && nowMs() < c.at) continue;    /* still on its way */
     if (c.kind === 'mend') mend++;
     else if (c.kind === 'fire') burn++;
     else if (c.kind === 'smoke') smoke++;
@@ -6670,6 +7127,7 @@ function stockCellar(Lv, rooms, depth) {
     prize = mkItem('weapon', wk);
     prize.hp = 1 + rnd(3); prize.dp = 1 + rnd(2);
     addRune(prize, WEAPONS[wk].launch ? 'wb' : 'w', 60);
+    rollMake(prize);
   }
   var pile = [prize];
   for (i = 1; i < want; i++) pile.push(newGoodItem(depth));

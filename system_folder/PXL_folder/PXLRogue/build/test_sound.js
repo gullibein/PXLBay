@@ -385,18 +385,36 @@ check(r.sfx.includes('arrow'), 'an arrow flies in silence');
   check(span <= ctx.BEAT * (offsets.length - 1),
     'the turn takes ' + span + 'ms to be heard out');
 
-  /* One pace for everything in a fight: your blow, the answer, the next
-     creature, the second step of a quick one. */
-  const beats = { BEAT_PLAYER: ctx.BEAT_PLAYER, BEAT_ACT: ctx.BEAT_ACT,
-                  BEAT_STEP: ctx.BEAT_STEP };
+  /* One pace among the creatures - the answer, the next creature, the
+     second step of a quick one - and a shorter one for the gap you
+     yourself sit through.
+
+     This used to be a single number for all four, and it was the right
+     rule for everything except the one gap that happens on every single
+     step you take: waiting a full beat after your own move for the room
+     to do anything reads as the dungeon thinking about it.  So that one
+     is shorter.  It is not free to make it any shorter than it is: your
+     walk cycle runs WALK_ANIM_MS after you move, and an answer that
+     lands inside it treads on your own step. */
+  const beats = { BEAT_ACT: ctx.BEAT_ACT, BEAT_STEP: ctx.BEAT_STEP };
   const odd = Object.keys(beats).filter(k => beats[k] !== ctx.BEAT);
-  console.log('pacing       : every move in a fight waits ' + ctx.BEAT + 'ms' +
+  console.log('pacing       : the room answers you in ' + ctx.BEAT_PLAYER +
+    'ms, and every move after that waits ' + ctx.BEAT + 'ms' +
     (odd.length ? ' EXCEPT ' + odd.map(k => k + '=' + beats[k]).join(', ') : ''));
   for (const k of odd) check(false, k + ' is ' + beats[k] + 'ms, not ' + ctx.BEAT);
-  /* and the turn we just measured has to show it */
-  for (let i = 1; i < offsets.length; i++)
-    check(offsets[i] - offsets[i - 1] === ctx.BEAT,
-      'two moves are ' + (offsets[i] - offsets[i - 1]) + 'ms apart, not ' + ctx.BEAT);
+  check(ctx.BEAT_PLAYER < ctx.BEAT,
+    'the room takes as long to answer you as it takes between creatures');
+  check(ctx.BEAT_PLAYER > ctx.WALK_ANIM_MS,
+    'the room answers in ' + ctx.BEAT_PLAYER + 'ms, inside the ' +
+    ctx.WALK_ANIM_MS + 'ms your own step is still being drawn');
+  /* and the turn we just measured has to show it: your blow, then the
+     answer a short beat later, then the rest at the full one */
+  for (let i = 1; i < offsets.length; i++) {
+    const want = i === 1 ? ctx.BEAT_PLAYER : ctx.BEAT;
+    check(offsets[i] - offsets[i - 1] === want,
+      (i === 1 ? 'the answer to your blow comes ' : 'two moves are ') +
+      (offsets[i] - offsets[i - 1]) + 'ms apart, not ' + want);
+  }
 
   /* pressing on drops whatever has not been heard yet */
   stopped = 0;

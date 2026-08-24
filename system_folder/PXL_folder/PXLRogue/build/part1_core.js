@@ -22,7 +22,17 @@ var VIEW_W = 19, VIEW_H = 16, VIEW_PX = PANEL_W, VIEW_PY = 0;
    floor.  It leaves quickly - long enough to read as a movement, short
    enough that you are not waiting on it. */
 var PAN_SLIDE = 140;               /* milliseconds, out and back */
-var PAN_MAX = 40;                  /* how far you may push the view */
+/* How far you may push the view.  It used to be a flat 40 squares in
+   either direction, which was less than the width of a large floor: from
+   one end of a long hall you simply could not look at the other end, and
+   the view stopped dead for no reason you could see.
+
+   It is the floor you are on that decides, not a number: far enough that
+   any corner of THIS map can be brought into the view from anywhere on
+   it, and no further, because pushing out past the edge is not looking
+   at anything.  Both maps grow, so both are asked. */
+function panMaxX() { return MAP_W; }
+function panMaxY() { return MAP_H; }
 var MAP_W = 64, MAP_H = 32;          /* the floor you are on; both vary */
 /* A floor is a little larger than it was: the rooms grew with it, so the
    number of chambers is much the same and each one has more room in it. */
@@ -390,7 +400,13 @@ var SHOCK_DAMAGE = [3, 6];
    the second step of a quick one - each is a thing to watch, and none of
    them is worth less time than another. */
 var BEAT = 500;
-var BEAT_PLAYER = BEAT;       /* after your action, before theirs */
+/* The one gap you sit through on every single step, which is what makes
+   it the one worth shaving.  At a full beat the dungeon felt like it was
+   thinking about it before answering; short of about a third of a second
+   the answer treads on the end of your own step, since the walk cycle
+   runs WALK_ANIM_MS after you move.  This sits between the two: your
+   foot is down and the room moves. */
+var BEAT_PLAYER = 360;        /* after your action, before theirs */
 var BEAT_ACT = BEAT;          /* between one creature acting and the next */
 var BEAT_STEP = BEAT;         /* between two steps of the same creature */
 /* Dying is the one thing you cannot take back, so the dungeon holds
@@ -399,6 +415,14 @@ var BEAT_STEP = BEAT;         /* between two steps of the same creature */
 var DEATH_PAUSE = 1100;
 var DEATH_BLINK_MS = 130;     /* how fast you flicker out */
 var WALK_ANIM_MS = 180;       /* how long the walk cycle runs after a step */
+/* A barrel of powder is the loudest thing down here, and it used to be
+   the same picture as a flask: a flash and a bang.  So the view itself
+   is knocked about for a moment - the dungeon only, never the panel,
+   which is a thing you are reading rather than a thing you are in.
+   It falls away over its own length, so it lands hard and settles. */
+var SHAKE_MS = 300;           /* how long the view is knocked about */
+var SHAKE_AMP = 3;            /* how far, in pixels, at its worst */
+var SHAKE_STEP_MS = 28;       /* and how often it jumps somewhere new */
 /* how long the mark of discord lasts, and how far it carries */
 var DISCORD_TURNS = 14, DISCORD_RANGE = 9;
 /* how many attackers the side panel tracks at once */
@@ -502,6 +526,61 @@ var GLOW_VARY_BEAM = 0.45, GLOW_BEAM_MS = 110;
    connection, and fire that stood still while the flame changed would be
    the light of something that is not there. */
 var FIRE_ANIM_MS = 120;
+/* The tiles a fire cycles through, in order.  Two of them read as a
+   flicker; three read as a flame, because with two the eye can hold both
+   pictures at once and sees a thing switching back and forth rather than
+   something moving.  fire_wall is the sheet of flame that stands in a
+   doorway and is the widest of the three, so the cycle goes wide, narrow,
+   narrow-different rather than alternating wide and narrow. */
+var FIRE_TILES = ['fire_wall', 'flame', 'flame2'];
+/* A current has two, which is enough: it is not moving, it is crackling,
+   and half the squares are dark on any one frame anyway - see SHOCK_ON. */
+var SHOCK_TILES = ['bolt', 'bolt2'];
+/* How far a current gets through water in a frame's worth of time, and
+   how long it takes to cross one square.  A pool the width of a room is
+   perhaps a dozen squares across, so at this rate the whole of it lights
+   in about a third of a second - fast enough to read as a current and
+   not as a thing crawling. */
+var SHOCK_STEP_MS = 26;
+/* Sparks on the water do not all show at once: about a third of the
+   squares that have been reached are lit on any one frame, and which
+   third changes every SHOCK_BLINK_MS.  A pool with every square lit is a
+   blue floor; a pool with a third of it lit is a pool with a current in
+   it. */
+var SHOCK_BLINK_MS = 70, SHOCK_ON = 3;
+/* ------------------------------------------------------- the highscore
+   The table of the ten best runs anyone has had, kept in a bin on
+   jsonbin.io so it is the same table for everyone who plays.
+
+   A page served as one HTML file cannot keep a secret: whatever key is
+   written here is readable by anyone who opens the file, so it is worth
+   being plain about which key that should be.
+
+   HS_KEY should be a jsonbin *Access* Key restricted to this one bin with
+   read and update rights and nothing else.  Then the worst anyone can do
+   with it is rewrite the highscore table, which is a thing to be tidied
+   up rather than a thing to be sorry about, and it can be rotated from
+   the dashboard the moment it is.  A Master Key must never go here: it
+   opens the whole account.
+
+   HS_PROXY is the way to have no key here at all.  Point it at a small
+   function of your own - a Cloudflare Worker or the like - that holds the
+   key and does the writing; the game then posts the score to that and
+   the key never reaches anybody's browser.  If it is set it is used and
+   HS_KEY is ignored.
+
+   With neither set the game still reads the table, because the bin's
+   public read needs no key, and keeps new scores on the machine they
+   were made on. */
+var HS_BIN = '6a8c44f9da38895dfe0a98c0';
+var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
+var HS_PROXY = '';
+var HS_MAX = 10;              /* how many the table holds */
+var HS_NAME_MAX = 12;         /* and how long a name may be */
+var HS_KEY_HEADER = 'X-Access-Key';
+var HS_LOCAL = 'rogue8.scores';
+/* how long to wait for the table before giving up and using the local one */
+var HS_TIMEOUT_MS = 4000;
 var GLOW_FIRE = '#ff8c2a', GLOW_BLAST = '#ffc266', GLOW_BOLT = '#5aa0ff';
 var GLOW_WASH = 0.18;
 /* A beam out of a wand is a light in the air rather than a fire on the
@@ -721,6 +800,15 @@ var FIRE_SHIELD_TURNS = 5;
 var SHRINE_COST = 1;          /* maximum health, permanently */
 var MOSS_HEAL_PCT = 22;       /* chance per turn of mending in moss */
 var MOSS_WANDER_MULT = 3;     /* and how much faster it draws company */
+/* ------------------------------------------------------ thrown weapons
+   A spear used to be indestructible: throw it, walk over to it, pick it
+   up, throw it again, for ever - which made it the only weapon in the
+   dungeon with no cost at all attached to using it.  Now every throw is
+   a risk, and a well made one is worth carrying because it takes the
+   first break for you and comes out of it worn.  A worn one is on its
+   own from then on, and breaks like any other. */
+var THROWN_BREAK_PCT = 20;    /* how often a landing is the end of it */
+var WELL_MADE_PCT = 25;       /* and how many were made to take one */
 var BARREL_DAMAGE = [6, 10];  /* a barrel of powder, not a stick */
 /* A lit barrel does not go up on the spot: it burns for a turn, which is
    one turn to get out of the room.  Then it takes everything within two

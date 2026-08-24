@@ -285,6 +285,13 @@ setTimeout(() => {
   const shiftKey = k => listeners['keydown']({ key: k, shiftKey: true, preventDefault() { } });
   const shiftUp = () => listeners['keyup']({ key: 'Shift' });
 
+  /* A probe that drives the game on a clock of its own has to hand it a
+     clock the game will believe.  The world runs on nowMs, which is the
+     wall clock less however long has been spent behind a dialog box - so
+     a made-up Date and a stale pause offset would put every stamp in the
+     probe out by however long some earlier probe sat in the pack.  Put
+     the offset back to nothing whenever a made-up clock goes in: what
+     this probe means by T0 is then what the game means by it too. */
   function frame(label) {
     blits = []; fills = []; drawSeq = 0;
     try { vm.runInContext('render();', ctx); }
@@ -371,11 +378,17 @@ setTimeout(() => {
   if (!ctx.G.titleMenu) problems.push('a key on the title screen did not open the menu');
   counts.titleMenu = frame('title-menu');
   const titleNames = ctx.TITLE_OPTS.map(o => o[0]);
-  for (const want of ['start', 'load', 'hints', 'help', 'exit'])
+  for (const want of ['start', 'load', 'scores', 'hints', 'help', 'exit'])
     if (titleNames.indexOf(want) < 0) problems.push('the title menu has no ' + want);
   ctx.G.titleMenu.i = titleNames.indexOf('start');
-  key('Enter');                   // START
+  key('Enter');                   // START - which now asks which slot
+  if (ctx.G.mode !== 'slots' || !ctx.G.slots || ctx.G.slots.what !== 'new')
+    problems.push('START did not ask which slot the run goes in');
+  counts.slotPick = frame('slot-pick');
+  ctx.G.slots.i = 0;
+  key('Enter');                   // slot one
   if (ctx.G.titleMenu) problems.push('START left the title menu open');
+  if (ctx.G.slot !== 0) problems.push('the run did not take the slot it was started in');
   counts.play = frame('play');
   /* help used to be on ?, which is now the look cursor.  It lives on the
      ESC menu: open it, walk to HELP, take it. */
@@ -426,6 +439,13 @@ setTimeout(() => {
        read; render it, then let the clock run out */
     if (ctx.G.mode === 'dying') { counts.dying = frame('dying'); ctx.G.deadAt = 0; }
     if (ctx.G.mode === 'dead') { counts.dead = frame('dead'); key('Enter'); }
+    /* the roll of the ten best stands between the gravestone and the
+       next run: draw it, name the rogue, and go on */
+    if (ctx.G.mode === 'score') {
+      counts.score = frame('score' + i);
+      if (ctx.G.hs && ctx.G.hs.typing) { key('R'); key('o'); key('Enter'); }
+      key('Enter');
+    }
     if (ctx.G.mode === 'win') { counts.won = frame('won'); key('Enter'); }
   }
   /* ---- the meter waits for the blow ----------------------------------
@@ -443,7 +463,7 @@ setTimeout(() => {
     ctx.beatWait(ctx.BEAT_PLAYER);        /* the pause a turn takes */
     ctx.hurtPlayer(9, 'a test');
     const duringTurn = ctx.shownHp().hp;
-    G.hpq.forEach(e => { e.at = Date.now() - 1; });   /* let the moment arrive */
+    G.hpq.forEach(e => { e.at = ctx.nowMs() - 1; });   /* let the moment arrive */
     const afterBlow = ctx.shownHp().hp;
 
     console.log('health meter         : ' + before + ' before, still ' + duringTurn +
@@ -511,7 +531,7 @@ setTimeout(() => {
     if (!p0 || !m0) lungeBad.push('could not find the player and the creature on screen');
     else {
       /* the player swings east: lean +1 in x, and no flash on him */
-      P.lunge = { t: Date.now(), dx: 1, dy: 0 }; P.hurt = null;
+      P.lunge = { t: ctx.nowMs(), dx: 1, dy: 0 }; P.hurt = null;
       m.hurt = null; m.lunge = null;
       frame('lunge');
       const p1 = find([playerSpr, playerSpr2]);
@@ -522,7 +542,7 @@ setTimeout(() => {
 
       /* the creature is struck from the west: knocked +2 in x, and red */
       P.lunge = null;
-      m.hurt = { t: Date.now(), dx: 1, dy: 0 };
+      m.hurt = { t: ctx.nowMs(), dx: 1, dy: 0 };
       frame('recoil');
       const m1 = find([monSpr]);
       if (!m1 || m1.x - m0.x !== ctx.HURT_PX || m1.y !== m0.y)
@@ -536,15 +556,15 @@ setTimeout(() => {
 
       /* being hit beats leaning in: you cannot press an attack while
          you are being knocked backwards */
-      m.lunge = { t: Date.now(), dx: -1, dy: 0 };
+      m.lunge = { t: ctx.nowMs(), dx: -1, dy: 0 };
       frame('both');
       const m2 = find([monSpr]);
       if (!m2 || m2.x - m0.x !== ctx.HURT_PX)
         lungeBad.push('a lunge cancelled out the knockback');
 
       /* it wears off */
-      m.hurt.t = Date.now() - ctx.HURT_MS - 30;
-      m.lunge.t = Date.now() - ctx.LUNGE_MS - 30;
+      m.hurt.t = ctx.nowMs() - ctx.HURT_MS - 30;
+      m.lunge.t = ctx.nowMs() - ctx.LUNGE_MS - 30;
       frame('settled');
       const m3 = find([monSpr]);
       if (!m3 || m3.x !== m0.x || m3.y !== m0.y)
@@ -819,7 +839,7 @@ setTimeout(() => {
     for (let i = 0; i < L.flags.length; i++) L.flags[i] |= 3;
     /* mid-flight, halfway along: this is what throwAtSquare sets up */
     G.shot = { sx: P.x, sy: P.y, ex: P.x + 6, ey: P.y,
-               t: Date.now() - 40, dur: 200, tail: 4, spr: 'stone' };
+               t: ctx.nowMs() - 40, dur: 200, tail: 4, spr: 'stone' };
     blits = []; fills = [];
     vm.runInContext('render();', ctx);
     const si = ATLAS.index['stone'];
@@ -853,7 +873,7 @@ setTimeout(() => {
        which is what made a bat's two squares look like a teleport. */
     const walk = (t0) => [[P.x, P.y, P.x + 1, P.y, t0],
                           [P.x + 1, P.y, P.x + 2, P.y, t0 + ctx.BEAT_STEP]];
-    m.anim = walk(Date.now());
+    m.anim = walk(ctx.nowMs());
     L.mons.push(m);
     const ai = ATLAS.index['mon_K'];
     const ax = (ai % ATLAS.cols) * 8, ay = ((ai / ATLAS.cols) | 0) * 8;
@@ -862,7 +882,7 @@ setTimeout(() => {
     for (const off of [10, 60, 160, 400, ctx.BEAT_STEP + 60, ctx.BEAT_STEP + 400]) {
       /* monPixel clears the walk once it has played out, so hand it a
          fresh one for every sample */
-      m.anim = walk(Date.now() - off);
+      m.anim = walk(ctx.nowMs() - off);
       blits = []; fills = [];
       vm.runInContext('render();', ctx);
       const b = blits.find(o => o.tag === 'screen' && o.from === 'atlas' && o.sx === ax && o.sy === ay);
@@ -1330,7 +1350,7 @@ setTimeout(() => {
         return { witch: has(witch), flash: flashes.findIndex(has) };
       };
       /* mid-shake: still drawn on the square it is leaving */
-      m.warp = { fx: from[0], fy: from[1], t: Date.now() - 100 };
+      m.warp = { fx: from[0], fy: from[1], t: ctx.nowMs() - 100 };
       const shaking = look();
       /* and the shiver is a shiver: sampling it a few frames apart gives
          different pixels to sit on */
@@ -1354,13 +1374,14 @@ setTimeout(() => {
       const RealDate = ctx.Date;
       const frozen = RealDate.now();
       ctx.Date = { now: () => frozen };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
       for (let n = 0; n < ctx.WARP_FRAMES.length; n++) {
         m.warp = { fx: from[0], fy: from[1],
                    t: frozen - (ctx.WARP_SHAKE + step * n + step / 2) };
         frames.push(look().flash);
       }
       ctx.Date = RealDate;
-      m.warp = { fx: from[0], fy: from[1], t: Date.now() - (ctx.WARP_SHAKE + 20) };
+      m.warp = { fx: from[0], fy: from[1], t: ctx.nowMs() - (ctx.WARP_SHAKE + 20) };
       const flashing = look();
       console.log('flash frames         :', JSON.stringify(frames),
         'of', ctx.WARP_FRAMES.length, 'icons');
@@ -1369,7 +1390,7 @@ setTimeout(() => {
           ' of its frames: saw ' + JSON.stringify(frames));
       /* after: ordinary again */
       m.warp = { fx: from[0], fy: from[1],
-                 t: Date.now() - (ctx.WARP_SHAKE + ctx.WARP_FLASH + 50) };
+                 t: ctx.nowMs() - (ctx.WARP_SHAKE + ctx.WARP_FLASH + 50) };
       const done = look();
       console.log('teleport frames      : shaking', shaking.witch ? 'creature' : 'nothing',
         '| flash', flashing.witch ? 'creature still drawn' : 'creature hidden',
@@ -1381,7 +1402,7 @@ setTimeout(() => {
       if (!done.witch) problems.push('a creature never comes back from a teleport');
       /* and one conjured a moment ago is not drawn before it arrives */
       m.warp = null;
-      m.showAt = Date.now() + 5000;
+      m.showAt = ctx.nowMs() + 5000;
       const early = look();
       m.showAt = 0;
       const there = look();
@@ -1396,7 +1417,7 @@ setTimeout(() => {
      in flames before the ball had left the creature's mouth. */
   {
     const P = ctx.P, L = ctx.L;
-    const flames = ['flame', 'fire_wall'].map(n => {
+    const flames = ctx.FIRE_TILES.map(n => {
       const i2 = ATLAS.index[n];
       return [(i2 % ATLAS.cols) * 8, ((i2 / ATLAS.cols) | 0) * 8];
     });
@@ -1411,14 +1432,89 @@ setTimeout(() => {
         flames.some(c => b.sx === c[0] && b.sy === c[1])).length;
     };
     /* fire that has not started yet */
-    L.clouds.push({ x: P.x, y: P.y, kind: 'fire', turns: 2, at: Date.now() + 5000 });
+    L.clouds.push({ x: P.x, y: P.y, kind: 'fire', turns: 2, at: ctx.nowMs() + 5000 });
     const early = countFlames();
     /* and the same fire once its moment has come */
-    L.clouds[0].at = Date.now() - 1;
+    L.clouds[0].at = ctx.nowMs() - 1;
     const late = countFlames();
     console.log('fire in flight       :', early, 'flames before its moment,', late, 'after');
     if (early) problems.push('fire is drawn before the thing that lit it has landed');
     if (!late) problems.push('fire is never drawn at all');
+    L.clouds.length = 0;
+  }
+
+  /* --- fire on a day that has not happened yet -------------------------
+     The count that decides which of its tiles a flame is showing used to
+     be taken with |0, which is ToInt32: everything above the
+     thirty-second bit thrown away and the rest read as signed.  The
+     clock divided by a tenth of a second passes two thousand million
+     partway through 2027 and stays past it until 2035, so from the first
+     of March 2027 that count is negative for eight years.
+
+     It did no harm while the tile was chosen with `frame ? a : b` - a
+     negative number is truthy.  With three tiles it is an index, and a
+     negative index is nothing at all: fire drawn as empty floor, from a
+     date nobody would have thought to try.  So the clock is wound
+     forward here and the fire asked to draw itself. */
+  {
+    const P = ctx.P, L = ctx.L;
+    const realDate = ctx.Date;
+    const flames = ctx.FIRE_TILES.map(n => {
+      const i2 = ATLAS.index[n];
+      return [(i2 % ATLAS.cols) * 8, ((i2 / ATLAS.cols) | 0) * 8];
+    });
+    ctx.G.mode = 'play'; ctx.G.bolt = null; ctx.G.aim = null; ctx.G.shot = null;
+    P.x = ctx.MAP_W >> 1; P.y = ctx.MAP_H >> 1;
+    L.clouds.length = 0;
+    ctx.computeVis();
+    L.clouds.push({ x: P.x, y: P.y, kind: 'fire', turns: 2, at: 0 });
+    /* two dates on the far side of the flip, and every tile it can show */
+    const days = [Date.UTC(2027, 5, 1), Date.UTC(2031, 0, 1), Date.UTC(2034, 11, 31)];
+    const seen = new Set();
+    let worst = null, lowest = 0;
+    for (const day of days) {
+      for (let step = 0; step < 12; step++) {
+        const t = day + step * ctx.FIRE_ANIM_MS;
+        ctx.Date = { now: () => t, UTC: Date.UTC };
+        ctx.pauseFrom = ctx.pauseOwed = 0;
+        const f = vm.runInContext('flameFrame(' + P.x + ',' + P.y + ')', ctx);
+        if (f < 0 && lowest === 0) lowest = f;
+        const name = vm.runInContext('fireSprite(' + P.x + ',' + P.y + ')', ctx);
+        if (ctx.FIRE_TILES.indexOf(name) < 0)
+          worst = new Date(day).toISOString().slice(0, 10) + ' drew ' + name;
+        seen.add(name);
+        blits = []; fills = [];
+        vm.runInContext('render();', ctx);
+        const lit = blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+          flames.some(c => b.sx === c[0] && b.sy === c[1])).length;
+        if (!lit && !worst) worst = new Date(day).toISOString().slice(0, 10) + ' drew no fire';
+      }
+    }
+    ctx.Date = realDate;
+    /* And a row of fire is not a row of the same picture.  The count is
+       offset by where the square is so that neighbours are out of step;
+       an offset that is a multiple of the number of tiles is no offset
+       at all, and a wall of flame came out in horizontal stripes. */
+    {
+      const row = [];
+      for (let dx = 0; dx < 9; dx++) row.push(vm.runInContext(
+        'fireSprite(' + (P.x + dx) + ',' + P.y + ')', ctx));
+      const col = [];
+      for (let dy = 0; dy < 9; dy++) col.push(vm.runInContext(
+        'fireSprite(' + P.x + ',' + (P.y + dy) + ')', ctx));
+      if (new Set(row).size < ctx.FIRE_TILES.length)
+        problems.push('a row of fire shows only ' + new Set(row).size + ' of its ' +
+          ctx.FIRE_TILES.length + ' tiles at a time');
+      if (new Set(col).size < ctx.FIRE_TILES.length)
+        problems.push('a column of fire shows only ' + new Set(col).size + ' tiles at a time');
+    }
+    if (worst) problems.push('fire in 2027: ' + worst);
+    if (lowest) problems.push('the flame count went negative (' + lowest + ')');
+    if (seen.size < ctx.FIRE_TILES.length)
+      problems.push('a fire showed only ' + seen.size + ' of its ' +
+        ctx.FIRE_TILES.length + ' tiles');
+    console.log('fire in 2027         : all ' + seen.size + ' tiles still drawn on ' +
+      days.length + ' days past the point where the old count turned negative');
     L.clouds.length = 0;
   }
 
@@ -1427,7 +1523,7 @@ setTimeout(() => {
      which is no use if the only sign of it is a line in the log. */
   {
     const P = ctx.P, L = ctx.L;
-    const flames = ['flame', 'fire_wall'].map(n => {
+    const flames = ctx.FIRE_TILES.map(n => {
       const i2 = ATLAS.index[n];
       return [(i2 % ATLAS.cols) * 8, ((i2 / ATLAS.cols) | 0) * 8];
     });
@@ -1609,7 +1705,7 @@ setTimeout(() => {
     }
 
     // and it must settle back on its own
-    m.hurt.t = Date.now() - ctx.HURT_MS - 1;
+    m.hurt.t = ctx.nowMs() - ctx.HURT_MS - 1;
     blits = []; fills = [];
     vm.runInContext('render();', ctx);
     const after = find();
@@ -1765,6 +1861,7 @@ setTimeout(() => {
     const at = (age, walkT) => {
       P.walkT = walkT;
       ctx.Date = { now: () => T0 + age };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
       try { return heroFrame(); } finally { ctx.Date = RealDate; }
     };
     /* idle: no step behind you, at any moment of the cycle */
@@ -2698,11 +2795,37 @@ setTimeout(() => {
   if (G.pan.dx !== -2 || G.pan.dy !== -1)
     problems.push('the view went to ' + G.pan.dx + ',' + G.pan.dy + ' instead of -2,-1');
   frame('panned');
-  /* and it stops at the limit rather than running off for ever */
-  for (let i = 0; i < ctx.PAN_MAX + 5; i++) shiftKey('ArrowRight');
-  if (G.pan.dx !== ctx.PAN_MAX)
-    problems.push('the view ran to ' + G.pan.dx + ', past the limit of ' + ctx.PAN_MAX);
+  /* It stops at the limit rather than running off for ever - but the
+     limit is the floor you are standing on, not a number.  It used to be
+     a flat 40 squares, which is narrower than a large map: from one end
+     of a long hall the other end simply could not be looked at, and the
+     view stopped dead for no reason you could see from inside the game.
+
+     So what is asked is the thing that was actually wanted: standing in
+     the worst corner of this floor, the opposite corner still comes into
+     the view. */
+  const limX = ctx.panMaxX(), limY = ctx.panMaxY();
+  for (let i = 0; i < limX + 5; i++) shiftKey('ArrowRight');
+  if (G.pan.dx !== limX)
+    problems.push('the view ran to ' + G.pan.dx + ', past the limit of ' + limX);
   frame('panned to the limit');
+  /* the far edge of the map, seen from the near edge of it, counted in
+     the plain view - the panel slides away while you look, so this is
+     the narrowest the view ever is while panning */
+  const farRight = 0 - (ctx.VIEW_W >> 1) + limX + ctx.VIEW_W - 1;
+  const farDown = 0 - (ctx.VIEW_H >> 1) + limY + ctx.VIEW_H - 1;
+  const farLeft = (ctx.MAP_W - 1) - (ctx.VIEW_W >> 1) - limX;
+  const farUp = (ctx.MAP_H - 1) - (ctx.VIEW_H >> 1) - limY;
+  if (farRight < ctx.MAP_W - 1)
+    problems.push('from the west edge the view reaches column ' + farRight +
+      ' of ' + (ctx.MAP_W - 1));
+  if (farDown < ctx.MAP_H - 1)
+    problems.push('from the north edge the view reaches row ' + farDown +
+      ' of ' + (ctx.MAP_H - 1));
+  if (farLeft > 0)
+    problems.push('from the east edge the view only comes back to column ' + farLeft);
+  if (farUp > 0)
+    problems.push('from the south edge the view only comes back to row ' + farUp);
 
   /* A shifted key that is not an arrow is not for the view.  ? is typed
      with SHIFT held on most keyboards, so it has to get through. */
@@ -2736,7 +2859,8 @@ setTimeout(() => {
     problems.push('an ordinary arrow stopped moving the player');
 
   console.log('panning              : slides', ctx.PANEL_W + 'px in', ctx.PAN_SLIDE + 'ms,',
-    leftTiles, 'tiles behind it, arrows move the view up to', ctx.PAN_MAX, 'squares');
+    leftTiles, 'tiles behind it, and the arrows reach ' + limX + 'x' + limY +
+    ' squares - every corner of a ' + ctx.MAP_W + 'x' + ctx.MAP_H + ' floor');
   G.pan = null; G.mode = 'play';
 }
 
@@ -2784,55 +2908,187 @@ setTimeout(() => {
 /* ---- SAVE, LOAD and HINTS ---------------------------------------- */
   {
     const names = ctx.PAUSE_OPTS.map(o => o[0]);
-    ['save', 'load', 'hints'].forEach(n => {
+    ['save', 'hints', 'restart'].forEach(n => {
       if (names.indexOf(n) < 0) problems.push(n.toUpperCase() + ' is not on the menu');
     });
+    /* A run lives in the slot it was started in and cannot be moved out
+       of it, so there is no LOAD in the middle of one. */
+    if (names.indexOf('load') >= 0)
+      problems.push('LOAD is still on the pause menu, which lets a run change slot');
 
-    /* SAVE: the screen draws, the run goes into slot one, and the slot
-       then describes itself rather than saying "empty" */
+    /* SAVE AND QUIT: no question about which slot - it was answered at
+       START - and it does both halves of what it says. */
     ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null; ctx.G.hint = null;
+    ctx.G.slot = 0;
     key('Escape'); ctx.G.pause.i = names.indexOf('save'); key('Enter');
-    if (ctx.G.mode !== 'slots') problems.push('SAVE did not open the slot list');
-    else {
-      frame('save slots');
-      const drawnS = blits.filter(b => b.tag === 'screen').length;
-      if (drawnS < 30) problems.push('the save screen was not drawn');
-      key('Enter');
-      const lab = ctx.slotLabel(0);
-      if (lab === 'empty') problems.push('saving left the slot empty');
-      /* SAVE AND QUIT does both: it used to write the file, print
-         "Saved." and sit there with the run still going */
-      if (ctx.G.mode !== 'title')
-        problems.push('saving left the game in ' + ctx.G.mode + ', not on the splash');
-      if (ctx.G.pause || ctx.G.slots) problems.push('a menu was left standing behind the splash');
-      console.log('save screen          :', drawnS, 'marks, slot one now reads "' + lab + '"');
-    }
+    if (ctx.G.mode === 'slots')
+      problems.push('SAVE AND QUIT asked which slot, in a run that already has one');
+    const lab = ctx.slotLabel(0);
+    if (lab === 'empty') problems.push('saving left the slot empty');
+    if (ctx.G.mode !== 'title')
+      problems.push('saving left the game in ' + ctx.G.mode + ', not on the splash');
+    if (ctx.G.pause || ctx.G.slots) problems.push('a menu was left standing behind the splash');
+    console.log('save and quit        : no slot asked for, slot one now reads "' + lab + '"');
 
-    /* LOAD: picking the saved slot puts you back in the game.  Saving
-       quit to the splash, so the menu has to be opened again. */
-    ctx.G.mode = 'play'; ctx.G.slot = null; ctx.G.slots = null;
-    key('Escape');
-    ctx.G.pause.i = names.indexOf('load'); key('Enter');
+    /* LOAD, from the title screen, is what puts a saved run back. */
+    ctx.G.titleMenu = { i: ctx.TITLE_OPTS.map(o => o[0]).indexOf('load') };
+    key('Enter');
     if (ctx.G.mode !== 'slots') problems.push('LOAD did not open the slot list');
     else {
       frame('load slots');
+      const drawnS = blits.filter(b => b.tag === 'screen').length;
+      if (drawnS < 30) problems.push('the load screen was not drawn');
+      ctx.G.slots.i = 0;
       key('Enter');
-      if (ctx.G.mode !== 'play') problems.push('loading did not resume the game, mode is ' + ctx.G.mode + ' msg=' + (ctx.G.slots && ctx.G.slots.msg) + ' slot=' + (ctx.G.slots && ctx.G.slots.i));
-      console.log('load screen          : picking a full slot takes you back into the game');
+      if (ctx.G.mode !== 'play')
+        problems.push('loading did not resume the game, mode is ' + ctx.G.mode);
+      if (ctx.G.slot !== 0) problems.push('a loaded run did not know which slot it came out of');
+      console.log('load screen          :', drawnS, 'marks; a full slot takes you back into the game');
     }
 
-    /* an empty slot refuses politely and stays put */
-    ctx.G.mode = 'play'; ctx.G.pause = null;
-    key('Escape'); ctx.G.pause.i = names.indexOf('load'); key('Enter');
+    /* four of them, and an empty one refuses politely */
+    if (ctx.SAVE_SLOTS !== 4) problems.push('there are ' + ctx.SAVE_SLOTS + ' slots, not four');
+    ctx.G.mode = 'title'; ctx.G.slots = null;
+    ctx.G.titleMenu = { i: ctx.TITLE_OPTS.map(o => o[0]).indexOf('load') };
+    key('Enter');
     ctx.G.slots.i = ctx.SAVE_SLOTS - 1;
     key('Enter');
     if (ctx.G.mode !== 'slots') problems.push('an empty slot left the slot list');
     if (!ctx.G.slots.msg) problems.push('an empty slot said nothing');
     /* BACK is the row after the slots */
     ctx.G.slots.i = ctx.SAVE_SLOTS; key('Enter');
-    if (ctx.G.mode !== 'pause') problems.push('BACK did not return to the menu');
+    if (ctx.G.mode !== 'title') problems.push('BACK did not return to the title screen');
+
+    /* --- the roll of the ten best -------------------------------------
+       Death, the gravestone, then the roll.  If the run belongs on it
+       there is a row with a cursor in it waiting for a name; when the
+       name is in, the run is on the roll once - not twice, which is what
+       happens if the table is asked to take a run it has already
+       taken. */
+    {
+      const bad = [];
+      const seed = [['Rodney', 10500, 12], ['Anband', 8200, 9], ['NetHack', 7500, 8],
+                    ['Pixel', 6100, 7], ['Crawl', 5400, 5], ['Rogue', 4300, 4],
+                    ['Brogue', 3100, 3], ['Siren', 2200, 2], ['Hero', 1000, 1],
+                    ['Noob', 150, 1]].map(r => ({ name: r[0], xp: r[1], level: r[2] }));
+      ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null;
+      ctx.G.dead = 0; ctx.G.hs = null;
+      ctx.G.hsBoard = seed;
+      ctx.P.exp = 9000; ctx.P.lv = 11;
+      ctx.G.dead = 1; ctx.G.mode = 'dead';
+      key('Enter');                        /* the gravestone gives way to the roll */
+      if (ctx.G.mode !== 'score') bad.push('ENTER on the gravestone did not open the roll');
+      if (!ctx.G.hs || !ctx.G.hs.typing) bad.push('a run good enough for the roll was not asked its name');
+      counts.score = frame('the roll');
+      for (const c of 'Gulli') key(c);
+      if (ctx.G.hs.entry.name !== 'Gulli')
+        bad.push('the name came out "' + ctx.G.hs.entry.name + '"');
+      /* nothing the font has not got, and no more than it will hold */
+      key('<'); key('&');
+      if (ctx.G.hs.entry.name !== 'Gulli') bad.push('the name took a character it cannot draw');
+      for (let i = 0; i < 40; i++) key('x');
+      if (ctx.G.hs.entry.name.length > ctx.HS_NAME_MAX)
+        bad.push('the name grew to ' + ctx.G.hs.entry.name.length);
+      while (ctx.G.hs.entry.name.length > 5) key('Backspace');
+      key('Enter');
+      if (ctx.G.hs.typing) bad.push('ENTER did not set the name');
+      if (ctx.G.hs.place !== 2) bad.push('the run was placed ' + ctx.G.hs.place + ', not second');
+      const rows = ctx.G.hs.list;
+      const mine = rows.filter(e => e.name === 'Gulli');
+      if (mine.length !== 1) bad.push('the run is on the roll ' + mine.length + ' times');
+      if (rows.length !== ctx.HS_MAX) bad.push('the roll is ' + rows.length + ' long');
+      if (rows.some(e => e.name === 'Noob')) bad.push('the last row was not pushed off');
+      counts.scoreSent = frame('the roll, sent');
+      /* and it draws: ten rows of it, inside the box.  Counted off what
+         was actually put on the screen, not off the table behind it -
+         the run was on the roll once and drawn twice, because the
+         drawing added it to a table that already had it. */
+      const drawnR = blits.filter(b => b.tag === 'screen').length;
+      if (drawnR < 40) bad.push('the roll was not drawn');
+      const drawnNames = ctx.TEXTS.map(t => t.s);
+      const drawnMine = drawnNames.filter(t => t === 'Gulli').length;
+      if (drawnMine !== 1) bad.push('the name is drawn ' + drawnMine + ' times on the roll');
+      const numbered = drawnNames.filter(t => /^\d+\.$/.test(t)).length;
+      if (numbered !== ctx.HS_MAX)
+        bad.push(numbered + ' rows were drawn, not ' + ctx.HS_MAX);
+      /* Read at the end of a run, leaving it starts the next one.  That
+         is checked by asking where it thinks it came from rather than by
+         pressing the key: a fresh run here would sweep away the dungeon
+         the probes after this one are standing in. */
+      if (ctx.G.hs.from !== 'end') bad.push('the roll did not know it came from a dead run');
+      ctx.G.hs.from = 'title';
+      key('Enter');
+      if (ctx.G.mode === 'score') bad.push('ENTER did not leave the roll');
+      if (ctx.G.mode !== 'title') bad.push('the roll went to ' + ctx.G.mode + ', not the title');
+      /* a run that is not good enough is shown the roll and not asked */
+      ctx.G.hs = null; ctx.G.hsBoard = seed; ctx.P.exp = 5; ctx.P.lv = 1;
+      ctx.G.dead = 1; ctx.G.mode = 'dead';
+      key('Enter');
+      if (ctx.G.hs && ctx.G.hs.typing) bad.push('a run nowhere near the roll was asked its name');
+      frame('the roll, not on it');
+      ctx.G.dead = 0; ctx.G.mode = 'play'; ctx.G.hs = null; ctx.G.hsBoard = null;
+      console.log('the roll             : ' + (bad.length ? bad.length + ' problems' :
+        'the gravestone gives way to it, a run that belongs on it is asked for a name ' +
+        'and appears once, the tenth is pushed off, and a run that does not belong is only shown it'));
+      for (const b of bad) problems.push('the roll: ' + b);
+    }
+
+    /* --- the run saves itself, and always into the same slot ----------
+       Every other turn, quietly, into the slot chosen at START.  What
+       makes that safe is that the slot cannot change while the run is
+       going: it is chosen once and it is the only place the autosave can
+       ever write. */
+    {
+      const bad = [];
+      ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null; ctx.G.dead = 0;
+      ctx.G.slot = 2;
+      /* wipe the slot, then watch it fill in on its own */
+      vm.runInContext('clearSlot(2);', ctx);
+      if (ctx.slotUsed(2)) bad.push('clearing a slot left something in it');
+      const stamps = [];
+      for (let t = 0; t < 6; t++) {
+        vm.runInContext('tick(true);', ctx);
+        stamps.push(ctx.G.turn % ctx.AUTOSAVE_EVERY === 0 ? ctx.slotUsed(2) : null);
+      }
+      if (!ctx.slotUsed(2)) bad.push('six turns went by and the run never saved itself');
+      /* it only writes on its own beat: a turn that is not a save turn
+         must not touch the slot */
+      vm.runInContext('clearSlot(2);', ctx);
+      /* tick counts the turn first and saves afterwards, so a turn that
+         lands on an odd count is one it must leave alone */
+      ctx.G.turn = ctx.AUTOSAVE_EVERY * 20;
+      vm.runInContext('tick(true);', ctx);       /* an odd turn */
+      const afterOdd = ctx.slotUsed(2);
+      vm.runInContext('tick(true);', ctx);       /* and its even one */
+      const afterEven = ctx.slotUsed(2);
+      if (afterOdd) bad.push('the run saved itself on every turn, not every other');
+      if (!afterEven) bad.push('the run did not save itself on its own turn');
+      /* the slot never moves under it */
+      const wasSlot = ctx.G.slot;
+      for (let t = 0; t < 20; t++) {
+        try { key(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Escape'][t % 6]); }
+        catch (e) { bad.push('key crash: ' + e.message); break; }
+        if (ctx.G.mode === 'slots') { key('Escape'); }
+        if (ctx.G.mode === 'pause') { key('Escape'); }
+        if (ctx.G.slot !== wasSlot) { bad.push('the run changed slot mid-run'); break; }
+      }
+      ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null;
+      /* and dying gives it back: a save that can only load you onto your
+         own gravestone is a slot you cannot use */
+      ctx.G.slot = 2;
+      vm.runInContext('saveInto(2);', ctx);
+      if (!ctx.slotUsed(2)) bad.push('the run would not save before dying');
+      vm.runInContext("die('a probe');", ctx);
+      if (ctx.slotUsed(2)) bad.push('a dead run was left sitting in its slot');
+      ctx.G.dead = 0; ctx.G.mode = 'play'; ctx.G.deadAt = 0;
+      console.log('the autosave         : every ' + ctx.AUTOSAVE_EVERY +
+        ' turns into slot ' + (wasSlot + 1) + ' and nowhere else, and dying frees it');
+      for (const b of bad) problems.push('autosave: ' + b);
+    }
 
     /* HINTS: one at a time, a new one on SPACE, and every one fits */
+    ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null;
+    key('Escape');
     ctx.G.pause.i = names.indexOf('hints'); key('Enter');
     if (ctx.G.mode !== 'hint') problems.push('HINTS did not open');
     else {
@@ -4213,8 +4469,10 @@ setTimeout(() => {
       m.anim = [[m.x, m.y, gone.x, gone.y, T0 + 400]];
       m.x = gone.x; m.y = gone.y;
       ctx.Date = { now: () => T0 };           /* the stone is still in the air */
+      ctx.pauseFrom = ctx.pauseOwed = 0;
       const whileFlying = drawn();
       ctx.Date = { now: () => T0 + 900 };     /* well after it has walked off */
+      ctx.pauseFrom = ctx.pauseOwed = 0;
       const afterLanding = drawn();
       ctx.Date = RealDate;
       m.anim = null;
@@ -4318,10 +4576,12 @@ setTimeout(() => {
         const RealDate = ctx.Date, T0 = RealDate.now();
         ctx.G.mode = 'play'; ctx.G.ctx = null; ctx.G.walk = null;
         ctx.Date = { now: () => T0 };
+        ctx.pauseFrom = ctx.pauseOwed = 0;
         touch('touchstart', px, py);
         ctx.touchHold();
         if (ctx.G.mode === 'ctx') problems.push('a press became the right button at once');
         ctx.Date = { now: () => T0 + ctx.TOUCH_HOLD_MS + 20 };
+        ctx.pauseFrom = ctx.pauseOwed = 0;
         ctx.touchHold();
         ctx.Date = RealDate;
         if (ctx.G.mode !== 'ctx')
@@ -4524,16 +4784,23 @@ setTimeout(() => {
     ctx.G.mode = 'play'; ctx.G.dead = 0; L.mons.length = 0;
     P.hp = P.mhp = 90000; P.blind = 0;
     ctx.computeVis();
-    let spot = null;
+    /* Somewhere you can SEE it stand.  The gap between a quick creature's
+       two steps is only put in when the step is being watched - there is
+       no sense pacing out a walk nobody can see - so a spot that happens
+       to be round a corner makes both steps share one instant and the
+       check fail on the floor rather than on the rule. */
+    let m = null;
     for (const [dx, dy] of ctx.DIR4) {
       const x = P.x + dx * 3, y = P.y + dy * 3;
-      if (ctx.walkable(x, y) && !ctx.monAt(L, x, y)) { spot = { x, y }; break; }
+      if (!ctx.walkable(x, y) || ctx.monAt(L, x, y)) continue;
+      const cand = ctx.mkMonster('O', 5, x, y);
+      cand.hp = cand.mhp = 90000; cand.state = 2; cand.hasted = 20;
+      L.mons.push(cand);
+      if (ctx.canSeeMon(cand)) { m = cand; break; }
+      L.mons.pop();
     }
-    if (!spot) console.log('a second step        : nowhere to set one up');
+    if (!m) console.log('a second step        : nowhere in sight to set one up');
     else {
-      const m = ctx.mkMonster('O', 5, spot.x, spot.y);
-      m.hp = m.mhp = 90000; m.state = 2; m.hasted = 20;
-      L.mons.push(m);
       ctx.G.beat = 0;
       m.anim = null;
       /* Hold the clock: each step is stamped Date.now() + the beat so
@@ -4542,6 +4809,7 @@ setTimeout(() => {
          machine. */
       const RealDate = ctx.Date, T0 = RealDate.now();
       ctx.Date = { now: () => T0 };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
       try { ctx.monstersMove(); } finally { ctx.Date = RealDate; }
       const steps = m.anim || [];
       if (steps.length < 2)
@@ -4968,6 +5236,7 @@ setTimeout(() => {
     const T0 = 5000000;
     const realDate = ctx.Date;
     ctx.Date = { now: () => T0 };
+    ctx.pauseFrom = ctx.pauseOwed = 0;
     /* somewhere to walk to, so a step that does happen can be seen */
     let dir = null;
     for (const d of ctx.DIR4)
@@ -4995,6 +5264,7 @@ setTimeout(() => {
         problems.push('a click walked the player while he was still in the air');
       /* once he has landed, the same key works */
       ctx.Date = { now: () => T0 + whole + 5 };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
       if (ctx.warping()) problems.push('the jump never ends');
       ctx.G.walk = null;
       ctx.onKey({ key: key, preventDefault: function () { } });
@@ -5245,9 +5515,13 @@ setTimeout(() => {
     const boltBad = [];
     /* somewhere with room to fire */
     let dir = null, run = 0;
+    /* How far a bolt goes, not how far you could walk.  A door is
+       walkable and stops a shot dead, so a lane measured by walking
+       comes out longer than the current that runs down it and the check
+       reads a short bolt as a broken one. */
     for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       let n = 0;
-      while (ctx.walkable(P.x + d[0] * (n + 1), P.y + d[1] * (n + 1))) n++;
+      while (!ctx.blocksShot(P.x + d[0] * (n + 1), P.y + d[1] * (n + 1))) n++;
       if (n > run) { run = n; dir = d; }
     }
     if (run < 4) boltBad.push('nowhere clear to fire down');
@@ -5268,7 +5542,7 @@ setTimeout(() => {
         if (G.bolt.mode !== 'beam') boltBad.push('lightning was thrown like a missile');
         if (G.bolt.path.length !== run)
           boltBad.push('it reached ' + G.bolt.path.length + ' of ' + run + ' clear squares');
-        G.bolt.t = Date.now();
+        G.bolt.t = ctx.nowMs();
         frame('lightning');
         const px = fills.filter(f => f.tag === 'screen' && f.w === 1 && f.h === 1);
         const blue = px.filter(f => [ctx.BOLT_GLOW, ctx.BOLT_BLUE, ctx.BOLT_PALE, ctx.BOLT_CORE]
@@ -5285,12 +5559,21 @@ setTimeout(() => {
             if (b <= r) boltBad.push('the current is drawn in ' + c + ', which is not blue');
           }
         }
-        /* it runs the length of the path... */
+        /* It runs the length of the path - or of as much of the path as
+           is on the screen.  A wand fired down a long hall reaches
+           further than the view does, and the part beyond the edge is
+           not drawn because there is nowhere to draw it; measuring
+           against the whole path read that as a bolt that fell short. */
+        const camx0 = P.x - (ctx.VIEW_W >> 1), camy0 = P.y - (ctx.VIEW_H >> 1);
+        const shown = G.bolt.path.filter(c =>
+          c[0] - camx0 >= 0 && c[0] - camx0 < ctx.VIEW_W &&
+          c[1] - camy0 >= 0 && c[1] - camy0 < ctx.VIEW_H).length;
         const along = dir[0] ? blue.map(f => f.x) : blue.map(f => f.y);
         const across = dir[0] ? blue.map(f => f.y) : blue.map(f => f.x);
         const span = Math.max(...along) - Math.min(...along);
-        if (span < (run - 1) * ctx.TS)
-          boltBad.push('the current spans ' + span + 'px of ' + (run * ctx.TS));
+        if (span < (shown - 1) * ctx.TS)
+          boltBad.push('the current spans ' + span + 'px of the ' +
+            (shown * ctx.TS) + ' on screen (' + shown + ' of ' + run + ' squares)');
         /* ...and it is crooked, not a ruled line */
         const wide = Math.max(...across) - Math.min(...across);
         if (wide < 3) boltBad.push('the current is ' + wide + 'px wide - it is a straight line');
@@ -5315,7 +5598,7 @@ setTimeout(() => {
           if (stamped) boltBad.push(stamped + ' bolt sprites were stamped along it as well');
         }
         /* and it goes out */
-        G.bolt.t = Date.now() - ctx.BOLT_BEAM_LIFE - 50;
+        G.bolt.t = ctx.nowMs() - ctx.BOLT_BEAM_LIFE - 50;
         frame('lightning-gone');
         if (G.bolt) boltBad.push('the current never went out');
       }
@@ -5463,7 +5746,7 @@ setTimeout(() => {
 
       /* a blast */
       L.clouds.length = 0;
-      G.splash = { cells: [[spot.x, spot.y]], t: Date.now(), kind: 'blast' };
+      G.splash = { cells: [[spot.x, spot.y]], t: ctx.nowMs(), kind: 'blast' };
       frame('glow-blast');
       const want2 = {};
       want2[rel(0, 0)] = 1;
@@ -5474,7 +5757,7 @@ setTimeout(() => {
       for (const d of [[1,1],[1,-1],[-1,1],[-1,-1]]) want2[rel(d[0], d[1])] = 0.5;
       shape(litMap(), want2, 'a blast');
       /* and it goes out with the flash */
-      G.splash.t = Date.now() - ctx.BLAST_FLASH_MS - 50;
+      G.splash.t = ctx.nowMs() - ctx.BLAST_FLASH_MS - 50;
       frame('glow-blast-gone');
       if (Object.keys(litMap()).length) glowBad.push('the light of a blast outlived the flash');
       G.splash = null;
@@ -5488,7 +5771,7 @@ setTimeout(() => {
       for (const beam of [{ kind: 'lightning', col: ctx.GLOW_BOLT, life: ctx.BOLT_BEAM_LIFE },
                           { kind: 'fire', col: ctx.GLOW_FIRE, life: ctx.FIRE_BEAM_LIFE }]) {
         G.bolt = { path: [[spot.x, spot.y]], kind: beam.kind, mode: 'beam',
-                   dir: [1, 0], t: Date.now() };
+                   dir: [1, 0], t: ctx.nowMs() };
         frame('glow-beam-' + beam.kind);
         const got3 = litMap();
         /* A beam is halved to start with, so it varies further than a
@@ -5515,7 +5798,7 @@ setTimeout(() => {
           glowBad.push('a beam of ' + beam.kind + ' lights the room ' + [...cols].join(', ') +
             ', not ' + beam.col);
         /* and it takes its light with it when it goes */
-        G.bolt.t = Date.now() - beam.life - 50;
+        G.bolt.t = ctx.nowMs() - beam.life - 50;
         frame('glow-beam-gone-' + beam.kind);
         if (Object.keys(litMap()).length)
           glowBad.push('the light of a beam of ' + beam.kind + ' outlived the beam');
@@ -6042,48 +6325,436 @@ setTimeout(() => {
   }
 
   /* --- the current in the water is not wallpaper -----------------------
-     A pool of water lit up by a shocking stone is a great many squares
-     stamped with the same little fork at once.  Each one is turned by
-     its own eighth of a circle, dealt by where the square is, so the
-     pool crackles instead of repeating - and it is the same every frame
-     while it lasts, or it would flicker. */
+     A pool lit up by a shocking stone is a great many squares stamped
+     with the same little fork at once.  Three things stop that reading
+     as wallpaper, and all three are checked here:
+
+       the current goes in where the stone went in and runs outwards
+       through the water from there, so the far side of a pool lights
+       later than the near side;
+
+       about a third of the squares it has reached are lit on any one
+       frame and a different third on the next, so it crackles;
+
+       each spark is turned by its own eighth of a circle and drawn from
+       one of two tiles, dealt by where the square is - and it is the
+       same within one beat, or it would fizz rather than crackle. */
   {
     const P = ctx.P, L = ctx.L, G = ctx.G;
     const bad = [];
     G.mode = 'play'; G.note = null; ctx.selClear();
     L.mons.length = 0; L.items.length = 0;
+    /* a long thin pool, so near and far are far apart */
     const cells = [];
-    for (let dy = -1; dy <= 1; dy++) for (let dx = 1; dx <= 5; dx++)
+    for (let dy = -1; dy <= 1; dy++) for (let dx = 1; dx <= 8; dx++)
       cells.push([P.x + dx, P.y + dy]);
     const undo = clearPatch(ctx, cells);
     for (const c of cells) L.tiles[c[1] * ctx.MAP_W + c[0]] = ctx.WATER;
     ctx.computeVis();
     for (const c of cells) L.flags[c[1] * ctx.MAP_W + c[0]] |= (ctx.F_VIS | ctx.F_SEEN);
-    G.splash = { cells: cells.slice(), t: Date.now(), kind: 'zap' };
-    const boltIx = ctx.IX['bolt'];
-    const bx = (boltIx % ctx.ATLAS.cols) * ctx.TS, by = ((boltIx / ctx.ATLAS.cols) | 0) * ctx.TS;
+
+    const sparkCells = ctx.SHOCK_TILES.map(n => {
+      const i2 = ctx.IX[n];
+      return [(i2 % ctx.ATLAS.cols) * ctx.TS, ((i2 / ctx.ATLAS.cols) | 0) * ctx.TS];
+    });
     const sparks = () => {
       blits = []; fills = [];
       vm.runInContext('render();', ctx);
       return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
-        b.sx === bx && b.sy === by);
+        sparkCells.some(c => b.sx === c[0] && b.sy === c[1]));
     };
-    const one = sparks();
-    if (one.length < 8) bad.push('only ' + one.length + ' sparks were drawn over the pool');
-    /* several angles between them, and none of them a quarter turn -
-       an eighth of a circle is what makes it look unrepeated */
-    const angles = new Set(one.map(b => JSON.stringify(b.mat)));
+    /* the current goes in at the near end of the pool */
+    const src = cells[0];
+    G.splash = ctx.shockSplash(cells, src[0], src[1]);
+    const spread = G.splash.dist || [];
+    if (!G.splash.dist) bad.push('the current was not given an order to spread in');
+    if (!G.splash.blink) bad.push('a current over a pool does not blink');
+    /* the order it spreads in is the water walked, not the crow flown */
+    const far = cells.findIndex(c => c[0] === P.x + 8 && c[1] === P.y - 1);
+    const near = cells.findIndex(c => c[0] === src[0] && c[1] === src[1]);
+    if (spread[near] !== 0) bad.push('the square it was let loose on is not the first');
+    if (!(spread[far] > (spread[near] || 0) + 5))
+      bad.push('the far corner of the pool is ' + spread[far] + ' steps away, not far');
+
+    /* Set the clock back to look at the current at a chosen age.  The
+       splash is made afresh each time: the drawing throws away one that
+       has run out, and half of what is being checked here is when it
+       runs out. */
+    const life = ctx.shockLife(G.splash);
+    const at = (age) => {
+      G.splash = ctx.shockSplash(cells, src[0], src[1]);
+      G.splash.t = ctx.nowMs() - age;
+      return sparks();
+    };
+    /* it has to stay on the screen long enough to cross the pool and
+       then blink at least a full cycle, or the far end lights once and
+       the whole thing is gone */
+    const crossed = G.splash.reach * ctx.SHOCK_STEP_MS;
+    if (life < crossed + ctx.SHOCK_BLINK_MS * ctx.SHOCK_ON)
+      bad.push('the current is gone ' + (crossed + ctx.SHOCK_BLINK_MS * ctx.SHOCK_ON - life) +
+        'ms before the far end has had its turn');
+    /* the instant it is let loose, nothing at the far end */
+    const first = at(0);
+    const farPx = [ctx.VIEW_PX + (cells[far][0] - G.camx) * ctx.TS,
+                   ctx.VIEW_PY + (cells[far][1] - G.camy) * ctx.TS];
+    if (first.some(b => b.dx === farPx[0] && b.dy === farPx[1]))
+      bad.push('the far end of the pool was live before the current got there');
+    if (first.length > cells.length / 2)
+      bad.push('the whole pool lit at once: ' + first.length + ' of ' + cells.length);
+
+    /* by the time the front has crossed it, every square has had a turn */
+    const reached = new Set();
+    let shares = [];
+    for (let beat = 0; beat < ctx.SHOCK_ON; beat++) {
+      const age = crossed + beat * ctx.SHOCK_BLINK_MS;
+      const drawn = at(age);
+      drawn.forEach(b => reached.add(b.dx + ',' + b.dy));
+      shares.push(drawn.length / cells.length);
+    }
+    if (reached.size < cells.length)
+      bad.push('only ' + reached.size + ' of ' + cells.length + ' squares ever lit');
+    /* about a third at a time - a pool with every square lit is a blue
+       floor, and one with two squares lit is a pool with nothing in it */
+    const worstHigh = Math.max(...shares), worstLow = Math.min(...shares);
+    if (worstHigh > 0.55) bad.push('a frame lit ' + Math.round(worstHigh * 100) + '% of the pool');
+    if (worstLow < 0.15) bad.push('a frame lit only ' + Math.round(worstLow * 100) + '% of the pool');
+    const mean = shares.reduce((a, b) => a + b, 0) / shares.length;
+
+    /* several angles between them, and none of them a quarter turn */
+    const late = at(crossed);
+    const angles = new Set(late.map(b => JSON.stringify(b.mat)));
     if (angles.size < 3) bad.push('the sparks were drawn at ' + angles.size + ' angle(s)');
-    /* and the same again next frame: a spark that spins is a strobe */
-    const two = sparks();
-    const key1 = one.map(b => b.dx + ',' + b.dy + ':' + JSON.stringify(b.mat)).sort().join('|');
-    const key2 = two.map(b => b.dx + ',' + b.dy + ':' + JSON.stringify(b.mat)).sort().join('|');
+    /* both tiles in use, so the pool is not one fork stamped over */
+    const tiles = new Set(late.map(b => b.sx + ',' + b.sy));
+    if (tiles.size < ctx.SHOCK_TILES.length)
+      bad.push('only ' + tiles.size + ' of the ' + ctx.SHOCK_TILES.length + ' spark tiles were used');
+    /* and the same again within the beat: a spark that spins is a strobe */
+    const again = at(crossed);
+    const key1 = late.map(b => b.dx + ',' + b.dy + ':' + JSON.stringify(b.mat)).sort().join('|');
+    const key2 = again.map(b => b.dx + ',' + b.dy + ':' + JSON.stringify(b.mat)).sort().join('|');
     if (key1 !== key2) bad.push('the sparks moved between one frame and the next');
-    console.log('a current in water   : ' + one.length + ' sparks over the pool at ' +
-      angles.size + ' angles, the same every frame');
+
+    /* a current on dry ground is one square and does not blink: two
+       frames out of three of nothing at all is not a spark, it is a
+       sprite that is missing */
+    const dry = ctx.shockSplash([[P.x + 1, P.y]], P.x + 1, P.y);
+    if (dry.blink) bad.push('a current on one square blinks');
+
+    console.log('a current in water   : ' + cells.length + ' squares, the far corner ' +
+      spread[far] + ' steps from where it went in, on screen ' + life + 'ms, ' +
+      Math.round(mean * 100) + '% of them lit at a time over ' + angles.size +
+      ' angles and ' + tiles.size + ' tiles, the same within a beat');
     for (const b of bad) problems.push('current: ' + b);
     G.splash = null;
     undo();
+    ctx.computeVis();
+  }
+
+  /* --- a barrel knocks the room about ----------------------------------
+     A flask of oil and a barrel of powder used to look the same: a flash
+     and a bang.  A barrel is the loudest thing in the dungeon, so the
+     view itself takes the blow for a moment - the dungeon only, since
+     the panel is a thing you are reading rather than a thing you are
+     standing in. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const bad = [];
+    const RealDate = Date;
+    G.mode = 'play'; G.note = null; G.splash = null; G.bolt = null; ctx.selClear();
+    L.mons.length = 0; L.clouds.length = 0; G.shake = null;
+    G.drag = { dx: 0, dy: 0 }; G.pan = null;
+    const T0 = 5000000;
+    const clock = (t) => { ctx.Date = { now: () => t, UTC: RealDate.UTC };
+                           ctx.pauseFrom = ctx.pauseOwed = 0; };
+
+    /* The panel is the strip down the left; the map is everything to the
+       right of it.  The panel is read by its words rather than by where
+       its blits land, because a shaken map tile at the left edge slides
+       a pixel or two into the panel's column - the real drawing clips it
+       away, and the canvas the checks run on only pretends to. */
+    const shot = () => {
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      const onMap = blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        b.dx >= ctx.VIEW_PX + ctx.TS);
+      const onPanel = blits.filter(b => b.tag === 'screen' && b.from === 'font' &&
+        b.dx < ctx.VIEW_PX - ctx.SHAKE_AMP);
+      return { map: onMap.map(b => b.dx + ',' + b.dy).sort().join('|'),
+               panel: onPanel.map(b => b.dx + ',' + b.dy).sort().join('|') };
+    };
+
+    clock(T0);
+    const still = shot();
+    /* light the barrel where the player stands, and set it off */
+    G.beat = 0;
+    vm.runInContext('blowBarrel(P.x, P.y);', ctx);
+    if (!G.shake) bad.push('a barrel of powder went up and nothing moved');
+    else {
+      if (G.shake.ms !== ctx.SHAKE_MS)
+        bad.push('the shake runs ' + G.shake.ms + 'ms, not ' + ctx.SHAKE_MS);
+      G.shake.t = T0;                    /* now, rather than a beat away */
+      /* it moves, it moves by a little, and it does not stand still */
+      const seen = new Set();
+      let worst = 0;
+      for (let age = 0; age < ctx.SHAKE_MS; age += 12) {
+        clock(T0 + age);
+        G.shake.t = T0;
+        const o = ctx.shakeOff();
+        if (!o[0] && !o[1]) bad.push('the shake stood still ' + age + 'ms in');
+        worst = Math.max(worst, Math.abs(o[0]), Math.abs(o[1]));
+        seen.add(o.join(','));
+      }
+      if (seen.size < 4) bad.push('the shake used only ' + seen.size + ' offsets');
+      if (worst > ctx.SHAKE_AMP)
+        bad.push('the view was thrown ' + worst + 'px, past the ' + ctx.SHAKE_AMP + ' it may');
+      /* it falls away rather than rattling on at full force to the end */
+      /* the worst of a window at each end, not one sample against one:
+         a single frame of a shake is meant to be unpredictable, and the
+         thing that falls away is how far it can throw the view, not how
+         far it happened to throw it on the frame we looked at */
+      const worstOver = (from, to) => {
+        let w = 0;
+        for (let age = from; age < to; age += 6) {
+          clock(T0 + age); G.shake.t = T0;
+          w = Math.max(w, ...ctx.shakeOff().map(Math.abs));
+        }
+        return w;
+      };
+      const early = worstOver(0, 60);
+      const late = worstOver(ctx.SHAKE_MS - 60, ctx.SHAKE_MS);
+      if (!(late < early)) bad.push('the shake is as hard at the end as at the start');
+
+      /* the map moves with it and the panel does not */
+      clock(T0 + 12); G.shake.t = T0;
+      const rattled = shot();
+      if (rattled.map === still.map) bad.push('the map did not move during the shake');
+      if (rattled.panel !== still.panel) bad.push('the panel was shaken along with the map');
+
+      /* and it is over on time */
+      clock(T0 + ctx.SHAKE_MS + 1); G.shake.t = T0;
+      const done = ctx.shakeOff();
+      if (done[0] || done[1]) bad.push('the shake was still going after ' + ctx.SHAKE_MS + 'ms');
+      if (G.shake) bad.push('the shake was not put away when it finished');
+    }
+
+    ctx.Date = RealDate;
+    ctx.pauseFrom = ctx.pauseOwed = 0;
+    G.shake = null; G.splash = null; L.clouds.length = 0; L.fuses = {};
+    console.log('a barrel shakes it  : ' + ctx.SHAKE_MS + 'ms, up to ' + ctx.SHAKE_AMP +
+      'px, falling away as it goes, and the panel stands still through it');
+    for (const b of bad) problems.push('shake: ' + b);
+    ctx.computeVis();
+  }
+
+  /* --- a box on the screen stops the world -----------------------------
+     A turn is stamped and played out over the next few hundred
+     milliseconds, so a creature told to take a step is still taking it
+     for a while after the order was given.  Opening a box used to draw
+     over that and let it carry on: you opened your pack and something
+     moved behind it, which reads as the game carrying on without you.
+
+     So the clock the world runs on stops when a box goes up, and starts
+     again where it left off when the box comes down - and a run that has
+     ENDED keeps the wall clock, or the death screen would never finish.
+  */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const bad = [];
+    const RealDate = Date;
+    G.mode = 'play'; G.note = null; G.splash = null; G.bolt = null; ctx.selClear();
+    L.mons.length = 0; L.corpses.length = 0; L.clouds.length = 0;
+    P.blind = 0; P.hallu = 0;
+    for (let i = 0; i < L.flags.length; i++) L.flags[i] |= 3;
+    const m = ctx.mkMonster('K', 3, P.x + 2, P.y);
+    m.state = 2; m.disguise = 0; m.invis = 0;
+    L.mons.push(m);
+    const ai = ATLAS.index['mon_K'];
+    const ax = (ai % ATLAS.cols) * 8, ay = ((ai / ATLAS.cols) | 0) * 8;
+
+    const T0 = 5000000;
+    const clock = (t) => { ctx.Date = { now: () => t, UTC: RealDate.UTC }; };
+    /* the step it is in the middle of taking when the box goes up */
+    const step = () => { m.anim = [[P.x + 1, P.y, P.x + 2, P.y, T0]]; };
+    const whereIsIt = () => {
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      const b = blits.find(o => o.tag === 'screen' && o.from === 'atlas' &&
+        o.sx === ax && o.sy === ay);
+      return b ? b.dx + ',' + b.dy : null;
+    };
+
+    /* first, that it moves at all when nothing is in the way */
+    ctx.pauseFrom = ctx.pauseOwed = 0;
+    clock(T0 + 10); step();
+    const a1 = whereIsIt();
+    clock(T0 + 10 + (ctx.MOVE_ANIM_MS >> 1)); step();
+    const a2 = whereIsIt();
+    if (!a1 || !a2) bad.push('the creature was not drawn at all');
+    else if (a1 === a2) bad.push('the creature does not move while the game is running');
+
+    /* Every kind of box, asked of the clock itself rather than of the
+       screen: each of these needs its own contents set up before it can
+       be drawn, and what is being checked is not how they look but that
+       the world's clock stops dead under each of them. */
+    const kinds = Object.keys(ctx.PAUSE_MODES);
+    if (kinds.length < 8) bad.push('only ' + kinds.length + ' kinds of box stop the world');
+    const held = [];
+    for (const mode of kinds) {
+      ctx.pauseFrom = ctx.pauseOwed = 0;
+      clock(T0); G.mode = 'play';
+      const running = ctx.nowMs();
+      G.mode = mode;
+      const shut = ctx.nowMs();
+      clock(T0 + 400);
+      const waited = ctx.nowMs();
+      if (waited !== shut)
+        bad.push('the clock ran on ' + (waited - shut) + 'ms behind a ' + mode + ' box');
+      else held.push(mode);
+      /* and it starts again from where it stopped, not from where it
+         would have got to */
+      G.mode = 'play';
+      const after = ctx.nowMs();
+      if (after !== shut)
+        bad.push('closing a ' + mode + ' box jumped the clock ' + (after - shut) + 'ms');
+      clock(T0 + 400 + 60);
+      if (ctx.nowMs() !== shut + 60)
+        bad.push('after a ' + mode + ' box the clock did not pick up its old pace');
+      if (running !== T0) bad.push('the clock was already adrift before the ' + mode + ' box');
+    }
+
+    /* and then the thing itself, through a box the game really opens:
+       a creature caught mid-step must be on the same pixel however long
+       you leave the notice up */
+    ctx.pauseFrom = ctx.pauseOwed = 0;
+    clock(T0 + 10); step(); G.mode = 'play'; G.note = null;
+    whereIsIt();                          /* running, mid-step */
+    vm.runInContext("openNote('something or other', 'A NOTICE');", ctx);
+    const at = whereIsIt();
+    clock(T0 + 10 + 400);
+    const later = whereIsIt();
+    const stillThere = (at !== null && at === later);
+    if (!stillThere)
+      bad.push('behind a notice it moved from ' + at + ' to ' + later);
+    /* the notice comes down and it goes on from where it stopped */
+    G.note = null; G.mode = 'play';
+    const back = whereIsIt();
+    if (back !== at) bad.push('closing the notice jumped it from ' + at + ' to ' + back);
+    clock(T0 + 10 + 400 + (ctx.MOVE_ANIM_MS >> 1));
+    if (whereIsIt() === at) bad.push('after the notice closed it never moved again');
+
+    /* a run that is over is not paused: the dying screen has to reach
+       the end of itself on the wall clock */
+    ctx.pauseFrom = ctx.pauseOwed = 0;
+    clock(T0);
+    G.mode = 'dying'; G.deadAt = T0 + 100; G.deadFrom = T0;
+    whereIsIt();
+    clock(T0 + 500);
+    whereIsIt();
+    const roseUp = (G.mode === 'dead');
+    if (!roseUp) bad.push('the dying screen never reached the death screen');
+    G.mode = 'play'; G.deadAt = 0; G.deadFrom = 0;
+
+    ctx.Date = RealDate;
+    ctx.pauseFrom = ctx.pauseOwed = 0;
+    m.anim = null; L.mons.length = 0;
+    console.log('a box stops the world: ' + held.length + ' of ' + kinds.length +
+      ' kinds stop the clock dead and let it go on afterwards, a creature ' +
+      'caught mid-step behind a notice ' + (stillThere ? 'holds still' : 'KEEPS GOING') +
+      ', and a run that has ended still ends');
+    for (const b of bad) problems.push('pause: ' + b);
+  }
+
+  /* --- fire seen down the length of a hall -----------------------------
+     Everything else is drawn only where the lamp reaches.  Fire and
+     lightning carry their own light, so a barrel going up at the far end
+     of a black hall has to be seen going up - the glow it throws is not
+     enough, because the glow lands on walls near you and the blast is
+     the thing you are meant to react to.  The rule is a clear line and
+     nothing else: put a wall in the way and it goes dark again. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const bad = [];
+    G.mode = 'play'; G.note = null; G.splash = null; ctx.selClear();
+    L.mons.length = 0; L.items.length = 0; L.clouds.length = 0;
+    const back = standInBigRoom(ctx, 24);
+
+    /* a straight run of floor going right, well past arm's length */
+    const RUN = 6;
+    const row = [];
+    for (let d = 1; d <= RUN; d++) row.push([P.x + d, P.y]);
+    const undo = clearPatch(ctx, row);
+    const far = row[row.length - 1], mid = row[(RUN >> 1) - 1];
+    const fj = far[1] * ctx.MAP_W + far[0], mj = mid[1] * ctx.MAP_W + mid[0];
+    const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+    const fpx = ctx.VIEW_PX + (far[0] - camx) * ctx.TS;
+    const fpy = ctx.VIEW_PY + (far[1] - camy) * ctx.TS;
+    const cellOf = (n) => { const i = ATLAS.index[n]; return [(i % ATLAS.cols) * 8, ((i / ATLAS.cols) | 0) * 8]; };
+    const fireCells = new Set(ctx.FIRE_TILES.map(n => cellOf(n).join(',')));
+    const gasCell = cellOf('gas').join(',');
+
+    /* the square is out of sight but has a clear line to it: that is the
+       whole of the rule, so it is set up by hand rather than hoped for */
+    const blind = () => { L.flags[fj] &= ~ctx.F_VIS; };
+    const atFar = () => {
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        b.dx === fpx && b.dy === fpy);
+    };
+    const sees = (set) => atFar().some(b => set.has ? set.has(b.sx + ',' + b.sy)
+                                                    : (b.sx + ',' + b.sy) === set);
+
+    if (!ctx.sightClear(P.x, P.y, far[0], far[1]))
+      bad.push('the run of floor laid for the check is not a clear line');
+
+    /* fire at the far end, out of sight, line clear: it shows */
+    L.clouds.push({ x: far[0], y: far[1], kind: 'fire', turns: 5 });
+    blind();
+    const litLine = sees(fireCells);
+    if (!litLine) bad.push('a fire down a clear hall is not drawn');
+
+    /* now put a wall in the middle of the run: it goes dark */
+    L.tiles[mj] = ctx.WALL;
+    ctx.computeVis();
+    blind();
+    const blocked = sees(fireCells);
+    if (blocked) bad.push('a fire behind a wall is drawn anyway');
+    L.tiles[mj] = ctx.FLOOR;
+    ctx.computeVis();
+
+    /* fumes are not fire and have no light of their own, so they keep to
+       the old rule and stay dark until you can see the square */
+    L.clouds.length = 0;
+    L.clouds.push({ x: far[0], y: far[1], kind: 'smoke', turns: 5 });
+    blind();
+    const fumes = sees(gasCell);
+    if (fumes) bad.push('smoke out of sight is drawn like fire');
+
+    /* and a current in water carries the same way a flame does.  One
+       square, so it does not blink and is lit on every frame - what is
+       being asked here is whether it is drawn at all, not when. */
+    L.clouds.length = 0;
+    const boltCells = new Set(ctx.SHOCK_TILES.map(n => cellOf(n).join(',')));
+    G.splash = ctx.shockSplash([[far[0], far[1]]], far[0], far[1]);
+    G.splash.t = ctx.nowMs();          /* not a beat away, now */
+    blind();
+    /* a spark is drawn turned, and a turned sprite carries its place in
+       the matrix rather than in dx/dy - so it is looked for by the cell
+       it comes out of the sheet, which nothing else on this floor uses */
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    const current = blits.some(b => b.tag === 'screen' && b.from === 'atlas' &&
+      boltCells.has(b.sx + ',' + b.sy));
+    if (!current) bad.push('a current down a clear hall is not drawn');
+    G.splash = null;
+
+    console.log('fire down a hall     : ' + RUN + ' squares off and unlit - flame ' +
+      (litLine ? 'seen' : 'MISSED') + ', walled off ' + (blocked ? 'SEEN' : 'dark') +
+      ', smoke ' + (fumes ? 'SEEN' : 'dark') + ', current ' +
+      (current ? 'seen' : 'MISSED'));
+    for (const b of bad) problems.push('fire at range: ' + b);
+    L.clouds.length = 0;
+    undo(); back();
     ctx.computeVis();
   }
 
