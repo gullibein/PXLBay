@@ -110,6 +110,44 @@ function playtestRoom(kind) {
   return false;
 }
 
+/* ------------------------------------------------------ a way down
+   A trapdoor turns up on about one floor in four and is hidden until it
+   is found, which makes it the one thing in the game you cannot go and
+   look at when you want to.  So: a floor that has one, standing beside
+   it with it already found, and the cellar underneath it left exactly
+   as the dungeon built it. */
+function playtestCellar(rugged) {
+  var tries, i;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    G.floors = {};
+    enterLevel(2 + rnd(6));
+    if (!L.tdoor) continue;
+    var keys = [], k;
+    for (k in L.tdoor) keys.push(k | 0);
+    if (!keys.length) continue;
+    var j = keys[0];
+    var tx = j % MAP_W, ty = (j / MAP_W) | 0;
+    /* under a rug, or in plain sight - both are worth being able to ask
+       for, since the rug is the whole reason one can be missed */
+    if (rugged && !isRugName(L.decor[j])) continue;
+    if (!rugged && isRugName(L.decor[j])) continue;
+    /* found, so it can be used - a rug over it still hides it, which is
+       the point of asking for that one */
+    L.tdoor[j].found = 1;
+    /* stand beside it, or on it if there is nowhere beside it */
+    var spot = null;
+    for (i = 0; i < DIR8.length; i++) {
+      var nx = tx + DIR8[i][0], ny = ty + DIR8[i][1];
+      if (walkable(nx, ny) && !monAt(L, nx, ny) && tileAt(nx, ny) !== TRAPDOOR) { spot = [nx, ny]; break; }
+    }
+    P.x = spot ? spot[0] : tx; P.y = spot ? spot[1] : ty;
+    L.mons.length = 0;
+    computeVis();
+    return true;
+  }
+  return false;
+}
+
 /* A plain room, with one of these in it and nothing else alive. */
 function playtestMonster(c) {
   var D = MON_BY_C[c];
@@ -176,11 +214,16 @@ function playtestStart(what, which) {
   P.str = P.mstr = 18; P.dex = P.mdex = 16; P.wis = P.mwis = 16;
   playtestKit();
 
-  var ok = (what === 'room') ? playtestRoom(which) : playtestMonster(which);
+  var ok = (what === 'room') ? playtestRoom(which) :
+           (what === 'cellar') ? playtestCellar(which === 'rug') :
+           playtestMonster(which);
   G.msgq = [];
   G.mode = 'play';
   if (!ok) msg('Could not find one. Reload and try again.', 'R');
   else if (what === 'room') msg('A ' + which + ' room. Have a look round.', 'c');
+  else if (what === 'cellar')
+    msg(which === 'rug' ? 'A trapdoor under that rug. Burn it off to find it.'
+                        : 'A trapdoor, found. ENTER on it goes down.', 'c');
   else msg('One ' + MON_BY_C[which].n + ', waiting for you.', 'c');
   msg('TAB for the pack. ESC for the menu.', '6');
   finishMsgs();
@@ -205,9 +248,16 @@ function playtestMenu() {
     box.style.display = 'flex';
   }
 
-  show([['room', 'A ROOM'], ['monster', 'A MONSTER']], 'What do you want to try?',
+  show([['room', 'A ROOM'], ['monster', 'A MONSTER'], ['cellar', 'A CELLAR']],
+    'What do you want to try?',
     function (what) {
-      if (what === 'room') {
+      if (what === 'cellar') {
+        show([['open', 'A TRAPDOOR IN THE OPEN'], ['rug', 'ONE UNDER A RUG']],
+          'Which sort?', function (which) {
+            box.style.display = 'none';
+            playtestStart('cellar', which);
+          });
+      } else if (what === 'room') {
         var rooms = SPECIAL_ROOMS.map(function (s) { return [s.n, s.n.toUpperCase()]; });
         show(rooms, 'Which room?', function (which) {
           box.style.display = 'none';

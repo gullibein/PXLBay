@@ -79,7 +79,11 @@ var ROCK = 0, WALL = 1, FLOOR = 2, CORR = 3, DOOR = 4, STAIR = 5, SDOOR = 6,
     /* A bridge laid over water or over a gap in the floor.  You walk it
        like any other square; what it spans is remembered in L.under so
        the water still shows at its sides. */
-    BRIDGE = 15;
+    BRIDGE = 15,
+    /* A door in the floor.  Hidden until it is found - see L.tdoor - and
+       drawn as plain flagstones until then.  Found, it is a way down
+       into a cellar that is not a floor of the dungeon at all. */
+    TRAPDOOR = 16;
 
 var MATS = ['wood', 'bronze', 'iron', 'silver', 'gold', 'crystal'];
 
@@ -198,6 +202,10 @@ var PERK_BY_ID = {};
 
 /* --- what each one is worth ---------------------------------------- */
 var PERK_STEALTH = 20, PERK_DODGE = 12, PERK_BACKSTAB = 5;
+/* What carrying a light costs you.  Something glowing in a black
+   corridor is the easiest thing in the dungeon to notice, and it is
+   worth about as much as soft boots are worth the other way. */
+var GLOW_STEALTH = 22;
 var PERK_ELEM_MULT = 1.6;          /* fire wielder, storm touched */
 var PERK_RESIST = 0.5;             /* ember skin, frostborn, ironblood */
 var PERK_MELEE_DAM = 2, PERK_SHOT_DAM = 4, PERK_SHOT_RANGE = 1;
@@ -266,6 +274,16 @@ var RANGED_BREATH_RANGE = 6;
 var BREATH_LEAD = 220;
 var BREATH_FIRE_MIN = 1, BREATH_FIRE_MAX = 2;
 var ARROW_RECOVER_PCT = 20;   /* chance a hit arrow survives to be reused */
+/* A runed stone is a stone with something cut into it, and the cutting
+   does not always wear off in one throw.  Now and then it is lying there
+   afterwards with its carving intact, to be picked up and thrown again.
+   (A returning stone has its own arrangement and does not use this.) */
+var RUNE_RECOVER_PCT = 25;
+/* How much of the run's talk is kept for reading back.  The panel holds
+   the last few lines; this is the whole story of the run, and it is what
+   the T key opens.  Long enough to reach the start of any ordinary run
+   and short enough that a saved game is not mostly conversation. */
+var HIST_KEEP = 800;
 /* A blow that lands well.  Everybody gets a few; a ring of battle luck
    gets more, and picks its shafts back up more often besides. */
 var CRIT_PCT = 6, CRIT_MULT = 2;
@@ -360,6 +378,10 @@ var RETURN_USES = 10;
 /* Thunder Charge: the armour soaks up blows and lets go on the third.
    Standing in water spreads the current through the whole pool. */
 var THUNDER_EVERY = 3, THUNDER_DAMAGE = [2, 6];
+/* A shocking stone: what it does where it lands, and the fact that water
+   carries it.  Everything standing in the same water is jolted, you
+   included - a current cannot tell whose leg it is running up. */
+var SHOCK_DAMAGE = [3, 6];
 /* A turn is played out rather than resolved all at once: your blow, then
    a pause, then each creature acting in turn, each with its own moment.
    Every line of text is stamped with the instant it belongs to.
@@ -392,17 +414,9 @@ var FALL_MIN = 1, FALL_MAX = 5;
 var SOFT_LANDING = {
   moss:   [0.20, 'You land in soft moss. It breaks your fall.'],
   moss2:  [0.20, 'You land in soft moss. It breaks your fall.'],
-  rubble: [0.10, 'You land in loose rubble. It gives a little.'],
-  rug_nw: [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_n:  [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_ne: [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_w:  [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_c:  [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_c2: [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_e:  [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_sw: [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_s:  [0.15, 'You land on an old rug. It takes some of it.'],
-  rug_se: [0.15, 'You land on an old rug. It takes some of it.']
+  rubble: [0.10, 'You land in loose rubble. It gives a little.']
+  /* the rug's own squares are added further down, where the tiles it is
+     laid from are named */
 };
 /* and water, which is not decor but is by far the softest thing down here */
 var SOFT_WATER = 0.35;
@@ -414,6 +428,10 @@ var PILLARS_MAX = 4;
    roll: a stone is worth almost nothing, so it never won that lottery and
    a runed one turned up about once in sixty floors. */
 var AMMO_PILES_MIN = 0, AMMO_PILES_MAX = 2;
+/* Of those piles, how many are arrows: the rest are stones.  A stone is
+   the weapon you have before you have found one, so there are a few more
+   of them than there are arrows. */
+var AMMO_ARROW_PCT = 44;
 /* dynamite: hard to come by, and it hurts whatever is beside it */
 var DYNAMITE_DAMAGE = [4, 8];
 var DYNAMITE_CHEST_PCT = 16, DYNAMITE_FLOOR_PCT = 9;
@@ -439,9 +457,180 @@ var LEP_RING_PCT = 12;
 var DEAD_END_MIN = 8;
 /* how often a room is cut in two by a stream, and how often by a gap in
    the floor.  Either way a bridge is laid across it. */
-var STREAM_CHANCE = 9, CHASM_CHANCE = 6;
-/* how often a room has a rug laid in the middle of it, and how big */
-var RUG_CHANCE = 26, RUG_MIN = 2, RUG_MAX = 5;
+/* How often a room is offered a stream or a chasm across it.  These are
+   attempts, not results: addStream refuses a room that is too small, too
+   ragged, or already has something standing in the way, and it turns
+   about one attempt in six into a real crossing.  The chasm number was
+   6, which came out at one room in a hundred - about half of what it
+   takes to meet one in a run.  33 puts it at one room in twenty five. */
+var STREAM_CHANCE = 9, CHASM_CHANCE = 33;
+/* ------------------------------------------------------ lightning
+   How the wand of lightning draws itself: shades of blue, dark to
+   bright, a few pixels of wander to each side of the straight line, and
+   a re-draw every sixth of a second so the current crawls. */
+var BOLT_GLOW = '#12277a', BOLT_BLUE = '#3f7bf5',
+    BOLT_PALE = '#9fd4ff', BOLT_CORE = '#eaf6ff';
+var BOLT_WOBBLE = 3.2, BOLT_SEGS_PER_SQ = 1, BOLT_FLICKER_MS = 60;
+/* ------------------------------------------------ light thrown about
+   Fire and lightning light the room they are in.  A flame lights the
+   square it stands on and the four beside it, and the four corners half
+   as brightly - which is what makes the pool of light read as round
+   rather than as a square.  An explosion is bigger: full brightness one
+   square out, and half a square beyond that, corners included.  A bolt
+   of lightning lights one square about it like a flame, in blue.
+
+   Two things happen on a lit square: what is drawn there is brought up
+   towards full brightness, so a dark room really does light up, and a
+   wash of the light's own colour is laid over it, so it reads in a room
+   that was already lit. */
+var GLOW_FULL = 1, GLOW_HALF = 0.5;
+/* How much the light of a fire or a current varies from square to
+   square.  A row of squares lit by the same jet of flame all came out at
+   exactly the same brightness, which reads as a painted band rather than
+   as firelight.  A lamp does not do this: a steady light is steady. */
+var GLOW_VARY = 0.2;
+/* A beam is halved to begin with - it is a light in the air, not a fire
+   on the floor - so the same share of a smaller number is a difference
+   nobody can see.  It varies further, and it varies over time as well:
+   the current itself is redrawn crackling every few frames, and its
+   light crackling with it is the same thing said twice.  Slowly enough
+   to read as crackle rather than as a strobe. */
+var GLOW_VARY_BEAM = 0.45, GLOW_BEAM_MS = 110;
+/* How often a flame swaps to its other tile.  The light it throws is
+   dealt again on the same beat and not between them: fire that changed
+   brightness while the flame stood still would be a lamp with a loose
+   connection, and fire that stood still while the flame changed would be
+   the light of something that is not there. */
+var FIRE_ANIM_MS = 120;
+var GLOW_FIRE = '#ff8c2a', GLOW_BLAST = '#ffc266', GLOW_BOLT = '#5aa0ff';
+var GLOW_WASH = 0.18;
+/* A beam out of a wand is a light in the air rather than a fire on the
+   floor: half of what the same thing burning would throw, and gone the
+   instant the beam is. */
+var GLOW_BEAM = 0.5;
+/* A rune of light is a lamp you carry: two squares of it full and half a
+   square more beyond that.  Measured as the crow flies rather than
+   corner to corner, so the pool is round - and the full ring is set a
+   little past two so that the square two along and one up is inside it
+   rather than clipped off, which is what stops it reading as a cross. */
+var GLOW_LAMP = '#ffe9a8', LAMP_FULL = 2.3, LAMP_HALF = 3;
+/* how long the flash of something going up is on the screen */
+var BLAST_FLASH_MS = 320;
+/* A sheet of flame out of a wand is on the screen a little longer than a
+   bolt of lightning: it is a slower thing to look at. */
+var FIRE_BEAM_LIFE = 380;
+var BOLT_FORK_MIN = 3, BOLT_FORK_MAX = 7, BOLT_SLIP = 2.4;
+/* The wand of fire is drawn the same way and reads as a different thing
+   entirely: a sheet of flame runs almost straight down the row - a third
+   of the bolt's swing, twice as many points, so it ripples rather than
+   zigzags - and it licks off the side of itself constantly instead of
+   forking now and then.  Red at the edge, orange through it, and a pale
+   yellow core, which is a fire seen end on. */
+var FIRE_GLOW = '#6e1503', FIRE_MID = '#ef6d16',
+    FIRE_PALE = '#ffb347', FIRE_CORE = '#ffe9a0';
+var FIRE_WOBBLE = 1.1, FIRE_SEGS_PER_SQ = 2, FIRE_FLICKER_MS = 45;
+var FIRE_FORK_MIN = 2, FIRE_FORK_MAX = 5, FIRE_SLIP = 1.2;
+/* Each beam, gathered: how crooked, how often it licks out, and the
+   three passes it is drawn in, dark and wide to bright and thin. */
+var BEAMS = {
+  lightning: { wobble: BOLT_WOBBLE, segs: BOLT_SEGS_PER_SQ, slip: BOLT_SLIP,
+               flicker: BOLT_FLICKER_MS, forkEvery: 3, forkOdds: 0.35,
+               forkMin: BOLT_FORK_MIN, forkMax: BOLT_FORK_MAX, fork: BOLT_PALE,
+               passes: [[2, BOLT_GLOW], [1, BOLT_BLUE], [0, BOLT_CORE]] },
+  fire:      { wobble: FIRE_WOBBLE, segs: FIRE_SEGS_PER_SQ, slip: FIRE_SLIP,
+               flicker: FIRE_FLICKER_MS, forkEvery: 2, forkOdds: -0.2,
+               forkMin: FIRE_FORK_MIN, forkMax: FIRE_FORK_MAX, fork: FIRE_PALE,
+               passes: [[2, FIRE_GLOW], [1, FIRE_MID], [0, FIRE_CORE]] }
+};
+/* and how far it reaches: to the first wall, however far off that is,
+   where every other wand stops after fourteen squares */
+var BOLT_BEAM_LIFE = 340;
+/* How often a room has a rug laid in the middle of it, and how big.  The
+   rug is one Persian design, four squares across and six down, and no
+   rug is bigger than the design it is cut from - four squares the short
+   way, six the long way.  A rug is always woven taller than it is wide;
+   one lying across a room is that same rug turned a quarter circle.  The
+   smallest rug woven is two squares by three; nothing is ever two by
+   two. */
+var RUG_CHANCE = 26, RUG_MIN = 2, RUG_MIN_LONG = 3;
+var RUG_MAX_SHORT = 4, RUG_MAX_LONG = 6;
+
+/* The design is symmetrical both ways, so it is painted a quarter at a
+   time: the two left columns of the three top rows, six tiles in all,
+   and the other three quarters are those same tiles laid mirrored.
+   Column 0 is the border, column 1 the middle of a four-wide rug; row 0
+   is the border, row 1 the field, row 2 the middle, where the medallion
+   is.
+
+   A three-wide rug has a middle column with no twin to mirror against,
+   so it has three tiles of its own - column 'c'.  They run down the
+   spine of the rug and are never turned over left to right.  A rug woven
+   an odd number of tiles tall has a middle row in the same position, and
+   'rug_c1' is painted for it: the middle row of the design where it has
+   to stand on its own instead of folding against its twin. */
+var RUG_TILES = ['rug_00', 'rug_01', 'rug_0c',
+                 'rug_10', 'rug_11', 'rug_1c',
+                 'rug_20', 'rug_21', 'rug_2c',
+                 'rug_c1'];
+
+/* And a rug is symmetrical both ways too, whatever size it is, so a rug
+   is written out a quarter at a time as well: its top left corner, down
+   to and including its middle row and middle column.  Every other square
+   of it is one of those, mirrored - which is what makes the pattern meet
+   itself instead of repeating.
+
+   Each entry is [row, column] of the tile above.  Which tiles a small
+   rug is cut from is a matter of taste rather than arithmetic - the
+   medallion has to end up in the middle whether there are six rows to
+   play with or two - so every size is written out on its own line and
+   changing one changes nothing else.  A rug two squares wide has no
+   border columns: it is the middle of the design, and its quarter is
+   one column.
+
+   Every rug here is woven taller than it is wide, because that is how a
+   rug is woven.  One lying across a room is one of these turned a
+   quarter circle; there is no such thing as a wide design. */
+var RUG_CUT = {
+  /* the medallion, and as much border round it as there is room for.
+     Nothing smaller than two by three is ever woven. */
+  '2x3': [[[0, 1]], [['c', 1]]],
+  '2x4': [[[0, 1]], [[2, 1]]],
+  /* tall enough for the design itself: border, field, middle */
+  '2x5': [[[0, 1]], [[1, 1]], [['c', 1]]],
+  '2x6': [[[0, 1]], [[1, 1]], [[2, 1]]],
+
+  '3x3': [[[0, 0], [0, 'c']], [[2, 0], [1, 'c']]],
+  '3x4': [[[0, 0], [0, 'c']], [[1, 0], [2, 'c']]],
+  '3x5': [[[0, 0], [0, 'c']], [[1, 0], [1, 'c']], [[2, 0], [1, 'c']]],
+  '3x6': [[[0, 0], [0, 'c']], [[1, 0], [1, 'c']], [[2, 0], [2, 'c']]],
+
+  '4x4': [[[0, 0], [0, 1]], [[1, 0], [2, 1]]],
+  '4x5': [[[0, 0], [0, 1]], [[1, 0], [1, 1]], [[2, 0], ['c', 1]]],
+  '4x6': [[[0, 0], [0, 1]], [[1, 0], [1, 1]], [[2, 0], [2, 1]]]
+};
+/* The name of one square of a rug: which tile, which way it was turned
+   over as it was laid, and whether the whole rug is lying across the
+   room rather than up and down it. */
+function rugTileName(row, col, mirrorX, mirrorY, turned) {
+  return 'rug_' + row + col + (mirrorX ? 'h' : '') + (mirrorY ? 'v' : '') +
+         (turned ? 'r' : '');
+}
+/* Which square of the quarter a square of the rug is, and whether it is
+   mirrored to get there.  Counting from both ends and taking the nearer
+   is what folds the rug: the middle row or column of an odd-sized rug is
+   its own reflection and goes down as it was painted. */
+function rugSquareName(cut, dx, dy, rw, rh, turned) {
+  var qx = Math.min(dx, rw - 1 - dx), qy = Math.min(dy, rh - 1 - dy);
+  var t = cut[qy][qx];
+  return rugTileName(t[0], t[1], dx > rw - 1 - dx, dy > rh - 1 - dy, turned);
+}
+/* A rug is woven upright and then laid down, so a rug wider than it is
+   tall is an upright one turned a quarter circle clockwise.  This is the
+   square of the upright rug that ends up at (dx, dy) of the rug on the
+   floor: turning it back the other way. */
+function rugUpright(dx, dy, rw, rh) {
+  return (rw > rh) ? [dy, rw - 1 - dx] : [dx, dy];
+}
 /* and how many simply stand their post instead of walking a round */
 var STILL_PCT = 30;
 /* Coming at something that has not seen you is the whole point of
@@ -490,6 +679,9 @@ var WITCH_FLASK_CLEAR = 2;
 var WITCH_SPIDER_RANGE = 5;    /* how far off she can call one up */
 var WITCH_SPIDER_WAIT = 2;     /* turns after hers dies before she calls another */
 var WITCH_ROCK_RANGE = 7, WITCH_ROCK_DAMAGE = [2, 5];
+/* She carries a pocketful, not a quarry.  Ten stones, and the ones that
+   go wide are lying on the floor afterwards for whoever wants them. */
+var WITCH_STONES = 10;
 /* and what she is sometimes carrying when she goes */
 var WITCH_RING_PCT = 30;
 /* The ring off her finger: a spider of your own, one at a time, and a
@@ -535,6 +727,17 @@ var BARREL_DAMAGE = [6, 10];  /* a barrel of powder, not a stick */
    squares, walls included, and lights any other barrel it reaches - so a
    powder room comes down in a cascade you can watch and outrun. */
 var BARREL_FUSE = 1, BARREL_BLAST = 2;
+/* What a barrel leaves behind it.  A few squares still burning for a
+   turn or two, and a cloud of smoke hanging over the spot - which is
+   the poison cloud's own machinery, in grey, and nothing like as
+   unkind: it stings the eyes rather than the lungs. */
+var BARREL_FIRES_MIN = 2, BARREL_FIRES_MAX = 5;
+var BARREL_FIRE_TURNS_MIN = 1, BARREL_FIRE_TURNS_MAX = 2;
+var SMOKE_TURNS_MIN = 4, SMOKE_TURNS_MAX = 7;
+var SMOKE_DAMAGE = [1, 2];
+var SMOKE_COL = '#8a8f9c';
+/* and the flash of it reaches further than a flask of fire does */
+var BLAST_LIGHT_FULL = 2, BLAST_LIGHT_HALF = 4;
 /* and it goes off as a disc rather than a box: two squares straight out,
    one on the diagonals.  Squared, so the shape does not have to be
    written down twice. */
@@ -546,6 +749,26 @@ var SPELL_FIRE_MIN = 1, SPELL_FIRE_MAX = 2;
    the place here and there, which turns an ordinary room into somewhere
    worth thinking about before you throw fire around in it. */
 var STRAY_BARREL_DEPTH = 2, STRAY_BARREL_PCT = 55, STRAY_BARREL_MAX = 3;
+/* ------------------------------------------------------- trapdoors
+   A door in the floor, hidden, with a cellar under it: one to three
+   small rooms that are not a floor of the dungeon and do not count as
+   one.  Whoever built them meant to keep something, so the room
+   furthest from the way in is worth the walk.
+
+   About one floor in four has one, and one in three of those is under a
+   rug - which means it cannot be found at all until the rug has burned
+   away, and that is the whole point of it. */
+var TRAPDOOR_PCT = 26, TRAPDOOR_UNDER_RUG_PCT = 34;
+var CELLAR_ROOMS_MIN = 1, CELLAR_ROOMS_MAX = 3;
+var CELLAR_ROOM_MIN = 3, CELLAR_ROOM_MAX = 6;
+var CELLAR_DARK_PCT = 80;          /* how many of its rooms are pitch dark */
+var CELLAR_LONG_HALL_PCT = 30;     /* a long walk to the last room */
+var CELLAR_HALL_MIN = 8, CELLAR_HALL_MAX = 16;
+var CELLAR_GRAND_PCT = 25;         /* the treasure room large, and lit */
+var CELLAR_GRAND_MIN = 7, CELLAR_GRAND_MAX = 10;
+var CELLAR_RING_PCT = 34;          /* a ring in the hoard */
+var CELLAR_HOARD_MIN = 2, CELLAR_HOARD_MAX = 4;
+var CELLAR_GOLD_MIN = 60, CELLAR_GOLD_MAX = 240;
 
 /* Scenery that burns: wood and cloth.  Fire takes a turn longer over one
    of these than it does over bare stone, and then the thing is gone.
@@ -554,14 +777,26 @@ var STRAY_BARREL_DEPTH = 2, STRAY_BARREL_PCT = 55, STRAY_BARREL_MAX = 3;
 var BURNS = { table: 'table', chair: 'chair', moss: 'moss', moss_b: 'moss',
               moss2: 'moss', moss3: 'moss', moss4: 'moss', web: 'web' };
 var BURNS_PLURAL = { table: 'tables', chair: 'chairs', rug: 'rugs', moss: 'moss',
-                     web: 'webs' };
+                     web: 'webs', bridge: 'bridges' };
 /* the order to name them in when several go at once */
-var BURNS_ORDER = ['table', 'chair', 'rug', 'moss', 'web'];
+var BURNS_ORDER = ['table', 'chair', 'rug', 'moss', 'web', 'bridge'];
 /* Web is the one thing fire jumps to on its own.  Everything else has to
    be standing in the flame; a patch of web catches from the square
    beside it and is gone in a turn or two, so a fire in a nest of it runs
    right through the lot. */
 var WEB_BURN_MIN = 2, WEB_BURN_MAX = 3;
+/* A bridge is a few planks over a drop.  Set light to one and it is gone
+   in a turn or two - and then there is a hole where your way home was,
+   which is the whole reason for burning one and the whole reason for not
+   standing on it while it burns. */
+var BRIDGE_BURN_MIN = 2, BRIDGE_BURN_MAX = 3;
+/* the flame that lights a thing, as against how long the thing burns */
+var IGNITE_TURNS = 1;
+/* A flask of water thrown at the floor is a flask of water: it breaks
+   and the water goes somewhere.  One to four squares of it, and it
+   dries again after a while - a puddle is not a pool. */
+var PUDDLE_MIN = 1, PUDDLE_MAX = 4;
+var PUDDLE_TURNS_MIN = 12, PUDDLE_TURNS_MAX = 20;
 /* What somebody put in a room, as against what the room is made of.  A
    room chosen to be something in particular clears the first and leaves
    the second: a stone kerb round a pool and cracked flagstones round a
@@ -594,15 +829,24 @@ var WEAKNESS_MULT = 2;
 var FIREBALL_EVERY = 3, FIREBALL_RANGE = 7, FIREBALL_DAMAGE = [3, 5];
 /* The web spinner: how often it can spit, how far the web carries, how
    long it holds you, and how long a patch of it lies on the floor. */
-/* The web spinner works to a round of five turns, in two parts.
+/* The web spinner keeps her distance and spits: two webs a turn, and a
+   step back if you come within SPIN_KEEP of her.  She has no interest in
+   a fight she has not already won.
 
-   The first two turns it spits, and does nothing else with them.  Then
-   it has three turns to close with you: it walks and it bites, an
-   ordinary turn at a time.  If it cannot be on you inside those three -
-   asked once, at the top of them - it spends the first on one more web
-   and forfeits the other two, because there is nothing else it can do to
-   somebody it cannot reach. */
-var WEB_SPIT_TURNS = 2, WEB_RUSH_TURNS = 3, WEB_RANGE = 6;
+   The moment you are stuck in one of them she has won it, and she comes
+   in - six actions' worth of legs, one bite, and out again with whatever
+   is left over, back to spitting from across the room.  Which is what
+   the web is for: not the damage, the invitation. */
+/* One web every other turn: she has to gather it before she can spit
+   again, which is what makes closing with her possible at all. */
+var SPIN_SPITS = 1, WEB_EVERY = 2;
+var SPIN_POINTS = 6, SPIN_KEEP = 3, WEB_RANGE = 6;
+/* What each of those points is worth on the clock, as a share of a beat.
+   A stride takes MOVE_ANIM_MS to cross the square, so this has to be
+   longer than that or one step starts before the last has finished - and
+   it has to be a good deal shorter than a whole beat, or a six point
+   round takes three seconds. */
+var SPIN_STEP = 0.3;
 /* A spinner does not wander the floor.  It sits in the corner of a room
    in a nest of its own web, three or four squares of it spreading out
    from the angle of the walls - so you meet the web before you meet the
@@ -650,15 +894,48 @@ var FOODS = [
   /* the old mold ball, still the thing you eat when there is nothing else */
   { n: 'mold ball', pl: 'mold balls', feed: [700, 300], p: 14, w: 4,
     s: 'fruit', line: 'Yuk, this tastes awful.', col: 'g' },
-  { n: 'mushroom', pl: 'mushrooms', feed: [320, 140], p: 20, w: 2,
-    s: 'mushroom', line: 'Earthy, and gone in two bites.', col: 'G' },
+  /* Five mushrooms grow down here and only one of them is only food.
+     They are told apart by their colour, and which colour does what is
+     dealt afresh every run the way a potion's is - so a red mushroom is
+     a red mushroom and nothing more until somebody eats one.  `mush` is
+     what it does; the name is what you call it once you know. */
+  { n: 'mushroom', pl: 'mushrooms', feed: [320, 140], p: 11, w: 2,
+    s: 'mushroom', line: 'Earthy, and gone in two bites.', col: 'G', mush: 'food' },
+  { n: 'sickening mushroom', pl: 'sickening mushrooms', feed: [180, 100], p: 5, w: 2,
+    s: 'mushroom', line: 'It goes down like wet ash.', col: 'g', mush: 'poison' },
+  { n: 'ghost mushroom', pl: 'ghost mushrooms', feed: [180, 100], p: 5, w: 2,
+    s: 'mushroom', line: 'Cold, and faintly sweet.', col: 'c', mush: 'unseen' },
+  { n: 'berserker mushroom', pl: 'berserker mushrooms', feed: [180, 100], p: 5, w: 2,
+    s: 'mushroom', line: 'It burns going down.', col: 'R', mush: 'rage' },
+  { n: 'ember mushroom', pl: 'ember mushrooms', feed: [180, 100], p: 5, w: 2,
+    s: 'mushroom', line: 'Peppery, and warm all the way down.', col: 'O', mush: 'fireproof' },
   { n: 'handful of berries', pl: 'handfuls of berries', feed: [260, 140], p: 22, w: 2,
     s: 'berries', line: 'Sharp and sweet. Hardly a meal.', col: 'G' }
 ];
 var FOOD_MAX = 2000;
+/* The five looks a mushroom can wear, and the word for each.  Dealt out
+   afresh every run, so nothing is learned by looking. */
+var MUSH_LOOKS = ['mushroom', 'mush_b', 'mush_y', 'mush_p', 'mush_g'];
+var MUSH_COLOUR = { mushroom: 'red', mush_b: 'blue', mush_y: 'yellow',
+                    mush_p: 'purple', mush_g: 'green' };
+/* how long the ones that do something last, and what they are worth */
+var MUSH_TURNS = 20;
+var MUSH_RAGE_STR = 3;             /* a berserker mushroom, in strength */
+var MUSH_POISON = [2, 4];          /* and what a bad one takes off you */
 /* what a potion of nourishment is worth: more than a snack, less than a
    ration, and it does not take up a hand to carry */
 var POTION_FEED = [520, 200];
+/* Every flask is a mouthful of liquid, whatever the magic in it, and a
+   mouthful is worth something when food is this scarce.  A little over
+   a hundred turns of walking - a sip, not a meal. */
+var POTION_SIP = 120;
+/* Something to eat turned up on about one floor in eight, which is not
+   enough to live on: a run that found no rations starved however well
+   it was played.  A quarter of floors now have a snack lying about on
+   top of whatever the general run of loot happens to be - a mushroom or
+   a handful of berries, not a ration.  Rations stay as rare as they
+   were, so a proper meal is still a find. */
+var FLOOR_SNACK_PCT = 25;
 
 var POTIONS = [
   { n: 'confusion', p: 7, w: 5, hurl: 'daze' },
@@ -829,7 +1106,7 @@ var WEAPONS = [
     ammo: 'arrow', shot: [3, 5], fly: 'arrow', two: 1, reach: 5, minDepth: 5 },
   /* No bow needed, and a little softer than one: a stone is what you
      have before you find anything better. */
-  { n: 'stone', d: [1, 3], p: 16, w: 1, s: 'stone', grp: 1, pile: [1, 2],
+  { n: 'stone', d: [1, 3], p: 16, w: 1, s: 'stone', grp: 1, pile: [1, 3],
     thrown: 1, shot: [1, 2] },
   { n: 'blasting stone', d: [1, 3], p: 2, w: 60, s: 'stone_blast', grp: 1,
     pile: [1, 1], thrown: 1, shot: [1, 2], rune: 'blast' },
@@ -842,7 +1119,13 @@ var WEAPONS = [
   { n: 'burning stone', d: [1, 3], p: 2, w: 65, s: 'stone_fire', grp: 1,
     pile: [1, 1], thrown: 1, shot: [1, 2], rune: 'fire' },
   { n: 'freezing stone', d: [1, 3], p: 2, w: 65, s: 'stone_ice', grp: 1,
-    pile: [1, 1], thrown: 1, shot: [1, 2], rune: 'ice' }
+    pile: [1, 1], thrown: 1, shot: [1, 2], rune: 'ice' },
+  /* And one that carries a current.  On dry stone it jolts what it hits
+     and nothing else; thrown into water it lights up the whole of it,
+     which is a fine thing to do to a room full of wading creatures and a
+     poor thing to do to the pond you are standing in. */
+  { n: 'shocking stone', d: [1, 3], p: 2, w: 70, s: 'stone_shock', grp: 1,
+    pile: [1, 1], thrown: 1, shot: [1, 2], rune: 'shock' }
 ];
 /* Every worn thing now stores PROTECTION POINTS: bigger is better, and a
    breastplate finally beats a leather jerkin. */
@@ -854,7 +1137,12 @@ var ARMORS = [
   { n: 'chain mail', gen: 'coat', a: 5, p: 12, w: 75, s: 'armor_c' },
   { n: 'splint mail', gen: 'coat', a: 6, p: 10, w: 80, s: 'armor_p' },
   { n: 'banded mail', gen: 'coat', a: 6, p: 10, w: 90, s: 'armor_p' },
-  { n: 'plate mail', gen: 'coat', a: 7, p: 5, w: 150, s: 'armor_p' }
+  { n: 'plate mail', gen: 'coat', a: 7, p: 5, w: 150, s: 'armor_p' },
+  /* Not made by any smith.  It turns a blade like banded mail and there
+     is nothing in it for water to bite on, so a rust trap and an aquator
+     both come away with nothing.  Rare, and worth a good deal. */
+  { n: 'glass armor', gen: 'coat', a: 6, p: 4, w: 380, s: 'armor_glass',
+    norust: 1 }
 ];
 var HEADS = [
   { n: 'leather cap', gen: 'helm', a: 1, p: 24, w: 20, s: 'cap' },
@@ -936,7 +1224,7 @@ var RINGS = [
 ];
 
 var THINGS = [
-  { t: 'potion', p: 32 }, { t: 'scroll', p: 30 }, { t: 'food', p: 10 },
+  { t: 'potion', p: 32 }, { t: 'scroll', p: 30 }, { t: 'food', p: 14 },
   { t: 'weapon', p: 6 }, { t: 'armor', p: 5 }, { t: 'wand', p: 5 },
   { t: 'head', p: 4 }, { t: 'feet', p: 4 }, { t: 'shield', p: 4 },
   /* One of each in a whole run, so the chance of turning one up has to
@@ -991,7 +1279,13 @@ var RUNES = [
   /* Boots and shoes only, which is what the 'f' is for.  Running headlong
      in a fight is how you go over; in these you never do. */
   { n: 'sure footed', t: 'f', p: 10, txt: 'you never stumble in them',
-    eff: 'boots: you never stumble' }
+    eff: 'boots: you never stumble' },
+  /* --- blade or breastplate --- */
+  /* The one enchantment that cannot keep itself secret: it shines, and
+     you are carrying it.  Two squares of light about you and a third
+     half lit, which is a lamp rather than a torch. */
+  { n: 'light', t: 'wg', p: 7, txt: 'it glows in the dark',
+    eff: { w: 'blade glows: lit, easily seen', g: 'armor glows: lit, easily seen' } }
 ];
 var RUNE_BY_NAME = {};
 (function () { for (var i = 0; i < RUNES.length; i++) RUNE_BY_NAME[RUNES[i].n] = RUNES[i]; })();
@@ -1049,6 +1343,7 @@ TILE_INFO[WATER]    = ['Water. Wading costs you every', 'second step, and it car
 TILE_INFO[HOLY]     = ['A holy spring. Standing in it', 'mends you.'];
 TILE_INFO[HOLE]     = ['A hole clean through the floor.', 'Step in and you fall.'];
 TILE_INFO[BRIDGE]   = ['A plank bridge over the gap.'];
+TILE_INFO[TRAPDOOR] = ['A trapdoor in the floor.', 'Press ENTER to go down.'];
 TILE_INFO[BARS]     = ['Iron bars. You can see through', 'them and nothing breaks them.'];
 TILE_INFO[ICEWALL]  = ['A wall of ice. It will melt.'];
 TILE_INFO[FIREWALL] = ['A sheet of flame. You can see', 'and shoot through it.'];
@@ -1086,7 +1381,7 @@ function wallVariant(x, y) {
 }
 
 var RUNE_STONE_SPRITES = ['stone_blast', 'stone_slow', 'stone_return',
-                          'stone_fire', 'stone_ice'];
+                          'stone_fire', 'stone_ice', 'stone_shock'];
 var WAND_SPRITES = ['wand', 'wand2', 'wand3'];
 var STAFF_SPRITES = ['staff', 'staff2'];
 
@@ -1123,18 +1418,22 @@ var DECOR_INFO = {
   chair:   ['A chair, long since abandoned.'],
   kerb:    ['Dressed stone round the spring.'],
   barrel:  ['A barrel of black powder.', 'Fire or a blast sets it off.'],
-  web:     ['Sticky web across the floor.', 'Whatever steps in it stops.'],
-  rug_nw:  ['An old, dusty rug.'],
-  rug_n:   ['An old, dusty rug.'],
-  rug_ne:  ['An old, dusty rug.'],
-  rug_w:   ['An old, dusty rug.'],
-  rug_c:   ['An old, dusty rug.'],
-  rug_c2:  ['An old, dusty rug.'],
-  rug_e:   ['An old, dusty rug.'],
-  rug_sw:  ['An old, dusty rug.'],
-  rug_s:   ['An old, dusty rug.'],
-  rug_se:  ['An old, dusty rug.']
+  web:     ['Sticky web across the floor.', 'Whatever steps in it stops.']
+  /* and the rug, whose squares are named just below */
 };
+
+/* Every square a rug can be laid from: nine tiles, each of which may go
+   down mirrored one way, the other or both, and with the whole rug lying
+   across the room rather than up and down it.  They all read and land
+   the same, so the words and the softness are written once and shared. */
+(function () {
+  var t, f, r, n;
+  for (t = 0; t < RUG_TILES.length; t++) for (f = 0; f < 4; f++) for (r = 0; r < 2; r++) {
+    n = RUG_TILES[t] + (f & 1 ? 'h' : '') + (f & 2 ? 'v' : '') + (r ? 'r' : '');
+    DECOR_INFO[n] = ['An old Persian rug.'];
+    SOFT_LANDING[n] = [0.15, 'You land on an old rug. It takes some of it.'];
+  }
+})();
 
 /* what is written on each kind of trap when you have found it */
 var TRAP_INFO = {
@@ -1190,7 +1489,7 @@ var MONS = [
   { c: 'N', n: 'nymph', smart: 1, lv: 3, xp: 37, ar: 9, d: [[1, 1]], sp: 'stealitem' },
   { c: 'O', n: 'orc', smart: 1, lv: 2, xp: 7, ar: 6, d: [[1, 6]], greedy: 1 },
   { c: 'P', n: 'phantom', swim: 1, lv: 8, xp: 120, ar: 3, d: [[4, 4]], invis: 1 },
-  { c: 'Q', n: 'quagga', lv: 3, xp: 15, ar: 3, d: [[1, 5]], mean: 1 },
+  { c: 'Q', n: 'skeleton', lv: 3, xp: 15, ar: 3, d: [[1, 5]], mean: 1 },
   { c: 'R', n: 'rattlesnake', swim: 1, lv: 2, xp: 9, ar: 3, d: [[1, 6]], mean: 1, sp: 'weaken' },
   { c: 'S', n: 'snake', swim: 1, lv: 1, xp: 2, ar: 5, d: [[1, 4]], mean: 1, nodrop: 1, hpMul: 0.85 },
   { c: 'T', n: 'troll', lv: 6, xp: 120, ar: 4, d: [[1, 8], [1, 8], [2, 6]], mean: 1, regen: 1 },
@@ -1215,8 +1514,7 @@ var MONS = [
      closing, and what it does not stick to you it leaves on the floor
      for you to walk into later. */
   { c: 'w', n: 'web spinner', lv: 1, xp: 6, ar: 8, d: [[1, 4]],
-    hpMul: 0.75, dmgMul: 0.9, sp: 'web', minDepth: 2, weaver: 1,
-    spitTurns: WEB_SPIT_TURNS, rushTurns: WEB_RUSH_TURNS },
+    hpMul: 0.75, dmgMul: 0.9, sp: 'web', minDepth: 2, weaver: 1, spinner: 1 },
   /* A witch keeps her distance and never closes: no melee at all, and
      every trick she has works across a room.  Fire goes through her and
      frost does not touch her. */
@@ -1243,7 +1541,7 @@ var MON_INFO = {
   N: ['A nymph. She takes something', 'from your pack and vanishes.'],
   O: ['An orc. It goes out of its way', 'for gold lying on the floor.'],
   P: ['A phantom. Invisible unless you', 'can see invisible things.'],
-  Q: ['A quagga. It charges, and it', 'is faster than it looks.'],
+  Q: ['A skeleton. It charges, and it', 'is faster than it looks.'],
   R: ['A rattlesnake. Its venom saps', 'your strength for good.'],
   S: ['A snake. Common, and it swims.'],
   T: ['A troll. It heals as fast as you', 'can cut it, and hits like a cart.'],
@@ -1303,9 +1601,9 @@ var HINTS = [
   'Throwing a rock at a trap sets it off from a safe distance.',
   'Potions can be thrown. A potion of blindness will blind what it hits, and a healing potion will heal it, so aim with care.',
   "It's much safer to identify objects with a scroll than to try them on yourself.",
-  'You get one chance to try and study an unknown blade or piece of armour, but wisdom is needed to successfully identify an object \u2014 at the wisdom you start with, you will usually learn nothing.',
+  'You get one chance to try and study an unknown blade or piece of armour, but wisdom is needed to successfully identify an object. At the wisdom you start with, you will usually learn nothing.',
   'A rusty blade and a rusty coat tell you nothing about what they are worth. Put a thing on to find out - and find out at the same time whether it comes off again.',
-  'Every long sword in a run looks alike until you handle one. Find a second of something you have worn and you will know it on sight.',
+  'Every long sword in a run looks alike until you handle one, but once you know a sword, you will know another one of the same kind at a glance.',
   'A full pack does not mean walking over a breastplate. Stand on it and press ENTER to put it on: what you were wearing goes down in its place.',
   'Not every way between two rooms has a door in it. An opening lets sight, arrows and light through - which is worth knowing before you back through one.',
   'Press ? to look around. Move the cursor over anything and the game will tell you what it is.',
@@ -1333,8 +1631,198 @@ var HINTS = [
   'A cursed thing you cannot take off may carry a curse of its own. The shrine lifts both at once, and so does a scroll of remove curse.',
   'It might be worth it to return to an upper floor to use a moss cave or healing water if your character is low on HP.',
   'Playing on a computer? Use the keys instead of the mouse for a more authentic retro experience.',
-  'A centaur never stumbles.'
+  'A centaur never stumbles.',
+  'Glass armour turns a blade as well as banded mail, and there is nothing in it for rust to bite on.',
+  'Something of light glows in the dark. You will know it the moment you put it on.',
+  'A fire is a light. One burning at the far end of a black hall is a thing you can see from here.',
+  'There are doors in the floor of some rooms. Look about you and you may find one - and what is under it.',
+  'Press T to read the log. Every line the game has said this run is in there, and the arrows walk you back through it.',
+  'The keys are worth learning: ? reads the square under the cursor, T reads the log, TAB opens the pack, SPACE waits a turn and ESC gets you out of anything.',
+  'ESC opens the menu, and the help screen in it lists every key. It is one screen long and worth a look.'
 ];
+
+
+/* ------------------------------------------------------------- lore
+   What a thing looks and feels like in the hand, for the box that opens
+   when you inspect it.  The panel beside the pack says what a thing
+   does; this says what it is.  One or two sentences each - the box
+   wraps them, and anything much longer stops being flavour and starts
+   being a manual.
+
+   Keyed by name within each kind.  Anything with no line of its own
+   falls back to LORE_KIND, and anything you have not identified is
+   described by what you can actually see of it - see itemLore. */
+var LORE = {
+  potion: {
+    'confusion': 'A flask that will not sit still in the hand. Whatever is in it seems to be arguing with itself.',
+    'hallucination': 'The liquid runs through every colour there is, and one or two there are not.',
+    'poison': 'A dull green brew with a sediment. It smells of almonds and old water.',
+    'gain strength': 'Thick and dark, like beef stock left too long on the fire.',
+    'gain dexterity': 'Clear and thin, and it moves faster in the flask than it ought to.',
+    'gain wisdom': 'Still and grey. Looking into it feels like being asked a question.',
+    'see invisible': 'A pale wash with flecks in it that vanish when you look straight at them.',
+    'fire shield': 'Warm through the glass. Something in it is turning over slowly.',
+    'healing': 'A clean red brew that smells faintly of iron and herbs.',
+    'monster sight': 'Black, and quite still, and it seems to be listening.',
+    'magic detection': 'It glitters when it is moved, like water with something dissolved in it.',
+    'raise level': 'Gold, and heavier than a flask this size has any business being.',
+    'extra healing': 'The same clean red, but brighter, and it seems to give off a little of its own light.',
+    'liquid fire': 'It is not burning. It only looks as though it has just stopped.',
+    'haste self': 'The liquid is already moving before you touch the flask.',
+    'restore ability': 'Warm, faintly sweet, and it settles the moment it is still.',
+    'blindness': 'A flask of something so dark that it looks empty until it moves.',
+    'thirst quenching': 'Water, as far as anyone can tell. Somebody bottled it and stoppered it with care.',
+    'nourishment': 'Thick, brown and slow. It is a meal that somebody has gone to the trouble of pouring.',
+    'water': 'Ordinary water in an ordinary flask. Useful for what it puts out.',
+    'holy water': 'Clear water with a blessing said over it. There are things down here that cannot bear it.'
+  },
+  scroll: {
+    'monster confusion': 'The letters wander off their lines and have to be chased back.',
+    'magic mapping': 'A page of lines and corners that have not yet decided what they are a plan of.',
+    'hold monster': 'One word, written very large and very slowly, and pressed hard into the paper.',
+    'sleep': 'The writing is soft and even, and reading two lines of it is enough to yawn.',
+    'enchantment': 'A short verse in a careful hand, with the last word left blank for whatever you use it on.',
+    'greater enchantment': 'The same careful hand, but pages of it, and the ink is silver.',
+    'malediction': 'Somebody wrote this in a temper. The paper is scored through in places.',
+    'identify': 'A list of questions, and room underneath each one for the answer.',
+    'scare monster': 'A single sigil that is unpleasant to look at for long.',
+    'teleportation': 'The words are all present, but not in an order that holds still.',
+    'create monster': 'An invitation, politely worded, addressed to nobody in particular.',
+    'remove curse': 'A prayer, worn soft where somebody has run a thumb over it.',
+    'aggravate monsters': 'A page of noise: every line a shout set down in ink.',
+    'protect armor': 'A short charm for keeping the weather off metal.',
+    'summon aid': 'A name, written three times, and a promise underneath it.',
+    'light': 'The page is faintly warm, and brighter than the room it is read in.',
+    'blank paper': 'Good paper, and not a mark on it. Somebody meant to write something here.',
+    'charging': 'A diagram of something being filled from somewhere else.',
+    'fire shield': 'The edges of the page are scorched, and the scorching is part of the writing.',
+    'return': 'A short instruction, addressed to the reader, on the subject of going back.'
+  },
+  wand: {
+    'light': 'The tip is clouded, like glass with a lamp somewhere behind it.',
+    'darkness': 'The tip drinks the light off your own lamp and gives nothing back.',
+    'invisibility': 'Hard to keep hold of, and harder to keep looking at.',
+    'lightning': 'It prickles against the hand, and your hair lifts when you raise it.',
+    'fire': 'Warm along its whole length, and warmest at the far end.',
+    'cold': 'Cold enough to ache. It leaves a ring of frost on whatever it is laid on.',
+    'polymorph': 'The grain of it will not settle: wood one moment, horn the next.',
+    'magic missile': 'A plain rod with a worn grip. Somebody used this one a great deal.',
+    'haste monster': 'It trembles very slightly, all the time.',
+    'slow monster': 'Heavy out of all proportion to its size, and slow to lift.',
+    'drain life': 'The wood is dark and dry, and it is warm in a way you would rather it was not.',
+    'nothing': 'A well made rod of no particular power whatever. Somebody was cheated.',
+    'teleport away': 'The far end is hard to focus on, as though it were further off than the near end.',
+    'teleport to': 'It pulls very gently towards whatever you point it at.',
+    'cancellation': 'A grey rod that makes everything near it look a little more ordinary.',
+    'ice wall': 'Beaded with cold water, and it never dries.',
+    'fire wall': 'Blackened along one side, as though it had been laid in a hearth.',
+    'blink': 'It is never quite where your hand expects it.',
+    'discord': 'Two notes at once, always slightly out with each other.'
+  },
+  ring: {
+    'the untouched': 'A plain band worn smooth. Whoever had it before did not take it off.',
+    'fire': 'Set with a stone that holds a light of its own, and warm on the finger.',
+    'ice': 'The band is cold and stays cold, however long it is worn.',
+    'light': 'A dull stone until it is pressed, and then it is not dull at all.',
+    'the seer': 'The stone has no back to it. Looking in, you see the room behind you.',
+    'the unseen': 'You have to look twice to be sure it is still on your hand.',
+    'the witch': 'Fine silver, spun in a pattern that keeps drawing the eye round it again.',
+    'battle luck': 'Nicked and dented, and every nick is somebody else\'s bad luck.',
+    'the huntress': 'A hunting ring, cut with a bow and a running hare.'
+  },
+  weapon: {
+    'mace': 'A weight of iron on a shaft. It asks nothing of you but a strong arm.',
+    'long sword': 'A good blade of ordinary make, the sort a soldier carries and looks after.',
+    'dagger': 'Short, quick and easily hidden. Everybody down here has one.',
+    'spear': 'Reach, and a point on the end of it. Throw it and you can pick it up again.',
+    'throwing dagger': 'Balanced to leave the hand cleanly and come back to it afterwards.',
+    'battle axe': 'Heavy, and it wants to keep going once it is swung.',
+    'two handed sword': 'A great blade that needs both hands and a good deal of room.',
+    'short bow': 'A hunting bow, quick to draw and quiet.',
+    'arrow': 'A shaft, a head and three feathers. There are never enough of them.',
+    'long bow': 'A tall bow of yew that reaches further than the arm that draws it.',
+    'crossbow': 'Slow to wind and unkind to whatever it is pointed at.',
+    'great bow': 'A bow built for somebody larger than you. It draws hard and shoots harder.',
+    'stone': 'A stone. The oldest weapon there is, and it costs nothing.',
+    'blasting stone': 'Cut with a rune that has been holding its breath for a long time.',
+    'binding stone': 'The rune on it is a knot, drawn without lifting the tool.',
+    'returning stone': 'Marked all round with a line that runs back into itself.',
+    'burning stone': 'Warm, and the rune on it is the shape of a flame lying on its side.',
+    'freezing stone': 'Cold to the palm, and the marks on it look like frost on a window.',
+    'shocking stone': 'The hairs on your arm stand up near it. The rune is a line that forks.'
+  },
+  armor: {
+    'leather armor': 'Boiled hide, cut and stitched. It is light and tough. Definitely better than nothing.',
+    'studded leather': 'The same hide with iron studs through it, which is what stops a point.',
+    'ring mail': 'Iron rings sewn flat onto a leather coat. Noisy, and honest about it.',
+    'scale mail': 'Overlapping plates like a fish, and about as flexible.',
+    'chain mail': 'A shirt of linked rings that hangs like heavy cloth and turns an edge.',
+    'splint mail': 'Iron strips riveted to leather. It will take a great deal before it gives.',
+    'banded mail': 'Bands of iron over mail. Heavy, and worth the weight.',
+    'plate mail': 'A smith spent a season on this. Very little gets through it, including air.',
+    'glass armor': 'It is not glass and no smith made it. It is cold, clear and hard, and nothing corrodes it.'
+  },
+  head: {
+    'leather cap': 'A padded cap. It will not stop an axe, but it takes the sting out of a stone.',
+    'iron helmet': 'Plain iron with a leather liner, dented in one place.',
+    'horned helm': 'Impressive, heavy, and it announces you from three rooms away.',
+    'circlet of vision': 'A thin band with a clear stone set over the brow.',
+    'crown of might': 'Heavier than it looks, and wearing it straightens your back.',
+    'hood of the seeker': 'A close hood of dark cloth. Things hidden seem less well hidden in it.',
+    'sage circlet': 'A scholar\'s circlet, worn thin where a thumb has turned it.',
+    'helm of regrowth': 'Warm inside, and a cut healed under it closes faster than it should.'
+  },
+  feet: {
+    'sandals': 'Two soles and some straps. Better than bare feet, and only just.',
+    'leather boots': 'Good stout boots, well broken in.',
+    'iron boots': 'Shod with iron. Nothing crushes your toes, and nothing sneaks anywhere either.',
+    'elven boots': 'The soles make no sound at all, on stone or on anything else.',
+    'wanderer boots': 'Made for long roads. You eat less walking in them, which nobody can explain.',
+    'nimble boots': 'Light and close fitting, and your feet find the ground for you.',
+    'blinking sandals': 'They do not always leave from where they arrived.'
+  },
+  shield: {
+    'buckler': 'A small round shield strapped to the arm. Quick, and not much cover.',
+    'kite shield': 'Long and tapered, made to cover a man from shoulder to knee.',
+    'tower shield': 'A wall you carry. Slow to move and hard to get past.',
+    'warded shield': 'Painted with a sign that whatever it is meant for evidently respects.',
+    'mirror shield': 'Polished until it hurts to look at. Some things do not like their own reflection.'
+  },
+  food: {
+    'food ration': 'Hard bread, dried meat and something in wax paper. A proper meal.',
+    'mold ball': 'A pale lump of cave mold, pressed into a ball. It is food. That is all that can be said for it.',
+    'mushroom': 'A fat cave mushroom, earthy and gone in two bites.',
+    'sickening mushroom': 'A cave mushroom that should have been left where it grew.',
+    'ghost mushroom': 'Eat one and nothing down here can see you for a while.',
+    'berserker mushroom': 'It puts a red haze on everything, and strength behind your arm.',
+    'ember mushroom': 'Whatever grew this was growing in a fire, and did not mind.',
+    'handful of berries': 'Small, sharp and sweet. Hardly a meal, but they keep.'
+  },
+  other: {
+    'crystal': 'A pretty crystal that faintly glows with blue light. It is cold to the touch.',
+    'dynamite': 'A stick of blasting powder with a short fuse. Handle it as though it were shorter.',
+    'pin': 'A small bright pin. Pinned to a piece of clothing it changes it, though not always kindly.',
+    'key': 'A heavy key, cut for one lock and no other.',
+    'chest': 'A stout wooden chest. Whatever is in it, somebody wanted it kept.',
+    'pouch': 'A leather pouch on a drawstring. It holds more than the size of it suggests.',
+    'amulet': 'The Amulet of Yendor. It is warm, and it is heavier than gold, and it is what you came down here for.',
+    'gold': 'Coins of the realm, none of them minted lately.'
+  }
+};
+/* When nothing in the table names it: what the kind of thing is, in
+   general, said in a sentence. */
+var LORE_KIND = {
+  potion: 'A stoppered flask of something.',
+  scroll: 'A rolled sheet of paper with writing on it.',
+  wand: 'A slender rod with something worked into it.',
+  ring: 'A ring, made to be worn and pressed.',
+  weapon: 'Something to fight with.',
+  armor: 'Something to put between you and a blade.',
+  head: 'Something to keep off what lands on your head.',
+  feet: 'Something to walk in.',
+  shield: 'Something to get between you and a blow.',
+  food: 'Something to eat.'
+};
 
 var MON_BY_C = {};
 for (var _i = 0; _i < MONS.length; _i++) MON_BY_C[MONS[_i].c] = MONS[_i];
@@ -2115,6 +2603,16 @@ function roomHasStair(L, r) {
   return false;
 }
 
+/* Has something been cut through this room - a stream, a chasm, a hole
+   dug in the middle of it?  Anything that laid the room out square and
+   then filled it wants to know. */
+function roomIsCut(L, r) {
+  for (var i = 0; i < r.floors.length; i++) {
+    var t = L.tiles[r.floors[i][1] * MAP_W + r.floors[i][0]];
+    if (t === WATER || t === HOLE || t === HOLY || t === BRIDGE) return true;
+  }
+  return false;
+}
 function addSpecialRoom(L, depth) {
   if (rnd(100) >= SPECIAL_CHANCE) return null;
   var rooms = [], i;
@@ -2127,6 +2625,12 @@ function addSpecialRoom(L, depth) {
     /* and nothing with a staircase actually cut into it, whatever the
        room's own list of floors says */
     if (roomHasStair(L, r)) continue;
+    /* nor a room the floor has fallen out of.  A powder store cut in
+       half by a chasm is a powder store with half the barrels, and a
+       moss garden with a stream through it is mostly stream - both of
+       them read as a room that went wrong rather than a room that was
+       laid out. */
+    if (roomIsCut(L, r)) continue;
     rooms.push(r);
   }
   if (!rooms.length) return null;
@@ -2395,10 +2899,10 @@ function everyLockGuardsSomething(Lv) {
   return ok;
 }
 
-/* A rug laid in the middle of a room.  Nine pieces so the edges are
-   edges whatever size it is, and two middles so the pattern is not a
-   grid of the same stamp.  It is decor: you walk over it, and it only
-   goes down where the floor is plain and empty. */
+/* A rug laid in the middle of a room.  One Persian design, cut to the
+   size that fits and laid a tile at a time, each tile mirrored into
+   place so the pattern meets itself at the folds.  It is decor: you walk
+   over it, and it only goes down where the floor is plain and empty. */
 function addRug(L, r) {
   var i, x, y;
   if (r.floors.length < 12) return 0;
@@ -2408,10 +2912,23 @@ function addRug(L, r) {
     if (f[0] < x0) x0 = f[0]; if (f[0] > x1) x1 = f[0];
     if (f[1] < y0) y0 = f[1]; if (f[1] > y1) y1 = f[1];
   }
-  var rw = Math.min(RUG_MAX, x1 - x0 - 1), rh = Math.min(RUG_MAX, y1 - y0 - 1);
-  if (rw < RUG_MIN || rh < RUG_MIN) return 0;
-  rw = RUG_MIN + rnd(rw - RUG_MIN + 1);
-  rh = RUG_MIN + rnd(rh - RUG_MIN + 1);
+  var fitW = Math.min(RUG_MAX_LONG, x1 - x0 - 1), fitH = Math.min(RUG_MAX_LONG, y1 - y0 - 1);
+  if (fitW < RUG_MIN || fitH < RUG_MIN) return 0;
+  /* nothing smaller than two by three is woven, so the room has to have
+     three squares to spare one way or the other */
+  if (fitW < RUG_MIN_LONG && fitH < RUG_MIN_LONG) return 0;
+  var rw = RUG_MIN + rnd(fitW - RUG_MIN + 1);
+  var rh = RUG_MIN + rnd(fitH - RUG_MIN + 1);
+  /* two by two: let it out along whichever wall has the room for it */
+  if (rw < RUG_MIN_LONG && rh < RUG_MIN_LONG) {
+    if (fitH >= RUG_MIN_LONG) rh = RUG_MIN_LONG; else rw = RUG_MIN_LONG;
+  }
+  /* The design is only four squares the short way whichever way round it
+     is lying, so a rug that came out long in both directions is taken in
+     across its shorter side. */
+  if (rw > RUG_MAX_SHORT && rh > RUG_MAX_SHORT) {
+    if (rw <= rh) rw = RUG_MAX_SHORT; else rh = RUG_MAX_SHORT;
+  }
   /* centred, which is where a rug goes */
   var ax = x0 + (((x1 - x0 + 1) - rw) >> 1);
   var ay = y0 + (((y1 - y0 + 1) - rh) >> 1);
@@ -2426,21 +2943,17 @@ function addRug(L, r) {
     if (L.up && x === L.up.x && y === L.up.y) return 0;
     if (itemAt(L, x, y) || trapAtLevel(L, x, y)) return 0;
   }
+  /* The rug is woven upright - taller than it is wide - and then laid
+     down whichever way it fits, so a rug lying across the room is that
+     same upright rug turned a quarter circle. */
+  var turned = rw > rh;
+  var pw = turned ? rh : rw, ph = turned ? rw : rh;
+  var cut = RUG_CUT[pw + 'x' + ph];
+  if (!cut) return 0;                /* the design is never cut that size */
   var id = ++L.rugs;
   for (y = ay; y < ay + rh; y++) for (x = ax; x < ax + rw; x++) {
-    var north = (y === ay), south = (y === ay + rh - 1);
-    var west = (x === ax), east = (x === ax + rw - 1);
-    var name;
-    if (north && west) name = 'rug_nw';
-    else if (north && east) name = 'rug_ne';
-    else if (south && west) name = 'rug_sw';
-    else if (south && east) name = 'rug_se';
-    else if (north) name = 'rug_n';
-    else if (south) name = 'rug_s';
-    else if (west) name = 'rug_w';
-    else if (east) name = 'rug_e';
-    else name = ((x + y) & 1) ? 'rug_c' : 'rug_c2';
-    L.decor[y * MAP_W + x] = name;
+    var up = rugUpright(x - ax, y - ay, rw, rh);
+    L.decor[y * MAP_W + x] = rugSquareName(cut, up[0], up[1], pw, ph, turned);
     L.rugId[y * MAP_W + x] = id;
   }
   return rw * rh;
@@ -2625,7 +3138,12 @@ function tidyRugs(L) {
     id = L.rugId[k];
     if (!id) continue;
     var j = k | 0, x = j % MAP_W, y = (j / MAP_W) | 0;
-    var gone = !isRugName(L.decor[j]) || L.tiles[j] !== FLOOR;
+    /* A trapdoor under a rug is still a rug: the door is in the floor
+       and the carpet is over it, which is the only way one of them is
+       properly hidden.  Anything else that is not flagstones has taken a
+       square out of the rug and rolls the whole thing up. */
+    var gone = !isRugName(L.decor[j]) ||
+               (L.tiles[j] !== FLOOR && L.tiles[j] !== TRAPDOOR);
     if (!gone && L.stair && x === L.stair.x && y === L.stair.y) gone = 1;
     if (!gone && L.up && x === L.up.x && y === L.up.y) gone = 1;
     if (gone) lost[id] = 1;
@@ -2682,7 +3200,8 @@ function everywhereReachable(L) {
        fault, so it does not count against this. */
     if (L.sealed && L.sealed[i]) continue;
     if (t === FLOOR || t === CORR || t === DOOR || t === STAIR ||
-        t === STAIR_UP || t === WATER || t === HOLY || t === LOCKED) {
+        t === STAIR_UP || t === WATER || t === HOLY || t === LOCKED ||
+        t === TRAPDOOR) {
       walk[wn++] = i;
       if (from < 0 && (t === FLOOR || t === CORR)) from = i;
     }
@@ -2884,6 +3403,10 @@ function genLevelOnce(depth) {
   remossGardens(L);
   /* and a barrel or two left about the rest of the floor */
   scatterBarrels(L, depth);
+  /* A door in the floor, if this one has one.  After the rugs are down,
+     so that one of them can be laid over it - which is the only way a
+     trapdoor is properly hidden. */
+  if (typeof addTrapdoor === 'function') addTrapdoor(L, depth);
 
   /* every floor has something to step on */
   var nt = 1 + rnd(2 + Math.min(depth, 5));
@@ -3323,12 +3846,12 @@ function ensureSecretDoor(L, sx, sy) {
    doorway behind it guards nothing worth a key. */
 function standTile(t) {
   return t === FLOOR || t === CORR || t === STAIR || t === STAIR_UP ||
-         t === WATER || t === HOLY || t === BRIDGE;
+         t === WATER || t === HOLY || t === BRIDGE || t === TRAPDOOR;
 }
 function walkTile(t) {
   return t === FLOOR || t === CORR || t === DOOR || t === SDOOR ||
          t === STAIR || t === STAIR_UP || t === WATER || t === HOLY ||
-         t === LOCKED || t === HOLE || t === BRIDGE;
+         t === LOCKED || t === HOLE || t === BRIDGE || t === TRAPDOOR;
 }
 
 function deadPockets(L) {
@@ -3725,7 +4248,7 @@ function corridorBlob(L, at, seen) {
       if (t === CORR) { seen[j] = 1; q.push(j); }
       else if (t === FLOOR || t === DOOR || t === SDOOR || t === LOCKED ||
                t === STAIR || t === STAIR_UP || t === WATER || t === HOLY ||
-               t === BRIDGE) {
+               t === BRIDGE || t === TRAPDOOR) {
         out.push(-j - 1);              /* negative: it reaches something */
       }
     }

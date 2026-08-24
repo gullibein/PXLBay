@@ -99,7 +99,15 @@ function fakeCtx(tag) {
       const flip = (m[0] * m[3] - m[1] * m[2]) < 0;
       /* a quarter turn shows up as the x axis no longer pointing along x */
       const turn = Math.abs(m[1]) > 0.5 ? (m[1] > 0 ? 1 : 3) : (m[0] < 0 && !flip ? 2 : 0);
-      const rec = { seq: drawSeq++, tag: tag, from, at: alpha, shade, flip, turn,
+      /* which way each axis points: a design that is symmetrical about
+         its middle - a rug - is laid mirrored left to right, top to
+         bottom or both, and 'flip' alone cannot tell those apart.  The
+         four numbers themselves are kept too, since a rug lying across
+         a room is mirrored and turned at once and only the whole
+         transform says exactly what was drawn. */
+      const mirX = m[0] < 0, mirY = m[3] < 0;
+      const mat = [Math.round(m[0]), Math.round(m[1]), Math.round(m[2]), Math.round(m[3])];
+      const rec = { seq: drawSeq++, tag: tag, from, at: alpha, shade, flip, turn, mirX, mirY, mat,
         clipped: !!clipped,
         tint: (img && img.tint) || null,
         dx: Math.round(Math.min(...xs)), dy: Math.round(Math.min(...ys)),
@@ -110,7 +118,11 @@ function fakeCtx(tag) {
       blits.push(rec);
     },
     fillRect: function (x, y, w, h) {
-      fills.push({ seq: drawSeq++, tag: tag, x, y, w, h, col: this.fillStyle });
+      /* how it was laid down matters as well as where: light is painted
+         over the dungeon with 'lighter', which is what makes it light
+         rather than paint */
+      fills.push({ seq: drawSeq++, tag: tag, x, y, w, h, col: this.fillStyle,
+        at: this.globalAlpha, op: this.globalCompositeOperation });
     }
   };
 }
@@ -126,6 +138,93 @@ function fakeCanvas(tag) {
   canvases.push(c);
   return c;
 }
+/* Stand in the middle of the roomiest room on the floor.  Several checks
+   need a patch of open, lit flagstones in front of them, and where the
+   dungeon happens to drop the player is not always anywhere of the sort -
+   a corridor, a cupboard, the corner of a dark hall.  Rather than give up
+   when the dice are unkind, go somewhere the question can be asked. */
+function standInBigRoom(ctx, want) {
+  const L = ctx.L, P = ctx.P;
+  const was = { x: P.x, y: P.y, rooms: L.rooms.map(r => ({ r, lit: r.lit, dark: r.dark })),
+                lit: L.litMap ? Array.from(L.litMap) : null,
+                dk: L.darkMap ? Array.from(L.darkMap) : null };
+  const undo = () => {
+    P.x = was.x; P.y = was.y;
+    for (const e of was.rooms) { e.r.lit = e.lit; e.r.dark = e.dark; }
+    if (was.lit) for (let i = 0; i < was.lit.length; i++) L.litMap[i] = was.lit[i];
+    if (was.dk) for (let i = 0; i < was.dk.length; i++) L.darkMap[i] = was.dk[i];
+    ctx.computeVis();
+  };
+  /* Counted in plain flagstones, not in squares: a hall that is mostly
+     water, or a cave floored in something else, is no use to a check
+     that wants somewhere ordinary to look at. */
+  let best = null, bestN = 0;
+  for (const r of L.rooms) {
+    if (r.gone || !r.floors) continue;
+    let n = 0;
+    for (const f of r.floors) if (L.tiles[f[1] * ctx.MAP_W + f[0]] === ctx.FLOOR) n++;
+    if (n < (want || 24)) continue;
+    if (n > bestN) { best = r; bestN = n; }
+  }
+  if (!best) { if (ctx.SIB_LOG) console.log('   [SIB no room]'); return undo; }
+  /* stand on plain floor in the middle of it, not on whatever the middle
+     of the box happens to be */
+  let stand = null, bestD = 1e9;
+  for (const f of best.floors) {
+    if (L.tiles[f[1] * ctx.MAP_W + f[0]] !== ctx.FLOOR) continue;
+    const d = Math.abs(f[0] - best.cx) + Math.abs(f[1] - best.cy);
+    if (d < bestD) { bestD = d; stand = f; }
+  }
+  if (!stand) return undo;
+  P.x = stand[0]; P.y = stand[1];
+  /* and light it, or nothing in it is drawn to be looked at */
+  best.lit = 1; best.dark = 0;
+  for (const f of best.floors) {
+    const j = f[1] * ctx.MAP_W + f[0];
+    if (L.litMap) L.litMap[j] = 1;
+    if (L.darkMap) L.darkMap[j] = 0;
+  }
+  ctx.computeVis();
+  if (ctx.SIB_LOG) {
+    let vis = 0;
+    for (let i = 0; i < L.flags.length; i++) if (L.flags[i] & ctx.F_VIS) vis++;
+    console.log('   [SIB room of ' + best.floors.length + ' at ' + P.x + ',' + P.y +
+      ' walkable ' + ctx.walkable(P.x, P.y) + ' lit ' + best.lit + ' dark ' + best.dark +
+      ' blind ' + ctx.P.blind + ' visible ' + vis + ']');
+  }
+  return undo;
+}
+
+/* Make a patch of plain, lit flagstones near the player and hand back the
+   way to put it right again.  Several checks want somewhere ordinary to
+   look at - a hole cut into it, a flame lighting it - and where the
+   dungeon happens to put the player is not always anywhere of the sort:
+   a corridor, a cave floored in something else, or a room with a rug
+   across most of it.  Rather than hunt for a floor that suits, lay one.
+   Nothing here is what is being measured; it is the ground it stands on. */
+function clearPatch(ctx, cells) {
+  const L = ctx.L;
+  const was = cells.map(c => {
+    const j = c[1] * ctx.MAP_W + c[0];
+    return { j, t: L.tiles[j], d: L.decor[j], f: L.flags[j],
+             r: L.rugId ? L.rugId[j] : undefined };
+  });
+  for (const w of was) {
+    L.tiles[w.j] = ctx.FLOOR;
+    delete L.decor[w.j];
+    if (L.rugId) delete L.rugId[w.j];
+    L.flags[w.j] |= (ctx.F_VIS | ctx.F_SEEN);
+  }
+  return () => {
+    for (const w of was) {
+      L.tiles[w.j] = w.t;
+      if (w.d === undefined) delete L.decor[w.j]; else L.decor[w.j] = w.d;
+      if (L.rugId) { if (w.r === undefined) delete L.rugId[w.j]; else L.rugId[w.j] = w.r; }
+      L.flags[w.j] = w.f;
+    }
+  };
+}
+
 const canvasListeners = {};
 
 const listeners = {};
@@ -199,7 +298,8 @@ setTimeout(() => {
   function textClash(label) {
     /* A modal paints an opaque box over whatever was behind it, so text
        under an open menu or pouch is covered, not collided with. */
-    if (ctx.G && (ctx.G.menu || ctx.G.pouch)) return 0;
+    if (ctx.G && (ctx.G.menu || ctx.G.pouch || ctx.G.inspect ||
+                  ctx.G.mode === 'story')) return 0;
     const seen = new Set();
     let clashes = 0;
     for (const b of blits) {
@@ -1084,6 +1184,116 @@ setTimeout(() => {
     }
   }
 
+  /* A rug is one Persian design rather than a stamp repeated: four
+     squares across and six down, symmetrical both ways, so only a
+     quarter of it - two columns of three tiles, plus three more for the
+     spine of an odd-width rug - is kept on the sheet, and the rest of it
+     is those same tiles laid over.  A rug is woven upright as well, so
+     one lying across a room is the whole of it turned a quarter circle.
+
+     So every square of a rug on screen has to come off the cell its name
+     gives under exactly the transform its name says, and the picture the
+     whole rug makes has to be symmetrical both ways.  Drawing every tile
+     the right way up would still make a rug - a grid of the same nine
+     stamps - which is what this catches. */
+  {
+    const P = ctx.P, L = ctx.L;
+    const idx = (x, y) => y * ctx.MAP_W + x;
+    const cell = n => { const i = ATLAS.index[n]; return [(i % ATLAS.cols) * 8, ((i / ATLAS.cols) | 0) * 8]; };
+    ctx.G.mode = 'play'; ctx.G.bolt = null; ctx.G.aim = null; ctx.G.shot = null;
+    L.mons.length = 0; L.clouds.length = 0; L.items.length = 0;
+    /* whatever the floor came with: this probe wants its own rug alone */
+    for (const k in L.decor) if (ctx.isRugName(L.decor[k])) delete L.decor[k];
+    P.x = ctx.MAP_W >> 1; P.y = ctx.MAP_H >> 1; P.warp = null;
+    const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+    /* every size written out, and every one of them lying down too */
+    const sizes = [];
+    for (const k of Object.keys(ctx.RUG_CUT)) {
+      const [w, h] = k.split('x').map(Number);
+      sizes.push([w, h]);
+      if (w !== h) sizes.push([h, w]);
+    }
+    /* what the canvas transform has to be: mirrored first, inside the
+       turn, since that is the order a rug is made in - woven, laid down */
+    const wantMat = (mx, my, turned) => {
+      const sx = mx ? -1 : 1, sy = my ? -1 : 1;
+      return turned ? [0, sx, -sy, 0] : [sx, 0, 0, sy];
+    };
+    let checked = 0, mirrored = 0, laidDown = 0;
+    for (const [w, h] of sizes) {
+      const ax = P.x - (w >> 1), ay = P.y - (h >> 1);
+      if (ax < 1 || ay < 1 || ax + w > ctx.MAP_W - 1 || ay + h > ctx.MAP_H - 1) continue;
+      const turned = w > h, pw = turned ? h : w, ph = turned ? w : h;
+      const cut = ctx.RUG_CUT[pw + 'x' + ph];
+      const want = {}, at = {};
+      for (let y = ay - 1; y <= ay + h; y++) for (let x = ax - 1; x <= ax + w; x++) {
+        L.tiles[idx(x, y)] = ctx.FLOOR; delete L.decor[idx(x, y)];
+      }
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const up = ctx.rugUpright(x, y, w, h);
+        const n = ctx.rugSquareName(cut, up[0], up[1], pw, ph, turned);
+        L.decor[idx(ax + x, ay + y)] = n;
+        const key = (ctx.VIEW_PX + (ax + x - camx) * ctx.TS) + ',' + (ctx.VIEW_PY + (ay + y - camy) * ctx.TS);
+        want[key] = n; at[x + ',' + y] = key;
+      }
+      ctx.computeVis();
+      for (let y = ay - 1; y <= ay + h; y++) for (let x = ax - 1; x <= ax + w; x++)
+        L.flags[idx(x, y)] |= (ctx.F_VIS | ctx.F_SEEN);
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      const tiles = {};
+      for (const n of ctx.RUG_TILES) { const c = cell(n); tiles[c[0] + ',' + c[1]] = n; }
+      const drawn = {};
+      let found = 0;
+      for (const key in want) {
+        const [px, py] = key.split(',').map(Number);
+        const name = want[key];
+        const b = blits.find(b => b.tag === 'screen' && b.from === 'atlas' &&
+          b.dx === px && b.dy === py && tiles[b.sx + ',' + b.sy] !== undefined);
+        if (!b) { problems.push('a ' + w + 'x' + h + ' rug drew nothing for its ' + name + ' square'); continue; }
+        found++; checked++; drawn[key] = b;
+        const drew = tiles[b.sx + ',' + b.sy];
+        if (drew !== name.slice(0, 6))
+          problems.push('a ' + w + 'x' + h + ' rug drew ' + drew + ' where ' + name + ' belongs');
+        const mx = name.indexOf('h') >= 0, my = name.indexOf('v') >= 0;
+        if (mx || my) mirrored++;
+        if (turned) laidDown++;
+        const wm = wantMat(mx, my, turned);
+        if (String(b.mat) !== String(wm))
+          problems.push(name + ' was drawn ' + JSON.stringify(b.mat) + ' instead of ' + JSON.stringify(wm));
+      }
+      if (found !== w * h)
+        problems.push('a ' + w + 'x' + h + ' rug drew ' + found + ' of its ' + (w * h) + ' squares');
+      /* And the picture itself: fold the rug in half either way and the
+         two halves have to be the same tile, drawn the reflected way.
+         The middle row or column of an odd-sized rug folds onto itself
+         and is skipped - it is its own reflection, which is why it has
+         tiles of its own rather than a rule. */
+      const reflect = (m, axis) => axis === 'x' ? [-m[0], m[1], -m[2], m[3]]
+                                                : [m[0], -m[1], m[2], -m[3]];
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        for (const [ox, oy, axis] of [[w - 1 - x, y, 'x'], [x, h - 1 - y, 'y']]) {
+          if (ox === x && oy === y) continue;
+          const one = drawn[at[x + ',' + y]], two = drawn[at[ox + ',' + oy]];
+          if (!one || !two) continue;
+          if (one.sx !== two.sx || one.sy !== two.sy)
+            problems.push('a ' + w + 'x' + h + ' rug is not the same tile at both ends across ' + axis);
+          else if (String(reflect(one.mat, axis)) !== String(two.mat))
+            problems.push('a ' + w + 'x' + h + ' rug does not fold in half across ' + axis +
+              ': ' + JSON.stringify(one.mat) + ' against ' + JSON.stringify(two.mat));
+        }
+      }
+      for (let y = ay - 1; y <= ay + h; y++) for (let x = ax - 1; x <= ax + w; x++)
+        delete L.decor[idx(x, y)];
+    }
+    console.log('the rug              : ' + sizes.length + ' sizes, ' + checked +
+      ' squares each off its own tile under its own transform, ' + mirrored +
+      ' laid over, ' + laidDown + ' on a rug lying across the room');
+    if (checked < 100) problems.push('hardly any rug was drawn at all: ' + checked + ' squares');
+    if (!mirrored) problems.push('no square of any rug was laid mirrored');
+    if (!laidDown) problems.push('no rug was ever laid across the room');
+  }
+
   /* Going somewhere else without walking there: shake where it stood, a
      flash at each end, and only then is it somewhere else.  What must
      never happen is the creature simply being on the new square while
@@ -1626,10 +1836,50 @@ setTimeout(() => {
       key(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'][step & 3]);
       P.hp = P.mhp;
     }
-    console.log('dim corners          : ' + patches + ' patches over 60 frames, ' +
-      faded + ' from the faded sheet, ' + blended + ' blended ' +
-      '(' + (seen - lit) + ' squares remembered but unlit)');
+    const walked = { patches: patches, faded: faded };
     if (seen - lit < 20) problems.push('not enough of the map is remembered to test dim corners');
+    /* A wandering walk does not always end up looking at a remembered
+       corner - which is a question about the dice, not about the
+       drawing.  So put one there: a wall in a patch of floor, all of it
+       remembered and none of it in sight, and look at the patches on
+       it. */
+    if (!faded) {
+      const cells = [];
+      let px2 = 0, py2 = 0;
+      for (const [dx, dy] of [[4, 0], [-4, 0], [0, 4], [0, -4], [3, 3], [-3, -3]]) {
+        const x = P.x + dx, y = P.y + dy;
+        if (x < 3 || y < 3 || x >= ctx.MAP_W - 3 || y >= ctx.MAP_H - 3) continue;
+        px2 = x; py2 = y;
+        for (let ay = -1; ay <= 1; ay++) for (let ax = -1; ax <= 1; ax++) cells.push([x + ax, y + ay]);
+        break;
+      }
+      if (!cells.length) problems.push('nowhere to remember a corner');
+      else {
+        const undo = clearPatch(ctx, cells);
+        const L2 = ctx.L, j2 = py2 * ctx.MAP_W + px2;
+        L2.tiles[j2] = ctx.WALL;
+        /* seen, and out of sight: that is what "remembered" is */
+        for (const c of cells) {
+          const j3 = c[1] * ctx.MAP_W + c[0];
+          L2.flags[j3] = (L2.flags[j3] | ctx.F_SEEN) & ~ctx.F_VIS;
+        }
+        blits = []; fills = [];
+        vm.runInContext('render();', ctx);
+        for (const b of blits) {
+          if (b.tag !== 'screen') continue;
+          if (!(b.sw === 2 && b.sh === 2 && b.dw === 2 && b.dh === 2)) continue;
+          patches++;
+          if (b.from === 'dim') faded++;
+          else if (b.from === 'atlas' && b.at < 1) blended++;
+        }
+        undo();
+        ctx.computeVis();
+      }
+    }
+    console.log('dim corners          : ' + patches + ' patches, ' + faded +
+      ' from the faded sheet, ' + blended + ' blended (' + walked.patches +
+      ' of them met on a 60 frame walk, ' + walked.faded + ' of those faded; ' +
+      (seen - lit) + ' squares remembered but unlit)');
     if (blended) problems.push(blended + ' corner patches are blended, not solid');
     if (!faded) problems.push('no corner patch used the faded sheet - dim corners are not rounded');
   }
@@ -2606,6 +2856,12 @@ setTimeout(() => {
         lines.forEach(l => { worst = Math.max(worst, vm.runInContext('textW(' + JSON.stringify(l) + ')', ctx)); });
         frame('hint text ' + i);
       }
+      /* the keys are worth a hint of their own: ? for a square, T for the
+         log.  Both are named in the help screen, and somebody who never
+         opens the help screen should still meet them. */
+      const namesKey = (re) => ctx.HINTS.some(h => re.test(h));
+      if (!namesKey(/\bT\b/)) problems.push('no hint mentions the T key');
+      if (!namesKey(/press \?|\? to look|\? reads/i)) problems.push('no hint mentions the ? key');
       const boxH = 14 + Math.max(tall, 3) * 9 + 12;
       if (boxH > ctx.SH) problems.push('a hint box is ' + boxH + ' tall, taller than the screen');
       if (worst > ctx.HINT_W - 10) problems.push('a hint line is ' + worst + ' wide, wider than the box');
@@ -3777,21 +4033,47 @@ setTimeout(() => {
 
     /* walking towards the middle centres you, and the map never stirs */
     ctx.G.drag = { dx: 3, dy: 0 }; ctx.CAM_AT.x = 3; ctx.CAM_AT.y = 0;
+    ctx.WALK_AT = { x: P.x, y: P.y };
     ctx.camSaw();
-    let steps = 0, stirred = 0;
-    const home0 = worldPx();
+    let steps = 0, stirred = 0, homeFrames = 0, manMoved = 0;
+    /* Where a square of the world actually lands on the screen this
+       frame, glide and all.  The old check only looked between steps and
+       only ran camEase, so the following - which is what put the lurch
+       back on the map every step - was never in the picture at all. */
+    /* A tile is laid at (P - half + drag) and the whole map is then
+       shifted by camSlip, which is (drag - CAM_AT + mapLag).  The drag
+       cancels, so where a fixed square of the world really lands comes
+       to -(P + CAM_AT - mapLag) tiles.  Working it out any other way
+       leaves the drag in twice and measures nothing. */
+    const shownPx = () => {
+      const lag = ctx.mapLag();
+      return { x: -Math.round((P.x + ctx.CAM_AT.x - lag.x) * TS),
+               y: -Math.round((P.y + ctx.CAM_AT.y - lag.y) * TS) };
+    };
+    const manPx = () => Math.round(ctx.manLag().x * TS);
+    const home0 = shownPx();
+    let lastMan = manPx();
     while (ctx.G.drag && steps < 10) {
       P.x += 1; ctx.camFollow(); steps++;
-      for (let f = 0; f < 10; f++) ctx.camEase();
-      if (worldPx().x !== home0.x) stirred++;
+      for (let f = 0; f < 20; f++) {
+        ctx.camWalkTo(); ctx.camEase();
+        homeFrames++;
+        if (shownPx().x !== home0.x) stirred++;
+        const m = manPx();
+        if (m !== lastMan) manMoved++;
+        lastMan = m;
+      }
     }
     P.x -= steps;
+    ctx.WALK_AT = { x: P.x, y: P.y };
     if (ctx.G.drag) problems.push('walking towards the middle never centred the view');
     if (steps !== 3) problems.push('it took ' + steps + ' steps to cross 3 squares');
-    if (stirred) problems.push('the map moved on ' + stirred + ' of ' + steps +
-      ' steps towards the middle');
-    console.log('walking home         : three steps to centred and the map never moves a ' +
-      'pixel; step away and it follows you one square');
+    if (stirred) problems.push('the map moved on ' + stirred + ' of ' + homeFrames +
+      ' frames while walking towards the middle');
+    /* and the man is the one gliding, or nothing is animating at all */
+    if (!manMoved) problems.push('nothing glided: the walk is a jump again');
+    console.log('walking home         : three steps to centred over ' + homeFrames +
+      ' frames, the map still on every one of them, and the man gliding across it');
 
     /* --- anywhere on screen is on screen ------------------------------ */
     /* Shoved until he sits against the border but still inside it, the
@@ -3981,6 +4263,11 @@ setTimeout(() => {
       let dest = null;
       for (const [dx, dy] of ctx.DIR4) {
         const tx = P.x + dx * 2, ty = P.y + dy * 2;
+        /* and the square between, or there is nothing to walk down: two
+           squares off with a wall in the middle is not a walk, and where
+           the walls are moves with the dice */
+        const mx2 = P.x + dx, my2 = P.y + dy;
+        if (!ctx.walkable(mx2, my2) || ctx.monAt(L, mx2, my2)) continue;
         if (ctx.walkable(tx, ty) && !ctx.monAt(L, tx, ty) &&
             (L.flags[ty * ctx.MAP_W + tx] & ctx.F_SEEN)) { dest = { x: tx, y: ty }; break; }
       }
@@ -4340,6 +4627,8 @@ setTimeout(() => {
     L.mons.length = 0; P.hp = P.mhp = 900; P.blind = 0;
     ctx.computeVis();
     ctx.WALK_AT = null; ctx.camWalkTo();
+    /* where he was standing before this block borrowed him */
+    const stoodAt = { x: P.x, y: P.y };
 
     /* Where the world is actually drawn.  A step used to move it a whole
        tile between one frame and the next, which is the jerk. */
@@ -4349,6 +4638,22 @@ setTimeout(() => {
     for (const [dx, dy] of ctx.DIR4)
       if (dx && ctx.walkable(P.x + dx, P.y) && ctx.walkable(P.x + dx * 2, P.y))
         { dir = [dx, dy]; break; }
+    /* Wherever the floor happened to put him, there is somewhere on it
+       with two clear squares in a row - go and stand there rather than
+       giving up on the check. */
+    if (!dir) {
+      outer:
+      for (let y = 1; y < ctx.MAP_H - 1; y++)
+        for (let x = 2; x < ctx.MAP_W - 2; x++) {
+          if (!ctx.walkable(x, y) || L.tiles[y * ctx.MAP_W + x] !== ctx.FLOOR) continue;
+          for (const d of [1, -1])
+            if (ctx.walkable(x + d, y) && ctx.walkable(x + d * 2, y)) {
+              P.x = x; P.y = y; dir = [d, 0];
+              ctx.computeVis(); ctx.WALK_AT = null; ctx.camWalkTo();
+              break outer;
+            }
+        }
+    }
     if (!dir) problems.push('nowhere to walk two squares in a line');
     else {
       const start = { x: P.x, y: P.y };
@@ -4393,6 +4698,10 @@ setTimeout(() => {
       ctx.WALK_AT = null; ctx.camWalkTo();
       ctx.computeVis();
     }
+    /* and put him back where the rest of the suite left him */
+    P.x = stoodAt.x; P.y = stoodAt.y;
+    ctx.WALK_AT = null; ctx.camWalkTo();
+    ctx.computeVis();
   }
 
   /* --- the pack answers the pointer ----------------------------------- */
@@ -4458,18 +4767,40 @@ setTimeout(() => {
     L.mons.length = 0; L.items.length = 0;
     /* somewhere with eight squares of bare floor round it, close enough
        to be lit and on the screen */
+    /* Somewhere in sight with eight bare squares round it.  Looked for
+       across the whole of what you can see rather than three squares
+       about you: where the floor happens to have put him is not always
+       the middle of a room. */
     let spot = null;
-    for (let y = P.y - 3; y <= P.y + 3 && !spot; y++)
-      for (let x = P.x - 3; x <= P.x + 3 && !spot; x++) {
-        if (x === P.x && y === P.y) continue;
+    for (let y = P.y - 7; y <= P.y + 7 && !spot; y++)
+      for (let x = P.x - 9; x <= P.x + 9 && !spot; x++) {
+        if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= ctx.MAP_H - 2) continue;
+        if (Math.abs(x - P.x) <= 1 && Math.abs(y - P.y) <= 1) continue;
         let all = 1;
         for (let dy = -1; dy <= 1; dy++)
           for (let dx = -1; dx <= 1; dx++) {
             const j = (y + dy) * MAP_W + (x + dx);
-            if (L.tiles[j] !== ctx.FLOOR || L.decor[j]) all = 0;
+            /* and it has to be somewhere you can see: a square that is
+               not drawn at all cannot be checked for what was drawn */
+            if (L.tiles[j] !== ctx.FLOOR || L.decor[j] || !(L.flags[j] & ctx.F_VIS)) all = 0;
           }
         if (all) spot = { x: x, y: y };
       }
+    /* A floor is not always obliging: a cave, a corridor, a hall with a
+       rug over most of it.  Rather than give up, lay nine squares of
+       plain lit flagstones two steps away and dig into those. */
+    let putBackPatch = null;
+    if (!spot) {
+      for (const [dx, dy] of [[3, 0], [-3, 0], [0, 3], [0, -3], [2, 2], [-2, -2], [2, -2], [-2, 2]]) {
+        const x = P.x + dx, y = P.y + dy;
+        if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= ctx.MAP_H - 2) continue;
+        const cells = [];
+        for (let ay = -1; ay <= 1; ay++) for (let ax = -1; ax <= 1; ax++) cells.push([x + ax, y + ay]);
+        putBackPatch = clearPatch(ctx, cells);
+        spot = { x: x, y: y };
+        break;
+      }
+    }
     if (!spot) problems.push('found nowhere to dig a hole to look at');
     else {
       const j = spot.y * MAP_W + spot.x, was = L.tiles[j];
@@ -4509,12 +4840,22 @@ setTimeout(() => {
         if (bites.length) problems.push(bites.length + ' square bites are still taken out of a hole');
         /* and nothing at all is taken off the squares around it - the
            four that meet it corner to corner included */
-        const elsewhere = ones.length - cut.length;
+        /* The floor can have gaps of its own on it now - a chasm cut
+           across a room is a hole like any other and has its corners cut
+           the same way - so what must not happen is a pixel taken off a
+           square that is not a hole, rather than any pixel anywhere but
+           this one pit. */
+        const elsewhere = ones.filter(b => {
+          const cxq = camx + ((b.dx - ctx.VIEW_PX) / TS | 0);
+          const cyq = camy + ((b.dy - ctx.VIEW_PY) / TS | 0);
+          return L.tiles[cyq * MAP_W + cxq] !== ctx.HOLE;
+        }).length;
         if (elsewhere) problems.push(elsewhere + ' pixels were cut off squares that are not the hole');
         console.log('a hole rounded       : ' + cut.length + ' pixels off its four corners, ' +
           bites.length + ' square bites, ' + elsewhere + ' pixels touched anywhere else');
       }
       L.tiles[j] = was;
+      if (putBackPatch) putBackPatch();
       ctx.computeVis();
     }
   }
@@ -4731,6 +5072,35 @@ setTimeout(() => {
         if (w > widest[1]) widest = [s, w];
         if (w > colW) problems.push('an effect line is ' + w + 'px wide, past the ' + colW + 'px column: "' + s + '"');
       }
+      /* A line in this list is about you, so it has to make sense read
+         on its own.  The one that says a thing you are wearing has an
+         enchantment you cannot read used to be "something sleeps in it",
+         which named neither the thing nor what sleeps - and came out
+         twice over, word for word, if two of your things had one. */
+      {
+        const wasRh = P.eq.rh, wasBody = P.eq.body, wasWis = P.wis;
+        P.wis = P.mwis = 16;
+        const sword = ctx.mkItem('weapon', ctx.weaponIndex('long sword'));
+        sword.known = 1; sword.br = 'fire'; sword.brKnown = 0;
+        const coat = ctx.mkItem('armor', 0);
+        coat.known = 1; coat.br = 'warding'; coat.brKnown = 0;
+        P.eq.rh = sword; P.eq.body = coat;
+        const lines2 = ctx.playerEffects().map(e => e[0]);
+        const sleeping = lines2.filter(l => /sleep/i.test(l));
+        if (sleeping.length !== 2)
+          problems.push('two unread enchantments gave ' + sleeping.length + ' lines');
+        else {
+          if (sleeping[0] === sleeping[1])
+            problems.push('both unread enchantments read the same: "' + sleeping[0] + '"');
+          for (const l of sleeping) {
+            if (!/sword|mail|armor|leather/.test(l))
+              problems.push('an unread enchantment does not say what it is in: "' + l + '"');
+            if (ctx.textW(l) > colW)
+              problems.push('the unread enchantment line is ' + ctx.textW(l) + 'px, past the column');
+          }
+        }
+        P.eq.rh = wasRh; P.eq.body = wasBody; P.wis = P.mwis = wasWis;
+      }
       /* the red hands say what they are for on the one line */
       const hands = all.map(e => e[0]).filter(s => /hands glow red/.test(s));
       if (hands.length !== 1)
@@ -4817,6 +5187,964 @@ setTimeout(() => {
     console.log('save and quit        : asks once, then always slot ' + (ctx.G.slot + 1) +
       ', and every time it leaves you on the splash');
     ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null;
+  }
+
+
+  /* --- a left click in the pack looks, a right click asks -------------- */
+  {
+    const P = ctx.P;
+    ctx.G.mode = 'play'; ctx.G.menu = null; ctx.G.roomBox = null; ctx.G.pouch = null;
+    ctx.G.walk = null; ctx.G.drag = null;
+    ctx.openInv();
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    const cells = ctx.HITS.filter(h => h.what === 'cell');
+    /* a cell with something in it, so the menu has verbs to offer */
+    let full = null;
+    for (const c of cells) {
+      const cur = { r: c.i.r, c: c.i.c };
+      const it = ctx.invAt ? ctx.invAt(cur.r, cur.c) : null;
+      if (it) { full = c; break; }
+    }
+    if (!full) full = cells[0];
+    if (!full) problems.push('the pack drew no cells to click');
+    else {
+      const click = (right, how) => {
+        ctx.LAST_INPUT = how;
+        ctx.G.menu = null;
+        ctx.G.cur.r = -1; ctx.G.cur.c = -1;
+        ctx.clickAt(full.x + 2, full.y + 2, right ? 1 : 0);
+        return { menu: !!ctx.G.menu, cur: ctx.G.cur.r === full.i.r && ctx.G.cur.c === full.i.c };
+      };
+      const left = click(0, 'mouse');
+      if (left.menu) problems.push('a left click with the mouse still opened the menu');
+      if (!left.cur) problems.push('a left click did not pick the thing out');
+      const rightC = click(1, 'mouse');
+      if (!rightC.menu) problems.push('a right click did not open the menu');
+      if (!rightC.cur) problems.push('a right click did not pick the thing out');
+      /* a finger has no second button, so a tap must still ask */
+      const tap = click(0, 'touch');
+      if (!tap.menu) problems.push('a tap on a touch screen opened no menu');
+      console.log('clicking the pack    : left looks, right asks, and a tap asks');
+      ctx.G.menu = null;
+      ctx.LAST_INPUT = 'mouse';
+    }
+    ctx.closeInv();
+  }
+
+  /* --- a bolt of lightning is drawn, not stamped ----------------------
+     Every other wand lays a row of little sprites along its path.  The
+     wand of lightning draws a crooked line of current instead: shades of
+     blue, wandering to each side of the straight line, from your hand to
+     the wall it stops at. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    G.mode = 'play'; G.invOpen = 0; G.menu = null; G.bolt = null; G.dead = 0;
+    L.mons.length = 0; L.clouds.length = 0;
+    P.hp = P.mhp; P.blind = 0;
+    const boltBad = [];
+    /* somewhere with room to fire */
+    let dir = null, run = 0;
+    for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      let n = 0;
+      while (ctx.walkable(P.x + d[0] * (n + 1), P.y + d[1] * (n + 1))) n++;
+      if (n > run) { run = n; dir = d; }
+    }
+    if (run < 4) boltBad.push('nowhere clear to fire down');
+    else {
+      let wk = -1;
+      for (let i = 0; i < ctx.WANDS.length; i++) if (ctx.WANDS[i].n === 'lightning') wk = i;
+      const wand = ctx.mkItem('wand', wk); wand.ch = 9; wand.known = 1;
+      ctx.addItem(wand);
+      G.msgq = [];
+      ctx.zapWand(wand, dir[0], dir[1]);
+      vm.runInContext('finishMsgs();', ctx);
+      /* A discharge round your own feet - cursed gear, or standing in
+         water - is drawn with the same little sprite and stands on its
+         own squares.  It is not what this is about, so put it out. */
+      G.splash = null;
+      if (!G.bolt) boltBad.push('the wand drew nothing at all');
+      else {
+        if (G.bolt.mode !== 'beam') boltBad.push('lightning was thrown like a missile');
+        if (G.bolt.path.length !== run)
+          boltBad.push('it reached ' + G.bolt.path.length + ' of ' + run + ' clear squares');
+        G.bolt.t = Date.now();
+        frame('lightning');
+        const px = fills.filter(f => f.tag === 'screen' && f.w === 1 && f.h === 1);
+        const blue = px.filter(f => [ctx.BOLT_GLOW, ctx.BOLT_BLUE, ctx.BOLT_PALE, ctx.BOLT_CORE]
+          .indexOf(String(f.col).toLowerCase()) >= 0);
+        if (blue.length < 40) boltBad.push('only ' + blue.length + ' pixels of current were drawn');
+        const shades = new Set(blue.map(f => String(f.col).toLowerCase()));
+        if (shades.size < 3) boltBad.push('it was drawn in ' + shades.size + ' shade(s), not several');
+        /* and every one of them a blue: no red or green in a lightning bolt */
+        for (const f of px) {
+          const c = String(f.col).toLowerCase();
+          if (!/^#[0-9a-f]{6}$/.test(c)) continue;
+          if (shades.has(c)) {
+            const r = parseInt(c.slice(1, 3), 16), b = parseInt(c.slice(5, 7), 16);
+            if (b <= r) boltBad.push('the current is drawn in ' + c + ', which is not blue');
+          }
+        }
+        /* it runs the length of the path... */
+        const along = dir[0] ? blue.map(f => f.x) : blue.map(f => f.y);
+        const across = dir[0] ? blue.map(f => f.y) : blue.map(f => f.x);
+        const span = Math.max(...along) - Math.min(...along);
+        if (span < (run - 1) * ctx.TS)
+          boltBad.push('the current spans ' + span + 'px of ' + (run * ctx.TS));
+        /* ...and it is crooked, not a ruled line */
+        const wide = Math.max(...across) - Math.min(...across);
+        if (wide < 3) boltBad.push('the current is ' + wide + 'px wide - it is a straight line');
+        if (wide > ctx.TS * 2)
+          boltBad.push('the current wanders ' + wide + 'px off the line it was fired along');
+        /* no sprite stamped along it */
+        const stamps = blits.filter(b => b.tag === 'screen' && b.from === 'atlas').length;
+        const boltIx = ctx.IX ? ctx.IX['bolt'] : undefined;
+        if (boltIx !== undefined) {
+          const sx = (boltIx % ctx.ATLAS.cols) * ctx.TS, sy = ((boltIx / ctx.ATLAS.cols) | 0) * ctx.TS;
+          /* Along it, and only along it.  The same little sprite is also
+             what a thunder discharge round your own feet is drawn with,
+             and that is a different effect standing on different squares
+             - so ask about the squares the current actually ran down. */
+          const camx2 = P.x - (ctx.VIEW_W >> 1), camy2 = P.y - (ctx.VIEW_H >> 1);
+          const onPath = {};
+          for (const c of G.bolt.path)
+            onPath[(ctx.VIEW_PX + (c[0] - camx2) * ctx.TS) + ',' +
+                   (ctx.VIEW_PY + (c[1] - camy2) * ctx.TS)] = 1;
+          const stamped = blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+            b.sx === sx && b.sy === sy && onPath[b.dx + ',' + b.dy]).length;
+          if (stamped) boltBad.push(stamped + ' bolt sprites were stamped along it as well');
+        }
+        /* and it goes out */
+        G.bolt.t = Date.now() - ctx.BOLT_BEAM_LIFE - 50;
+        frame('lightning-gone');
+        if (G.bolt) boltBad.push('the current never went out');
+      }
+    }
+    console.log('a bolt of lightning  : ' + (boltBad.length ? boltBad.length + ' problems' :
+      'a crooked blue current from your hand to the wall, several shades of it, no sprites'));
+    for (const b of boltBad) problems.push('lightning: ' + b);
+    G.bolt = null;
+  }
+
+  /* --- fire and lightning light the room -------------------------------
+     A flame lights its own square and the four beside it, and the four
+     corners half as brightly, so the pool of light reads round rather
+     than square.  A blast reaches a square further out along the four
+     ways, at half.  A bolt of lightning lights one square about it, in
+     blue.  All of it laid over the dungeon with 'lighter', so it is
+     light rather than paint. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G, TS = ctx.TS, MAP_W = ctx.MAP_W;
+    G.mode = 'play'; G.invOpen = 0; G.menu = null; G.roomBox = null; G.ctx = null;
+    G.walk = null; G.drag = null; G.pan = null; G.bolt = null; G.splash = null;
+    G.drops = null; G.ret = null; G.shot = null;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    L.mons.length = 0; L.items.length = 0; L.clouds.length = 0;
+    P.fireShield = 0; P.hp = P.mhp;
+    /* nothing in the way of seeing the room: a blind player sees no
+       light at all, and an earlier check may have left him that way */
+    P.blind = 0; P.iced = 0; P.hallu = 0; P.unseen = 0; P.warp = null;
+    const glowBad = [];
+    /* Stand in a room with room to measure in: the light reaches two
+       squares along the four ways, and all of it has to be plain lit
+       flagstone or there is nothing to compare against. */
+    let room = null;
+    for (const r of L.rooms) {
+      if (r.gone || r.floors.length < 25) continue;
+      if (!room || r.floors.length > room.floors.length) room = r;
+    }
+    if (room) {
+      room.lit = 1; room.dark = 0;
+      P.x = room.cx; P.y = room.cy;
+      /* and the view is where the tiles say it is: a walk left half
+         finished slides the whole map under the drawing, and every
+         square would be measured a tile out */
+      vm.runInContext('WALK_AT = { x: P.x, y: P.y }; WALK_ON_MAN = 0;', ctx);
+      ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+      for (const f of room.floors) L.darkMap[f[1] * MAP_W + f[0]] = 0;
+      ctx.buildLitMap(L);
+      ctx.computeVis();
+    }
+    /* a square with two clear squares round it in every direction, so
+       there is room to measure the falloff */
+    let spot = null;
+    /* anywhere on the screen will do, as long as it is somewhere you can
+       see and has two clear squares round it in every direction */
+    const half = 3;
+    for (let y = P.y - (ctx.VIEW_H >> 1) + half; y <= P.y + (ctx.VIEW_H >> 1) - half && !spot; y++)
+      for (let x = P.x - (ctx.VIEW_W >> 1) + half; x <= P.x + (ctx.VIEW_W >> 1) - half && !spot; x++) {
+        if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= ctx.MAP_H - 2) continue;
+        /* the square itself, the eight round it, and the four a step
+           further along the four ways - which is everything a blast
+           reaches */
+        const need = [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1],
+                      [2,0],[-2,0],[0,2],[0,-2]];
+        let all = 1;
+        for (const n of need) {
+          const j = (y + n[1]) * MAP_W + (x + n[0]);
+          /* plain flagstones: a staircase is drawn bright whatever the
+             room is doing, and would not show the light at all */
+          if (L.tiles[j] !== ctx.FLOOR || !(L.flags[j] & ctx.F_VIS) || L.decor[j]) all = 0;
+        }
+        if (all) spot = { x, y };
+      }
+    /* and if the floor will not provide one, lay it: thirteen squares of
+       plain lit flagstones, which is everything a blast reaches */
+    let putBackGlow = null;
+    const need2 = [[0,0],[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1],
+                   [2,0],[-2,0],[0,2],[0,-2]];
+    if (!spot) {
+      for (const [dx, dy] of [[3, 0], [-3, 0], [0, 3], [0, -3], [4, 0], [-4, 0]]) {
+        const x = P.x + dx, y = P.y + dy;
+        if (x < 3 || y < 3 || x >= MAP_W - 3 || y >= ctx.MAP_H - 3) continue;
+        putBackGlow = clearPatch(ctx, need2.map(n => [x + n[0], y + n[1]]));
+        spot = { x, y };
+        break;
+      }
+    }
+    if (!spot) glowBad.push('found nowhere open enough to light');
+    else {
+      const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+      /* the light laid on each square, as a share of a full-strength wash */
+      const litMap = () => {
+        const out = {};
+        for (const f of fills) {
+          if (f.tag !== 'screen' || f.op !== 'lighter') continue;
+          if (f.w !== TS || f.h !== TS) continue;
+          const mx = camx + ((f.x - ctx.VIEW_PX) / TS | 0);
+          const my = camy + ((f.y - ctx.VIEW_PY) / TS | 0);
+          out[mx + ',' + my] = { v: f.at / (ctx.ALPHA * ctx.GLOW_WASH), col: f.col };
+        }
+        return out;
+      };
+      /* Fire is not a painted band.  Every square a fire or a current
+         lights takes a little off what falls on it or puts a little on -
+         GLOW_VARY either way, and never above full, since there is
+         nowhere above full to go - so what each square has to hit is a
+         band rather than a number.  The shape of the light is still
+         exact: full here, half there, nothing at all beyond. */
+      const band = (got, want, vary) => {
+        const v = (vary === undefined) ? ctx.GLOW_VARY : vary;
+        const lo = want * (1 - v) - 0.02;
+        const hi = Math.min(want * (1 + v), 1) + 0.02;
+        return got >= lo && got <= hi;
+      };
+      const shape = (got, want, what, vary) => {
+        for (const k of Object.keys(want)) {
+          const g = got[k];
+          if (!g) { glowBad.push(what + ': no light on ' + k); continue; }
+          if (!band(g.v, want[k], vary))
+            glowBad.push(what + ': ' + k + ' came out ' + g.v.toFixed(2) + ', wanted about ' + want[k]);
+        }
+        for (const k of Object.keys(got))
+          if (want[k] === undefined) glowBad.push(what + ': light where there should be none, at ' + k);
+        /* and no two rings of it are flat: that is the whole point of
+           the variation, and a probe that only checked the band would
+           pass just as happily with none of it */
+        var seen = {}, n = 0, kk;
+        for (kk in got) { var t = got[kk].v.toFixed(3); if (!seen[t]) { seen[t] = 1; n++; } }
+        if (n < 3) glowBad.push(what + ' lit every square it touched to ' + n + ' brightness(es)');
+      };
+      const rel = (dx, dy) => (spot.x + dx) + ',' + (spot.y + dy);
+
+      /* a flame */
+      ctx.dropEmber(spot.x, spot.y, 6);
+      L.clouds.forEach(c => { c.at = 0; });
+      frame('glow-fire');
+      const want1 = {};
+      want1[rel(0, 0)] = 1;
+      for (const d of [[1,0],[-1,0],[0,1],[0,-1]]) want1[rel(d[0], d[1])] = 1;
+      for (const d of [[1,1],[1,-1],[-1,1],[-1,-1]]) want1[rel(d[0], d[1])] = 0.5;
+      const got1 = litMap();
+      shape(got1, want1, 'a flame');
+      for (const k of Object.keys(got1))
+        if (String(got1[k].col).toLowerCase() !== ctx.GLOW_FIRE)
+          { glowBad.push('a flame is lighting the room ' + got1[k].col); break; }
+
+      /* a blast */
+      L.clouds.length = 0;
+      G.splash = { cells: [[spot.x, spot.y]], t: Date.now(), kind: 'blast' };
+      frame('glow-blast');
+      const want2 = {};
+      want2[rel(0, 0)] = 1;
+      for (const d of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        want2[rel(d[0], d[1])] = 1;
+        want2[rel(d[0] * 2, d[1] * 2)] = 0.5;
+      }
+      for (const d of [[1,1],[1,-1],[-1,1],[-1,-1]]) want2[rel(d[0], d[1])] = 0.5;
+      shape(litMap(), want2, 'a blast');
+      /* and it goes out with the flash */
+      G.splash.t = Date.now() - ctx.BLAST_FLASH_MS - 50;
+      frame('glow-blast-gone');
+      if (Object.keys(litMap()).length) glowBad.push('the light of a blast outlived the flash');
+      G.splash = null;
+
+      /* A beam out of a wand: the same shape as a flame, at half the
+         strength - it is a light in the air, not a fire on the floor -
+         and gone the instant the beam is.  Blue for the current, the
+         fire's own colour for a sheet of flame. */
+      const halved = {};
+      for (const k of Object.keys(want1)) halved[k] = want1[k] * ctx.GLOW_BEAM;
+      for (const beam of [{ kind: 'lightning', col: ctx.GLOW_BOLT, life: ctx.BOLT_BEAM_LIFE },
+                          { kind: 'fire', col: ctx.GLOW_FIRE, life: ctx.FIRE_BEAM_LIFE }]) {
+        G.bolt = { path: [[spot.x, spot.y]], kind: beam.kind, mode: 'beam',
+                   dir: [1, 0], t: Date.now() };
+        frame('glow-beam-' + beam.kind);
+        const got3 = litMap();
+        /* A beam is halved to start with, so it varies further than a
+           fire does - the same share of a smaller number is a difference
+           nobody could see. */
+        shape(got3, halved, 'a beam of ' + beam.kind, ctx.GLOW_VARY_BEAM);
+        /* and the spread it actually achieves: a beam whose squares
+           differ by less than a fire's does is one nobody can see
+           varying, which is the whole complaint this answers */
+        {
+          const vals = Object.keys(got3).map(k => got3[k].v);
+          const spread = Math.max(...vals) - Math.min(...vals);
+          if (spread < ctx.GLOW_BEAM * ctx.GLOW_VARY)
+            glowBad.push('a beam of ' + beam.kind + ' varies by only ' + spread.toFixed(2));
+          /* and the rule behind that number: a beam's light is half a
+             fire's to begin with, so the same share of it is a
+             difference nobody can see on the screen.  It has to vary by
+             more than a fire does, not the same. */
+          if (!(ctx.GLOW_VARY_BEAM > ctx.GLOW_VARY))
+            glowBad.push('a beam varies no more than a fire, whose light is twice as strong');
+        }
+        const cols = new Set(Object.keys(got3).map(k => String(got3[k].col).toLowerCase()));
+        if (cols.size !== 1 || !cols.has(beam.col))
+          glowBad.push('a beam of ' + beam.kind + ' lights the room ' + [...cols].join(', ') +
+            ', not ' + beam.col);
+        /* and it takes its light with it when it goes */
+        G.bolt.t = Date.now() - beam.life - 50;
+        frame('glow-beam-gone-' + beam.kind);
+        if (Object.keys(litMap()).length)
+          glowBad.push('the light of a beam of ' + beam.kind + ' outlived the beam');
+        G.bolt = null;
+      }
+
+      /* and with nothing burning, nothing is lit */
+      frame('glow-none');
+      if (Object.keys(litMap()).length)
+        glowBad.push('the room was lit with nothing burning in it');
+
+      /* The other half of it: a dark square really is drawn brighter.
+         Full light brings it all the way up, half light halfway. */
+      const tileAlpha = (mx, my) => {
+        const px = ctx.VIEW_PX + (mx - camx) * TS, py = ctx.VIEW_PY + (my - camy) * TS;
+        const b = blits.find(o => o.tag === 'screen' && o.from === 'atlas' &&
+          o.dx === px && o.dy === py && o.dw === TS);
+        return b ? b.at : null;
+      };
+      const darkened = [];
+      for (const n of [[0,0],[1,0],[1,1],[2,0]]) {
+        const j = (spot.y + n[1]) * MAP_W + (spot.x + n[0]);
+        L.darkMap[j] = 1; darkened.push(j);
+      }
+      frame('glow-dark-off');
+      const off1 = tileAlpha(spot.x + 1, spot.y), offD = tileAlpha(spot.x + 1, spot.y + 1);
+      ctx.dropEmber(spot.x, spot.y, 6);
+      L.clouds.forEach(c => { c.at = 0; });
+      frame('glow-dark-on');
+      const on1 = tileAlpha(spot.x + 1, spot.y), onD = tileAlpha(spot.x + 1, spot.y + 1);
+      /* A square with no light on it is drawn at exactly the night
+         shade; one with firelight on it is brought up towards full by
+         however much light fell there, which is a band now rather than a
+         number. */
+      const near = (a2, b2) => Math.abs(a2 - b2) < 0.02;
+      const upBand = (got, base, want) => {
+        const lo = base + (1 - base) * (want * (1 - ctx.GLOW_VARY)) - 0.02;
+        const hi = base + (1 - base) * Math.min(want * (1 + ctx.GLOW_VARY), 1) + 0.02;
+        return got >= lo && got <= hi;
+      };
+      if (off1 === null || on1 === null) glowBad.push('could not find the square to compare');
+      else {
+        if (!near(off1, ctx.NIGHT_SHADE))
+          glowBad.push('a dark square is drawn at ' + off1 + ', not ' + ctx.NIGHT_SHADE);
+        if (!upBand(on1, off1, 1))
+          glowBad.push('a dark square beside a flame is drawn at ' + on1 + ', not about full');
+        if (!upBand(onD, offD, 0.5))
+          glowBad.push('a dark corner beside a flame is drawn at ' + onD + ', not about halfway up');
+      }
+      L.clouds.length = 0;
+      for (const j of darkened) L.darkMap[j] = 0;
+    }
+    console.log('light from fire      : ' + (glowBad.length ? glowBad.length + ' problems' :
+      'a flame lights the four beside it and the corners at half, a blast a square ' +
+      'further, lightning the same in blue - and no two squares of it quite alike, ' +
+      'within ' + Math.round(ctx.GLOW_VARY * 100) + '%, or ' +
+      Math.round(ctx.GLOW_VARY_BEAM * 100) + '% for a beam'));
+    for (const b of glowBad) problems.push('glow: ' + b);
+    if (putBackGlow) putBackGlow();
+    L.clouds.length = 0; G.splash = null; G.bolt = null;
+  }
+
+  /* --- a thing held up and looked at --------------------------------
+     Every item can be inspected: a box with its picture, its name, a
+     line about what it is, and its details in full.  The three panels
+     down the right of the pack open boxes of their own.  Anything at all
+     puts the box away again. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    G.mode = 'play'; G.menu = null; G.roomBox = null; G.pouch = null;
+    G.walk = null; G.drag = null; G.sel = null; G.inspect = null;
+    L.mons.length = 0;
+    for (let i = 0; i < ctx.N_SLOTS; i++) P.slots[i] = null;
+    const cry = ctx.mkItem('crystal', 0); cry.cnt = 2; ctx.addItem(cry);
+    ctx.openInv();
+    G.cur.r = 1; G.cur.c = 0;
+    const inspBad = [];
+    const boxFills = () => fills.filter(f => f.tag === 'screen' &&
+      f.col === '#0b0d1c' && f.w > 100 && f.h > 40);
+    /* opened on an item */
+    ctx.openInspect(cry);
+    frame('inspect-item');
+    const box = boxFills();
+    if (!box.length) inspBad.push('no box was drawn');
+    else {
+      const b = box[box.length - 1];
+      if (b.x < 0 || b.y < 0 || b.x + b.w > ctx.SW || b.y + b.h > ctx.SH)
+        inspBad.push('the box runs off the screen: ' + b.x + ',' + b.y + ' ' + b.w + 'x' + b.h);
+      const inBox = o => o.dx >= b.x && o.dx + o.dw <= b.x + b.w &&
+                         o.dy >= b.y && o.dy + o.dh <= b.y + b.h;
+      /* its picture, twice the size */
+      const art = blits.filter(o => o.tag === 'screen' && o.from === 'atlas' &&
+        inBox(o) && o.dw >= 16);
+      if (!art.length) inspBad.push('the box has no picture in it');
+      /* and a good deal of writing */
+      const words = blits.filter(o => o.tag === 'screen' && o.from === 'font' && inBox(o));
+      if (words.length < 120) inspBad.push('only ' + words.length + ' letters in the box');
+    }
+    /* every kind of thing can be looked at, and the box always fits */
+    const tries = [['potion', 0], ['scroll', 0], ['wand', 0], ['ring', 0],
+                   ['weapon', 1], ['armor', 0], ['head', 0], ['feet', 0],
+                   ['shield', 0], ['food', 0], ['crystal', 0], ['dynamite', 0],
+                   ['pin', 0], ['pouch', 0], ['amulet', 0], ['key', 0]];
+    for (const [t, k] of tries) {
+      const it = ctx.mkItem(t, k);
+      ctx.closeInspect();
+      if (!ctx.openInspect(it)) { inspBad.push('a ' + t + ' could not be inspected'); continue; }
+      frame('inspect-' + t);
+      const bb = boxFills();
+      if (!bb.length) { inspBad.push('a ' + t + ' opened no box'); continue; }
+      const b2 = bb[bb.length - 1];
+      if (b2.y < 0 || b2.y + b2.h > ctx.SH)
+        inspBad.push('the box for a ' + t + ' is ' + b2.h + ' tall and does not fit');
+    }
+    /* the menu offers it on everything */
+    for (const [t, k] of tries) {
+      const it = ctx.mkItem(t, k);
+      const acts = ctx.itemActions(it, { kind: 'slot', i: 0 }).map(a => a[0]);
+      if (acts.indexOf('inspect') < 0) inspBad.push('the menu does not offer to inspect a ' + t);
+    }
+    /* the two boxes that are not about an item */
+    ctx.closeInspect(); ctx.openSelfBox();
+    frame('inspect-you');
+    if (!boxFills().length) inspBad.push('the box about you drew nothing');
+    ctx.closeInspect(); ctx.openEffectsBox();
+    frame('inspect-effects');
+    if (!boxFills().length) inspBad.push('the box of effects drew nothing');
+    /* anything at all closes it */
+    ctx.openEffectsBox();
+    ctx.invKey('x');
+    if (G.inspect) inspBad.push('a key did not put the box away');
+    ctx.openEffectsBox();
+    ctx.invClick({ what: 'cell', i: { r: 1, c: 1 } }, 0);
+    if (G.inspect) inspBad.push('a click did not put the box away');
+    /* and the three panels open the three boxes */
+    ctx.closeInspect();
+    G.cur.r = 1; G.cur.c = 0;
+    frame('inspect-panels');
+    for (const [which, kind] of [['item', 'item'], ['you', 'you'], ['effects', 'effects']]) {
+      const h = ctx.HITS.filter(o => o.what === 'panel' && o.i === which);
+      if (!h.length) { inspBad.push('the ' + which + ' panel is not a thing you can press'); continue; }
+      ctx.closeInspect();
+      ctx.invClick(h[0], 0);
+      if (!G.inspect) inspBad.push('pressing the ' + which + ' panel opened nothing');
+      else if (G.inspect.kind !== kind)
+        inspBad.push('the ' + which + ' panel opened the ' + G.inspect.kind + ' box');
+    }
+    /* --- and the frame walks onto them with the arrows -------------- */
+    ctx.closeInspect(); G.panelSel = null;
+    G.cur.r = 1; G.cur.c = 0;
+    const key = k => ctx.invKey(k);
+    /* off the right hand edge of the grid, and not before */
+    for (let n = 0; n < 4; n++) {
+      key('ArrowRight');
+      if (ctx.panelOn() >= 0) inspBad.push('the frame left the grid at column ' + G.cur.c);
+    }
+    key('ArrowRight');
+    if (ctx.panelOn() !== 0) inspBad.push('walking off the right edge did not reach the panels');
+    /* the grid cursor stands aside while the frame is out there */
+    frame('panel-frame');
+    {
+      const golds = fills.filter(f => f.tag === 'screen' && f.col === '#fad039' &&
+        (f.w === 1 || f.h === 1));
+      const pr = ctx.panelRects()[0];
+      const onPanel = golds.filter(f => f.x >= pr.x - 1 && f.x <= pr.x + pr.w &&
+        f.y >= pr.y - 1 && f.y <= pr.y + pr.h + 1);
+      if (onPanel.length < 4) inspBad.push('no frame was drawn round the panel');
+    }
+    /* down through the three of them, and no further */
+    key('ArrowDown');
+    if (ctx.panelOn() !== 1) inspBad.push('down did not move to the second panel');
+    key('ArrowDown');
+    if (ctx.panelOn() !== 2) inspBad.push('down did not move to the third panel');
+    key('ArrowDown');
+    if (ctx.panelOn() !== 2) inspBad.push('down walked off the bottom panel');
+    /* ENTER and SPACE both open the one it is on */
+    for (const press of ['Enter', ' ']) {
+      ctx.closeInspect();
+      key(press);
+      if (!G.inspect) inspBad.push(press === ' ' ? 'SPACE opened nothing' : 'ENTER opened nothing');
+      else if (G.inspect.kind !== 'effects')
+        inspBad.push(press + ' on the third panel opened the ' + G.inspect.kind + ' box');
+      ctx.closeInspect();
+    }
+    /* left comes back to the grid, where the cursor was left */
+    const wasR = G.cur.r, wasC = G.cur.c;
+    key('ArrowLeft');
+    if (ctx.panelOn() >= 0) inspBad.push('left did not come back off the panels');
+    if (G.cur.r !== wasR || G.cur.c !== wasC)
+      inspBad.push('coming back off the panels moved the cursor');
+    /* ESC out on the panels is the way out of the pack altogether: the
+       left arrow is what steps back into the grid, and having to press
+       ESC twice to leave reads as the key not working */
+    key('ArrowRight');
+    key('Escape');
+    if (ctx.panelOn() >= 0) inspBad.push('ESC left the frame out on the panels');
+    if (G.mode === 'inv') inspBad.push('ESC on a panel did not close the pack');
+    ctx.openInv(); G.cur.r = 1; G.cur.c = 0;
+
+    /* the panels do not overlap each other */
+    const panels = ['item', 'you', 'effects'].map(w =>
+      ctx.HITS.filter(o => o.what === 'panel' && o.i === w)[0]).filter(Boolean);
+    for (let a = 0; a < panels.length; a++)
+      for (let b2 = a + 1; b2 < panels.length; b2++) {
+        const p1 = panels[a], p2 = panels[b2];
+        if (p1.y < p2.y + p2.h && p2.y < p1.y + p1.h)
+          inspBad.push('the ' + p1.i + ' and ' + p2.i + ' panels overlap');
+      }
+    ctx.closeInspect();
+    console.log('inspecting a thing   : ' + (inspBad.length ? inspBad.length + ' problems' :
+      'a box with its picture, its name and its details - for every kind of thing - ' +
+      'and three panels the frame walks onto, with a click or with the arrows'));
+    for (const b of inspBad) problems.push('inspect: ' + b);
+    ctx.closeInv();
+    for (let i = 0; i < ctx.N_SLOTS; i++) P.slots[i] = null;
+  }
+
+  /* --- the story so far ----------------------------------------------
+     The panel keeps the last few lines because that is all it has room
+     for.  T - and a press on the panel itself - reads the whole run
+     back, and the arrows walk it. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    G.mode = 'play'; G.menu = null; G.roomBox = null; G.pouch = null; G.inspect = null;
+    G.walk = null; G.drag = null; G.pan = null; G.story = null;
+    L.mons.length = 0;
+    const storyBad = [];
+    /* a run with more talk behind it than the panel keeps */
+    G.log = []; G.hist = [];
+    for (let t = 1; t <= 200; t++) {
+      G.turn = t;
+      G.msgq = [{ s: 'Line number ' + t + ' of the story.', c: 'w', fx: t % 3 ? '' : 'a note' }];
+      vm.runInContext('finishMsgs();', ctx);
+    }
+    if (G.log.length > 60) storyBad.push('the panel is keeping ' + G.log.length + ' lines');
+    if (G.hist.length < 200) storyBad.push('the story kept only ' + G.hist.length + ' of 200 lines');
+    /* T opens it */
+    key('t');
+    if (G.mode !== 'story' || !G.story) storyBad.push('T did not open the story');
+    if (!G.story) G.story = { at: 0 };     /* so the rest can still be measured */
+    frame('story');
+    const slab = fills.filter(f => f.tag === 'screen' && f.col === '#0b0d1c' &&
+      f.w > ctx.SW - 20 && f.h > ctx.SH - 20);
+    if (!slab.length) storyBad.push('no box was drawn');
+    const words = blits.filter(b => b.tag === 'screen' && b.from === 'font');
+    if (words.length < 100) storyBad.push('only ' + words.length + ' letters of story on the screen');
+    /* it opens at the end - the last thing said - and walks back */
+    const atEnd = G.story ? G.story.at : 0;
+    if (!atEnd) storyBad.push('it opened at the beginning, not at the last thing said');
+    key('ArrowDown');
+    if (G.story.at !== atEnd) storyBad.push('it scrolled past the end');
+    key('ArrowUp');
+    if (G.story.at !== atEnd - 1) storyBad.push('up did not walk back a line');
+    /* far enough back to reach the first thing ever said, however many
+       lines that is */
+    for (let i = 0; i < 2000 && G.story.at > 0; i++) key('ArrowUp');
+    if (G.story.at !== 0) storyBad.push('it would not walk back to the start');
+    /* and PageDown/End get about it faster */
+    key('End');
+    if (G.story.at !== atEnd) storyBad.push('END did not go to the last thing said');
+    key('PageUp');
+    if (G.story.at >= atEnd) storyBad.push('PAGE UP did not move a page back');
+    key('Home');
+    if (G.story.at !== 0) storyBad.push('HOME did not go to the start');
+    /* and the start of the run is really in there */
+    frame('story-top');
+    const early = blits.filter(b => b.tag === 'screen' && b.from === 'font').length;
+    if (early < 100) storyBad.push('the start of the run drew almost nothing');
+    /* anything else closes it */
+    key('Escape');
+    if (G.mode === 'story') storyBad.push('ESC did not close the story');
+    if (G.mode !== 'play') storyBad.push('closing it left the game in ' + G.mode);
+    /* a press on the panel opens it, and a press inside closes it again */
+    frame('panel-hit');
+    const logHit = ctx.HITS.filter(h => h.what === 'log');
+    if (!logHit.length) storyBad.push('the talk in the panel is not a thing you can press');
+    else {
+      ctx.clickAt(logHit[0].x + 4, logHit[0].y + 4, 0);
+      if (G.mode !== 'story') storyBad.push('pressing the panel opened nothing');
+      ctx.clickAt(ctx.SW >> 1, ctx.SH >> 1, 0);
+      if (G.mode === 'story') storyBad.push('a press inside the story did not put it away');
+    }
+    G.story = null; G.mode = 'play';
+    /* the help screen says so */
+    const helpSays = ctx.HELP.some(r => String(r[0]).indexOf('T') >= 0 &&
+      /log|story|happened/.test(String(r[1])));
+    if (!helpSays) storyBad.push('the help screen says nothing about T');
+    console.log('the story so far     : ' + (storyBad.length ? storyBad.length + ' problems' :
+      'T and a press on the panel both open ' + G.hist.length +
+      ' lines of it, and the arrows walk it end to end'));
+    for (const b of storyBad) problems.push('story: ' + b);
+    G.log = []; G.hist = []; G.turn = 0;
+  }
+
+  /* --- picking words out of a dialog -----------------------------------
+     The game is a picture: there is no text on the page for the browser
+     to select, so a drag across a dialog has to be worked out from what
+     the drawing knows it drew.  What must be true is that the drag picks
+     out the words it crossed, that it can be copied, and above all that
+     it does not do what a drag over the dungeon does - push the map
+     about, which is what a drag on a hint box used to do. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const selBad = [];
+    /* client pixels: the fake canvas is 3x at the origin */
+    const at = (bx, by) => ({ clientX: bx * 3 + 1, clientY: by * 3 + 1, button: 0 });
+    const down = (bx, by) => canvasListeners.mousedown(at(bx, by));
+    const move = (bx, by) => canvasListeners.mousemove(at(bx, by));
+    const up = (bx, by) => canvasListeners.mouseup(at(bx, by));
+
+    G.mode = 'play'; ctx.selClear();
+    ctx.G.drag = null; ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    /* a hint with several lines in it */
+    let want = 0;
+    for (let i = 0; i < ctx.HINTS.length; i++)
+      if (ctx.HINTS[i].length > 120) { want = i; break; }
+    G.mode = 'hint'; G.hint = { i: want, from: 'pause' };
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    const head = ctx.TEXTS.find(t => t.s === 'HINT');
+    const box = head ? ctx.BOXES.filter(b => head.x >= b.x && head.y >= b.y &&
+      head.x < b.x + b.w && head.y < b.y + b.h).pop() : null;
+    if (!box) selBad.push('the hint box is not a box the drawing wrote down');
+    else {
+      const lines = vm.runInContext('hintLines()', ctx);
+      /* drag from the first letter of the first line to the end of the second */
+      down(box.x + 6, box.y + 17);
+      move(box.x + 6 + ctx.DRAG_SLOP + 1, box.y + 17);
+      move(box.x + box.w - 8, box.y + 26);
+      up(box.x + box.w - 8, box.y + 26);
+      const got = ctx.selText();
+      if (!got) selBad.push('a drag across the hint selected nothing');
+      else {
+        const flat = got.replace(/\n/g, ' ');
+        if (lines[0].indexOf(flat.split(' ')[0]) < 0)
+          selBad.push('the selection does not start where the drag did: "' + flat + '"');
+        if (got.indexOf('\n') < 0) selBad.push('a drag down two lines selected only one');
+        if (ctx.HINTS[want].replace(/\s+/g, ' ').indexOf(flat.slice(0, 20)) < 0)
+          selBad.push('the selection is not the hint\'s own words: "' + flat + '"');
+      }
+      /* and the map stayed where it was */
+      if (ctx.G.drag) selBad.push('dragging over a hint pushed the map about');
+      if (ctx.CAM_AT.x || ctx.CAM_AT.y) selBad.push('dragging over a hint moved the view');
+      /* it is drawn: a band behind the words, and the words again on top */
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      const band = fills.filter(f => f.tag === 'screen' && f.col === ctx.SEL_BG);
+      if (!band.length) selBad.push('the selection is not drawn at all');
+      /* copying it hands over exactly those words */
+      let copied = null;
+      ctx.navigator = { clipboard: { writeText: t => { copied = t; } } };
+      ctx.selCopy();
+      if (copied !== ctx.selText()) selBad.push('copying handed over "' + copied + '"');
+      /* a key puts the selection away */
+      key('ArrowDown');
+      if (ctx.G.sel) selBad.push('the selection outlived the next key');
+    }
+
+    /* the same drag over the dungeon still pushes the map, which is the
+       thing that must not have been broken to get the above */
+    G.mode = 'play'; G.hint = null; ctx.selClear();
+    ctx.G.drag = null; ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    down(ctx.VIEW_PX + 40, 40);
+    move(ctx.VIEW_PX + 40 - ctx.DRAG_SLOP - 1, 40);
+    move(ctx.VIEW_PX + 20, 40);
+    up(ctx.VIEW_PX + 20, 40);
+    if (!ctx.G.drag && !ctx.CAM_AT.x) selBad.push('a drag over the dungeon no longer moves the map');
+    ctx.G.drag = null; ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+
+    console.log('picking out words    : ' + (selBad.length ? selBad.length + ' problems' :
+      'a drag through a hint takes its words and not the map, and the usual key copies them'));
+    for (const b of selBad) problems.push('selection: ' + b);
+    G.mode = 'play'; ctx.selClear();
+  }
+
+  /* --- bags, boxes and a level gained ----------------------------------
+     Three things that all put the same kind of notice up: a pouch that
+     will not hold any more, a pack that will not, and a level.  A notice
+     stands in front of whatever it interrupted and anything at all puts
+     it away - which is the point of it: a line in the log scrolls past
+     and a box does not. */
+  {
+    const P = ctx.P, G = ctx.G;
+    const bad = [];
+    const slotRef = (it) => ({ kind: 'slot', i: P.slots.indexOf(it) });
+    const labels = (it, ref) => ctx.itemActions(it, ref).map(o => o[1]);
+    const empty = () => { for (let i = 0; i < ctx.N_SLOTS; i++) P.slots[i] = null; };
+
+    /* carrying a pouch: everything in the pack offers to go in it */
+    G.mode = 'play'; G.note = null; ctx.setPouch(null); ctx.closeInv();
+    empty();
+    const pouch = ctx.mkItem('pouch', 0); ctx.addItem(pouch);
+    const scroll = ctx.mkItem('scroll', 0); ctx.addItem(scroll);
+    ctx.openInv();
+    if (labels(scroll, slotRef(scroll)).indexOf('Put in pouch') < 0)
+      bad.push('the pack offers no way into the pouch');
+    /* and the pouch itself does not go in itself */
+    if (labels(pouch, slotRef(pouch)).indexOf('Put in pouch') >= 0)
+      bad.push('a pouch is offered a place inside itself');
+    /* it goes in, and comes back out into the pack */
+    ctx.openItemMenu(scroll, slotRef(scroll));
+    ctx.doMenuAction('putbag');
+    if (pouch.items.indexOf(scroll) < 0) bad.push('it did not go in the pouch');
+    if (P.slots.indexOf(scroll) >= 0) bad.push('it is in the pack and the pouch at once');
+    ctx.setPouch(pouch);
+    const pref = { kind: 'pouch', i: pouch.items.indexOf(scroll), pouch: pouch };
+    if (labels(scroll, pref).indexOf('Put in pack') < 0)
+      bad.push('the pouch offers no way back into the pack');
+    ctx.openItemMenu(scroll, pref);
+    ctx.doMenuAction('takeout');
+    if (P.slots.indexOf(scroll) < 0) bad.push('it did not come back into the pack');
+    if (pouch.items.indexOf(scroll) >= 0) bad.push('it is in the pouch and the pack at once');
+
+    /* a full pouch says so in a box */
+    G.note = null; G.mode = 'inv';
+    for (let j = 0; j < ctx.POUCH_CAP; j++) pouch.items[j] = ctx.mkItem('potion', 1);
+    ctx.openItemMenu(scroll, slotRef(scroll));
+    ctx.doMenuAction('putbag');
+    if (G.mode !== 'note' || !G.note) bad.push('a full pouch put no notice up');
+    else if (!/pouch is full/i.test(G.note.line)) bad.push('it says "' + G.note.line + '"');
+    if (pouch.items.indexOf(scroll) >= 0) bad.push('it went into the full pouch anyway');
+    /* the notice is drawn, and over the pack it interrupted */
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    const said = ctx.TEXTS.map(t => t.s).join(' ');
+    if (said.indexOf('full') < 0) bad.push('the notice was not drawn');
+    /* and any key at all puts it away and hands the pack back */
+    key('Enter');
+    if (G.mode !== 'inv') bad.push('the notice did not hand back the pack, it went to ' + G.mode);
+    if (G.note) bad.push('the notice is still up');
+
+    /* a full pack, taking out of the pouch */
+    G.note = null;
+    empty();
+    P.slots[0] = pouch;
+    for (let i = 1; i < ctx.N_SLOTS; i++) P.slots[i] = ctx.mkItem('crystal', 0);
+    for (let j = 0; j < ctx.POUCH_CAP; j++) pouch.items[j] = null;
+    const stuck = ctx.mkItem('wand', 0); pouch.items[0] = stuck;
+    ctx.setPouch(pouch);
+    G.mode = 'inv';
+    ctx.openItemMenu(stuck, { kind: 'pouch', i: 0, pouch: pouch });
+    ctx.doMenuAction('takeout');
+    if (G.mode !== 'note' || !G.note) bad.push('a full pack put no notice up');
+    else if (!/pack is full/i.test(G.note.line)) bad.push('the full pack says "' + G.note.line + '"');
+    if (pouch.items.indexOf(stuck) < 0) bad.push('it left the pouch with nowhere to go');
+    key('Escape');
+
+    /* Something you walked over with a full pack is still there, and
+       once you have made room the game says so and one key takes it. */
+    G.note = null; ctx.setPouch(null); ctx.closeInv(); G.mode = 'play';
+    ctx.L.items.length = 0;
+    empty();
+    for (let i = 0; i < ctx.N_SLOTS; i++) P.slots[i] = ctx.mkItem('crystal', 0);
+    const missed = ctx.mkItem('wand', 0);
+    missed.x = P.x; missed.y = P.y; ctx.L.items.push(missed);
+    vm.runInContext('autoPickup();', ctx);
+    if (ctx.L.items.indexOf(missed) < 0) bad.push('a full pack picked it up anyway');
+    /* open the pack, make room, close it - and it is offered */
+    ctx.openInv();
+    P.slots[0] = null;
+    G.log = [];
+    ctx.closeInv();
+    const offered = G.log.map(l => l.s).join(' ');
+    if (offered.indexOf('ENTER') < 0)
+      bad.push('closing the pack said nothing about what is under you: "' + offered + '"');
+    /* and ENTER takes it rather than starting to shoot */
+    key('Enter');
+    if (ctx.L.items.indexOf(missed) >= 0) bad.push('ENTER left it on the floor');
+    if (ctx.carriedItems().indexOf(missed) < 0) bad.push('ENTER did not pick it up');
+    /* nothing underfoot: closing the pack says nothing */
+    ctx.L.items.length = 0;
+    ctx.openInv(); G.log = []; ctx.closeInv();
+    if (G.log.length) bad.push('closing the pack over bare floor said "' + G.log[0].s + '"');
+    empty();
+
+    /* a chest offers to be drunk out of, and eaten out of */
+    G.note = null; ctx.setPouch(null); ctx.closeInv(); G.mode = 'play';
+    const chest = ctx.mkItem('chest', 0);
+    chest.items = new Array(ctx.CHEST_CAP).fill(null);
+    const flask = ctx.mkItem('potion', 0), meal = ctx.mkItem('food', 0);
+    chest.items[0] = flask; chest.items[1] = meal;
+    chest.x = P.x; chest.y = P.y; chest.seen = 1;
+    ctx.L.items.push(chest);
+    G.box = chest; ctx.setPouch(chest);
+    const cref = (i) => ({ kind: 'pouch', i: i, pouch: chest });
+    if (labels(flask, cref(0)).indexOf('Drink') < 0) bad.push('a chest offers no way to drink');
+    if (labels(meal, cref(1)).indexOf('Eat') < 0) bad.push('a chest offers no way to eat');
+    /* and drinking out of it empties that square of the chest */
+    P.hp = 1; P.mhp = 40;
+    ctx.openItemMenu(flask, cref(0));
+    ctx.doMenuAction('use');
+    if (chest.items[0]) bad.push('the flask is still in the chest after drinking it');
+    ctx.setPouch(null); ctx.closeInv();
+    const ix = ctx.L.items.indexOf(chest); if (ix >= 0) ctx.L.items.splice(ix, 1);
+    G.box = null;
+
+    /* a level gained says so, and a coming of age says it instead */
+    G.mode = 'play'; G.note = null; G.perkPick = null; G.levelUp = 0;
+    P.exp = ctx.E_LEVELS[P.lv - 1] + 1;
+    vm.runInContext('checkLevelUp();', ctx);
+    if (!G.levelUp) bad.push('a level gained queued no notice');
+    const gained = P.lv;
+    G.perkPick = null;
+    vm.runInContext('tick(true);', ctx);
+    if (G.mode !== 'note' || !G.note) bad.push('a level gained put no notice up');
+    else if (G.note.line !== 'Welcome to level ' + gained + '!')
+      bad.push('the level notice says "' + G.note.line + '"');
+    key('Enter');
+    /* and when a perk choice is waiting, that is the announcement */
+    G.note = null; G.levelUp = P.lv + 1;
+    G.perkPick = { lv: P.lv + 1, offer: ctx.perkOffer(), i: 0, at: 0 };
+    ctx.L.mons.length = 0;
+    vm.runInContext('tick(true);', ctx);
+    if (G.mode === 'note') bad.push('a coming of age put a level notice up as well');
+    G.perkPick = null; G.note = null; G.levelUp = 0; G.mode = 'play';
+
+    console.log('bags and notices     : ' + (bad.length ? bad.length + ' problems' :
+      'the pack and the pouch pass things both ways, a full one says so in a box, ' +
+      'a chest can be drunk from, what you stepped over is offered again once there ' +
+      'is room, and a level gained is held up unless a perk is'));
+    for (const b of bad) problems.push('notices: ' + b);
+  }
+
+  /* --- the current in the water is not wallpaper -----------------------
+     A pool of water lit up by a shocking stone is a great many squares
+     stamped with the same little fork at once.  Each one is turned by
+     its own eighth of a circle, dealt by where the square is, so the
+     pool crackles instead of repeating - and it is the same every frame
+     while it lasts, or it would flicker. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const bad = [];
+    G.mode = 'play'; G.note = null; ctx.selClear();
+    L.mons.length = 0; L.items.length = 0;
+    const cells = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = 1; dx <= 5; dx++)
+      cells.push([P.x + dx, P.y + dy]);
+    const undo = clearPatch(ctx, cells);
+    for (const c of cells) L.tiles[c[1] * ctx.MAP_W + c[0]] = ctx.WATER;
+    ctx.computeVis();
+    for (const c of cells) L.flags[c[1] * ctx.MAP_W + c[0]] |= (ctx.F_VIS | ctx.F_SEEN);
+    G.splash = { cells: cells.slice(), t: Date.now(), kind: 'zap' };
+    const boltIx = ctx.IX['bolt'];
+    const bx = (boltIx % ctx.ATLAS.cols) * ctx.TS, by = ((boltIx / ctx.ATLAS.cols) | 0) * ctx.TS;
+    const sparks = () => {
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        b.sx === bx && b.sy === by);
+    };
+    const one = sparks();
+    if (one.length < 8) bad.push('only ' + one.length + ' sparks were drawn over the pool');
+    /* several angles between them, and none of them a quarter turn -
+       an eighth of a circle is what makes it look unrepeated */
+    const angles = new Set(one.map(b => JSON.stringify(b.mat)));
+    if (angles.size < 3) bad.push('the sparks were drawn at ' + angles.size + ' angle(s)');
+    /* and the same again next frame: a spark that spins is a strobe */
+    const two = sparks();
+    const key1 = one.map(b => b.dx + ',' + b.dy + ':' + JSON.stringify(b.mat)).sort().join('|');
+    const key2 = two.map(b => b.dx + ',' + b.dy + ':' + JSON.stringify(b.mat)).sort().join('|');
+    if (key1 !== key2) bad.push('the sparks moved between one frame and the next');
+    console.log('a current in water   : ' + one.length + ' sparks over the pool at ' +
+      angles.size + ' angles, the same every frame');
+    for (const b of bad) problems.push('current: ' + b);
+    G.splash = null;
+    undo();
+    ctx.computeVis();
+  }
+
+  /* --- a rug with a door in the floor under it -------------------------
+     A trapdoor is a tile, not a thing lying on the floor, and only the
+     plain flagstone case drew what was lying on a square.  So a rug with
+     a door under it had a bare stone in the middle of the pattern -
+     which is the one thing it must not have, since hiding the door is
+     the whole reason one is laid there. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const bad = [];
+    G.mode = 'play'; G.note = null; ctx.selClear();
+    L.mons.length = 0; L.items.length = 0;
+    const x = P.x + 3, y = P.y;
+    const undo = clearPatch(ctx, [[x - 1, y], [x, y], [x + 1, y]]);
+    const j = y * ctx.MAP_W + x;
+    const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+    const px = ctx.VIEW_PX + (x - camx) * ctx.TS, py = ctx.VIEW_PY + (y - camy) * ctx.TS;
+    const cellOf = (n) => { const i = ATLAS.index[n]; return [(i % ATLAS.cols) * 8, ((i / ATLAS.cols) | 0) * 8]; };
+    const drawnAt = () => {
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        b.dx === px && b.dy === py);
+    };
+    const rugCells = {};
+    for (const n of ctx.RUG_TILES) { const c = cellOf(n); rugCells[c[0] + ',' + c[1]] = n; }
+    const doorCell = cellOf('trapdoor');
+
+    /* plain floor with a rug square on it: the rug is drawn */
+    L.decor[j] = 'rug_11';
+    let got = drawnAt();
+    if (!got.some(b => rugCells[b.sx + ',' + b.sy])) bad.push('a rug on plain floor is not drawn');
+
+    /* now put a door in the floor under it, hidden as one under a rug is */
+    L.tiles[j] = ctx.TRAPDOOR;
+    L.tdoor = L.tdoor || {};
+    L.tdoor[j] = { found: 0 };
+    ctx.computeVis();
+    L.flags[j] |= (ctx.F_VIS | ctx.F_SEEN);
+    got = drawnAt();
+    if (!got.some(b => rugCells[b.sx + ',' + b.sy]))
+      bad.push('the rug square over a trapdoor is bare flagstone');
+    if (got.some(b => b.sx === doorCell[0] && b.sy === doorCell[1]))
+      bad.push('a trapdoor under a rug is drawn through it');
+
+    /* and with no rug over it, found, the door itself shows */
+    delete L.decor[j];
+    L.tdoor[j].found = 1;
+    got = drawnAt();
+    if (!got.some(b => b.sx === doorCell[0] && b.sy === doorCell[1]))
+      bad.push('a found trapdoor with nothing over it is not drawn');
+
+    console.log('a rug over a trapdoor : ' + (bad.length ? bad.length + ' problems' :
+      'the rug is whole over it, the door does not show through, and a bare one still does'));
+    for (const b of bad) problems.push('trapdoor: ' + b);
+    delete L.tdoor[j];
+    L.tiles[j] = ctx.FLOOR;
+    undo();
+    ctx.computeVis();
   }
 
   if (problems.length) {

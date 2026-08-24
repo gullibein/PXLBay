@@ -220,6 +220,8 @@ for (let s = 0; s < 6; s++) {
   }
 }
 check(losFail === 0, 'line of sight failures: ' + losFail);
+console.log('line of sight: nothing seen beyond the lamp but your own lit room, ' +
+  'a fire, and ' + ctx.LOS_FACES + ' wall faces beside something visible');
 
 console.log('phase: soak start');
 /* --- 6. soak ------------------------------------------------------- */
@@ -1040,7 +1042,13 @@ const piles = ctx.pileSizes(14);
 console.log('pile sizes   : over ' + piles.floors + ' floors, biggest of each - ' +
   Object.keys(piles.worst).sort().map(n => n + ' x' + piles.worst[n]).join(', '));
 check(piles.bad.length === 0, 'oversized piles: ' + [...new Set(piles.bad)].slice(0, 4).join('; '));
-check((piles.worst['stone'] || 0) <= 2, 'found ' + piles.worst['stone'] + ' stones in one place');
+/* A stone pile is a handful off the ground, never a hoard.  How big a
+   handful is the table's business - it has been two and is now three -
+   so ask the table, and keep the rule that made the number small. */
+const stoneCap = ctx.WEAPONS[ctx.weaponIndex('stone')].pile[1];
+check(stoneCap <= 4, 'a stone pile can be ' + stoneCap + ' - that is a hoard, not a handful');
+check((piles.worst['stone'] || 0) <= stoneCap,
+  'found ' + piles.worst['stone'] + ' stones in one place, and the table allows ' + stoneCap);
 
 const pil = ctx.pillarCount();
 console.log('pillars      : at most ' + pil.worst + ' per hall, ' + pil.avg.toFixed(1) + ' on average');

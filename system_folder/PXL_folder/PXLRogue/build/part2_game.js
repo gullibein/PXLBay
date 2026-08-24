@@ -16,7 +16,7 @@ var CHEST_CAP = 5;
 /* ---------------------------------------------------------- appearances */
 function makeAppearances() {
   var i, j;
-  APPEAR = { pot: [], scr: [], wand: [], wandType: [], wandSpr: [], stone: {} };
+  APPEAR = { pot: [], scr: [], wand: [], wandType: [], wandSpr: [], stone: {}, mush: {} };
   KNOWN = { pot: [], scr: [], wand: [], weap: [] };
   /* Two different things are hidden about a piece of kit, and they are
      learned separately.  KNOWN.gear says you recognise the kind on
@@ -78,6 +78,17 @@ function makeAppearances() {
     APPEAR.stone[i] = stoneLooks[sli++ % stoneLooks.length];
   }
 
+  /* And the mushrooms the same way.  One of the five is only food; the
+     rest are worth knowing about before you are hungry enough to find
+     out.  Nothing about a colour says which is which. */
+  var mushLooks = shuffle(MUSH_LOOKS.slice()), mli = 0;
+  KNOWN.mush = [];
+  for (i = 0; i < FOODS.length; i++) {
+    KNOWN.mush.push(0);
+    if (!FOODS[i].mush) continue;
+    APPEAR.mush[i] = mushLooks[mli++ % mushLooks.length];
+  }
+
   /* Two shapes and five carvings between them, so a run does not hand
      you six wands that all look like the same stick.  The sprite goes
      with the name: a copper wand and a birch staff are different things
@@ -102,12 +113,16 @@ function makeAppearances() {
 function freshG() {
   return {
     depth: 0, maxDepth: 1, turn: 0, msgq: [], msgIdx: 0, mode: 'play',
-    dead: 0, deathBy: '', hungerState: 0, amuletMade: 0, bolt: null, log: [],
+    dead: 0, deathBy: '', hungerState: 0, amuletMade: 0, bolt: null, log: [], hist: [],
+    story: null,
     level: null, floors: {}, pendingFall: 0, queuePick: null, pickJob: null, beat: 0,
     ask: null,
     perkPick: null, choice: null, pause: null, look: null,
     titleMenu: null, walk: null, ctx: null, drag: null, waiting: null,
-    roomBox: null, saidWaterCurse: 0, slot: null,
+    roomBox: null, note: null, levelUp: 0,
+    saidWaterCurse: 0, slot: null, deadFrom: 0, inspect: null,
+    floorKey: null,
+    panelSel: null,
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
@@ -195,6 +210,17 @@ function gearRuneKind(it) {
   if (it.t === 'head') return 'gh';
   if (it.t === 'feet') return 'gf';
   return 'g';
+}
+/* Is there anything here for water to bite on?  Leather is not metal,
+   a scroll of protection seals what it is read over, and glass is glass
+   - no smith made it and nothing corrodes it. */
+function canRust(bd) {
+  if (!bd || bd.t !== 'armor') return false;
+  if (bd.protected) return false;
+  var def = ARMORS[bd.k];
+  if (!def) return false;
+  if (def.norust) return false;
+  return def.n.indexOf('leather') < 0;
 }
 function enchantGear(it, def) {
   if (def.bad) { layCurse(it); return; }
@@ -434,9 +460,17 @@ function itemName(it) {
     case 'pin': s = (n > 1) ? (n + ' magical pins') : 'a magical pin'; break;
     case 'dynamite': s = (n > 1) ? (n + ' sticks of dynamite') : 'a stick of dynamite'; break;
     case 'chest': s = it.lock ? artic(MATS[it.lock] + ' chest (locked)') : 'a wooden chest'; break;
-    case 'food':
+    case 'food': {
+      /* A mushroom you have not eaten is a colour and nothing else */
+      var fd = mushKnown(it.k) ? FOODS[it.k].n : FOODS[it.k].pl;
+      if (isMushroom(it.k) && !mushKnown(it.k)) {
+        var mc = mushColour(it.k) + ' mushroom';
+        s = (n > 1) ? (n + ' ' + mc + 's') : artic(mc);
+        break;
+      }
       s = (n > 1) ? (n + ' ' + FOODS[it.k].pl) : artic(FOODS[it.k].n);
       break;
+    }
     case 'potion': {
       var d = KNOWN.pot[it.k] ? 'potion of ' + POTIONS[it.k].n : APPEAR.pot[it.k] + ' potion';
       s = (n > 1) ? (n + ' ' + d + 's') : artic(d);
@@ -536,7 +570,7 @@ function itemSprite(it) {
     case 'chest': return it.seen ? 'chest_open'
       : it.lock ? 'chest_' + MATS[it.lock] : 'chest';
     case 'crystal': return 'crystal';
-    case 'food': return FOODS[it.k].s;
+    case 'food': return (APPEAR.mush && APPEAR.mush[it.k]) || FOODS[it.k].s;
     case 'potion': return P_SPRITE[APPEAR.pot[it.k]] || 'pot_b';
     case 'scroll': return 'scroll';
     case 'wand': return APPEAR.wandSpr[it.k] ||
@@ -804,7 +838,8 @@ function newPlayer() {
     amulet: 0,
     blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
     seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
-    unseen: 0, perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
+    unseen: 0, rage: 0, fireproof: 0,
+    perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
     runSteps: 0, seer: 0, warp: null,
     statWas: null, statLit: {},
     regenCtr: 0
@@ -828,7 +863,20 @@ function playerAC() {
   if (hasRune('warding')) prot += 1;
   return 10 - prot;
 }
-function strBonus() { return hasProp('add strength') ? 2 : 0; }
+/* Strength as it counts this turn.  A berserker mushroom is the only
+   thing that lends any and takes it back again, which is why it is a
+   count of turns rather than a change to the figure itself: nothing has
+   to be put back when it wears off. */
+function strBonus() {
+  return (hasProp('add strength') ? 2 : 0) + (P.rage > 0 ? MUSH_RAGE_STR : 0);
+}
+/* the three questions a mushroom answers */
+function isMushroom(k) { return !!(FOODS[k] && FOODS[k].mush); }
+function mushKnown(k) { return !!(KNOWN.mush && KNOWN.mush[k]); }
+function mushColour(k) {
+  var look = APPEAR.mush && APPEAR.mush[k];
+  return (look && MUSH_COLOUR[look]) || 'pale';
+}
 function effStr() { return clamp(P.str + strBonus(), 3, 31); }
 function effDex() { return clamp(P.dex + (hasProp('dexterity') ? 2 : 0), 3, 24); }
 function effWis() { return clamp(P.wis + (hasProp('wisdom') ? 3 : 0) + (hasRune('insight') ? 2 : 0), 3, 24); }
@@ -928,6 +976,10 @@ function stealthScore() {
   if (hasPerk('silent')) s += PERK_STEALTH;
   if (hasRune('shadow')) s += 14;
   if (hasRune('burden')) s -= 10;
+  /* A light is a light: it shows you the room, and it shows the room
+     you.  Nothing in the dungeon is easier to notice than the one thing
+     down here that is glowing. */
+  if (lampOn()) s -= GLOW_STEALTH;
   /* Silent feet is partly about learning to wear the stuff: the plate
      still clanks, but only half as much. */
   if (P.eq.body && ARMORS[P.eq.body.k].a <= 4) s -= hasPerk('silent') ? 6 : 12;
@@ -1403,6 +1455,8 @@ function playerEffects() {
   if (P.scare) out.push(['monsters flee you (' + P.scare + ')', 'G']);
   if (P.seeinv) out.push(['seeing invisible (' + P.seeinv + ')', 'c']);
   if (P.unseen) out.push(['unseen (' + P.unseen + ')', 'c']);
+  if (P.rage) out.push(['berserk (' + P.rage + ')', 'R']);
+  if (P.fireproof) out.push(['fireproof (' + P.fireproof + ')', 'O']);
   if (P.fireShield) out.push(['ringed in fire (' + P.fireShield + ')', 'O']);
   if (P.monsight) out.push(['monster sight (' + P.monsight + ')', 'c']);
   if (P.seer) out.push(['seeing all (' + P.seer + ')', 'P']);
@@ -1428,8 +1482,13 @@ function playerEffects() {
     if (d && d.prop && PROP_TEXT[d.prop]) out.push(PROP_TEXT[d.prop].slice());
     var rn = activeRune(eq[i]);
     if (rn) out.push([runeEffect(eq[i], rn), rn.bad ? 'R' : 'c']);
+    /* Wise enough to feel that a thing you are wearing has something in
+       it, but not to say what.  It used to read "something sleeps in it"
+       with no hint of what "it" was - which, in a list of what is going
+       on with *you*, says nothing at all, and said it twice over if two
+       of your things were carrying one. */
     else if (eq[i].br && !eq[i].brKnown && effWis() >= 12)
-      out.push(['something sleeps in it', 'P']);
+      out.push(['sleeping rune: ' + shortItem(eq[i]), 'P']);
     if (eq[i].protected) out.push(['armor is protected', 'c']);
   }
   for (i = 0; i < eq.length; i++)
@@ -1603,7 +1662,7 @@ function packRun() {
   var g = {}, k;
   var skip = { level: 1, floors: 1, msgq: 1, log: 1, pouch: 1, pouchLast: 1, waiting: 1,
                roomBox: 1,
-               box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1,
+               box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1, note: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
                queuePick: 1, pickJob: 1, aimSq: 1, slots: 1, hint: 1, pan: 1 };
@@ -1631,12 +1690,12 @@ function unpackRun(s) {
   P = s.p;
   if (!P.perks) P.perks = {};
   setDims(s.mw, s.mh);
-  L = G.floors[G.depth];
+  L = G.floors[G.floorKey || String(G.depth)] || G.floors[G.depth];
   G.level = L;
   if (L) setDims(L.mw, L.mh);
   /* a creature holding you is a reference, not a copy */
   P.heldBy = null; P.held = 0;
-  G.msgq = []; G.log = []; G.msgIdx = 0; G.beat = 0;
+  G.msgq = []; G.log = []; G.hist = []; G.msgIdx = 0; G.beat = 0;
   G.mode = 'play'; G.invOpen = 0;
   computeVis();
   return true;
@@ -1864,7 +1923,8 @@ function mkMonster(c, depth, x, y) {
        save: a reference would be written out as a second copy of the
        creature and come back as somebody else. */
     uid: (G.monUid = (G.monUid || 0) + 1),
-    flasks: D.sp === 'witch' ? WITCH_FLASKS : 0, blinkIn: 0, spiderIn: 0,
+    flasks: D.sp === 'witch' ? WITCH_FLASKS : 0,
+    stones: D.sp === 'witch' ? WITCH_STONES : 0, blinkIn: 0, spiderIn: 0,
     flaskIn: 0, petOf: 0, warp: null, showAt: 0, face: 1,
     invis: D.invis ? 1 : 0, item: null, gold: 0, home: -1,
     bolted: 0, holed: 0, spent: 0, goal: null, ran: 0,
@@ -2083,14 +2143,20 @@ function roomCorners(Lv, ri) {
    go over a rug or a cracked flagstone, which is why the count is a
    target rather than a promise. */
 function spinNest(Lv, ri, cx, cy, want) {
-  var cells = [[cx, cy]], seen = {}, qi = 0, laid = 0, d;
+  /* Work out the whole nest before laying a strand of it.  A corner
+     with a chasm or a stream cutting past it has nowhere for the web to
+     spread, and half a nest - one lonely square in the corner - reads as
+     a mistake rather than as a spinner's home.  Better to try another
+     corner. */
+  var cells = [], seen = {}, qi = 0, d;
   seen[cy * MAP_W + cx] = 1;
-  laid += layWeb(cx, cy, 0, 0, WEB_LIFE_NEST);
-  while (laid < want && qi < cells.length) {
+  if (Lv.tiles[cy * MAP_W + cx] !== FLOOR || Lv.decor[cy * MAP_W + cx]) return 0;
+  cells.push([cx, cy]);
+  while (cells.length < want && qi < cells.length) {
     var c = cells[qi++];
     var dirs = DIR4.slice();
     shuffle(dirs);
-    for (d = 0; d < dirs.length && laid < want; d++) {
+    for (d = 0; d < dirs.length && cells.length < want; d++) {
       var nx = c[0] + dirs[d][0], ny = c[1] + dirs[d][1];
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
       var j = ny * MAP_W + nx;
@@ -2099,10 +2165,16 @@ function spinNest(Lv, ri, cx, cy, want) {
       if (Lv.roomAt[j] !== ri || Lv.tiles[j] !== FLOOR) continue;
       if (nx === Lv.stair.x && ny === Lv.stair.y) continue;
       if (Lv.up && nx === Lv.up.x && ny === Lv.up.y) continue;
+      /* and nothing web will not stick to: a rug, a cracked flagstone,
+         a patch of moss, or a square another nest already covered */
+      if (Lv.decor[j]) continue;
       cells.push([nx, ny]);
-      laid += layWeb(nx, ny, 0, 0, WEB_LIFE_NEST);
     }
   }
+  if (cells.length < Math.min(want, NEST_MIN)) return 0;
+  var laid = 0;
+  for (var i = 0; i < cells.length; i++)
+    laid += layWeb(cells[i][0], cells[i][1], 0, 0, WEB_LIFE_NEST);
   return laid;
 }
 /* Every spinner the floor rolled, moved into the corner of the room it
@@ -2119,12 +2191,18 @@ function spinNests(Lv) {
     if (ri < 0) continue;
     var corners = roomCorners(Lv, ri);
     if (!corners.length) continue;
-    var c = corners[rnd(corners.length)];
-    if (monAt(Lv, c[0], c[1]) && monAt(Lv, c[0], c[1]) !== m) continue;
-    if (c[0] === Lv.stair.x && c[1] === Lv.stair.y) continue;
-    m.x = c[0]; m.y = c[1];
-    m.wx = c[0]; m.wy = c[1]; m.home = ri;
-    if (!spinNest(Lv, ri, c[0], c[1], NEST_MIN + rnd(NEST_MAX - NEST_MIN + 1))) continue;
+    shuffle(corners);
+    var want = NEST_MIN + rnd(NEST_MAX - NEST_MIN + 1), spun = 0;
+    for (var ci = 0; ci < corners.length && !spun; ci++) {
+      var c = corners[ci];
+      if (monAt(Lv, c[0], c[1]) && monAt(Lv, c[0], c[1]) !== m) continue;
+      if (c[0] === Lv.stair.x && c[1] === Lv.stair.y) continue;
+      if (!spinNest(Lv, ri, c[0], c[1], want)) continue;
+      m.x = c[0]; m.y = c[1];
+      m.wx = c[0]; m.wy = c[1]; m.home = ri;
+      spun = 1;
+    }
+    if (!spun) continue;
     m.nest = 1;                    /* this one lives here; it did not wander in */
     made++;
   }
@@ -2154,6 +2232,13 @@ function populate(Lv) {
   var ni = 1;
   if (rnd(100) < 55) ni++;
   for (i = 0; i < ni; i++) dropOnFloor(Lv, newItem(Lv.depth));
+  /* and a snack on a quarter of floors, so that finding nothing at all
+     to eat is bad luck rather than the ordinary case */
+  if (rnd(100) < FLOOR_SNACK_PCT) {
+    var snacks = [], sk;
+    for (sk = 0; sk < FOODS.length; sk++) if (FOODS[sk].feed[0] <= 700) snacks.push(sk);
+    dropOnFloor(Lv, mkItem('food', snacks[rnd(snacks.length)]));
+  }
   var ng = rnd(3) + 1;
   for (i = 0; i < ng; i++) {
     var g = mkItem('gold', 0);
@@ -2426,7 +2511,7 @@ function mkAmmo(depth) {
   var r = rnd(100), name;
   /* A ring of the huntress does not conjure arrows out of nothing: what
      was going to be a couple of stones turns out to be a quiver. */
-  var arrowAt = carryingRing('the huntress') ? HUNTRESS_ARROW_PCT : 48;
+  var arrowAt = carryingRing('the huntress') ? HUNTRESS_ARROW_PCT : AMMO_ARROW_PCT;
   name = (r < arrowAt) ? 'arrow' : 'stone';
   var k = weaponIndex(name);
   var it = mkItem('weapon', k);
@@ -2564,7 +2649,8 @@ function tileAt(x, y) {
 function walkable(x, y) {
   var t = tileAt(x, y);
   return t === FLOOR || t === CORR || t === DOOR || t === STAIR ||
-         t === STAIR_UP || t === WATER || t === HOLY || t === BRIDGE;
+         t === STAIR_UP || t === WATER || t === HOLY || t === BRIDGE ||
+         t === TRAPDOOR;
 }
 function isTempWall(x, y) { var t = tileAt(x, y); return t === ICEWALL || t === FIREWALL; }
 function isDoorish(x, y) {
@@ -2577,7 +2663,7 @@ function blocksShot(x, y) {
   var t = tileAt(x, y);
   return !(t === FLOOR || t === CORR || t === STAIR || t === STAIR_UP ||
            t === WATER || t === HOLY || t === HOLE || t === FIREWALL ||
-           t === BRIDGE);
+           t === BRIDGE || t === TRAPDOOR);
 }
 /* Bresenham again, this time for a clear shot rather than clear sight. */
 function shotClear(x0, y0, x1, y1) {
@@ -2619,25 +2705,119 @@ function placeTempWall(x, y, kind) {
   if (x === P.x && y === P.y) return false;
   if (tileAt(x, y) === STAIR) return false;
   var i = y * MAP_W + x;
-  L.temp[i] = { under: L.tiles[i], turns: kind === ICEWALL ? ICE_WALL_TURNS : FIRE_WALL_TURNS };
+  /* Raised over a puddle, what goes back when it falls is the floor the
+     puddle was lying on, not the puddle: two conjurings on one square
+     must not leave the second one's tile behind for ever. */
+  var was = (L.temp[i] && typeof L.temp[i].under === 'number') ? L.temp[i].under : L.tiles[i];
+  L.temp[i] = { under: was, turns: kind === ICEWALL ? ICE_WALL_TURNS : FIRE_WALL_TURNS };
   L.tiles[i] = kind;
   /* A sheet of flame standing on a barrel of powder is a naked flame on
      a barrel of powder, whatever else it is. */
   if (kind === FIREWALL && typeof lightBarrel === 'function') lightBarrel(x, y);
   return true;
 }
+/* A sheet of flame is a fire standing in the room, and everything a
+   fire does it does: it lights the powder under it, it catches the web
+   beside it, and it takes hold of whatever is standing on the squares it
+   touches.  It used to do none of that - a wall of fire could stand
+   there with a nest of web against it and nothing would happen at all. */
+function fireWallsCatch() {
+  var k, lit = 0;
+  for (k in (L.temp || {})) {
+    var j = k | 0;
+    if (L.tiles[j] !== FIREWALL) continue;
+    var wx = j % MAP_W, wy = (j / MAP_W) | 0;
+    if (typeof lightBarrel === 'function') lightBarrel(wx, wy);
+    catchWebNear(wx, wy);
+    /* and the square it is standing on, which is scenery like any other */
+    catchScenery({ x: wx, y: wy, turns: 0 });
+    /* whatever is lying against it: a fire is hot on both sides */
+    for (var d = 0; d < DIR8.length; d++) {
+      var nx = wx + DIR8[d][0], ny = wy + DIR8[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      if (!burnableAt(nx, ny)) continue;
+      var nj = ny * MAP_W + nx;
+      if (L.burning && L.burning[nj]) continue;
+      dropEmber(nx, ny, IGNITE_TURNS);
+      lit++;
+    }
+  }
+  return lit;
+}
 function ageTempWalls() {
-  var gone = 0;
+  fireWallsCatch();
+  var gone = 0, dried = 0;
   for (var k in L.temp) {
     var w = L.temp[k];
     if (--w.turns > 0) continue;
     L.tiles[k] = w.under;
+    if (w.puddle && (L.flags[k] & F_VIS)) dried++;
     delete L.temp[k];
     gone++;
   }
+  /* one word for the whole puddle, however many squares of it dried */
+  if (dried) msg(dried > 1 ? 'The puddles dry away.' : 'The puddle dries away.', '6');
   if (gone) computeVis();
 }
 function isWater(x, y) { return tileAt(x, y) === WATER; }
+
+/* --------------------------------------------------------- a puddle
+   Water thrown at the floor has to go somewhere.  It spreads over one
+   to four squares of bare flagstone and lies there until it dries.
+
+   Three kinds of square it will not lie on, and each for its own
+   reason: a rug soaks it up rather than holding it, a bridge is a
+   plank with a drop underneath and the water goes straight through,
+   and a stairway is cut into the floor and drains.  Nor does it lie in
+   a doorway, or on ground that is already water, or on top of another
+   spell's temporary tile. */
+function puddleCanCover(x, y) {
+  var t = tileAt(x, y);
+  if (t !== FLOOR && t !== CORR) return false;   /* stairs, bridges, water, stone */
+  if (isDoorish(x, y)) return false;
+  var j = y * MAP_W + x;
+  if (L.temp && L.temp[j]) return false;
+  if (isRugName(L.decor[j])) return false;
+  return true;
+}
+/* Lay it down.  The square it broke on first, then out from there, so
+   a puddle is a connected patch rather than four scattered squares. */
+function spillWater(x, y, holy) {
+  var want = PUDDLE_MIN + rnd(PUDDLE_MAX - PUDDLE_MIN + 1);
+  var kind = holy ? HOLY : WATER;
+  var seen = {}, open = [[x, y]], cells = [], i, d;
+  seen[y * MAP_W + x] = 1;
+  while (open.length && cells.length < want) {
+    var c = open.shift();
+    if (!puddleCanCover(c[0], c[1])) continue;
+    cells.push(c);
+    var dirs = DIR4.slice();
+    shuffle(dirs);
+    for (d = 0; d < dirs.length; d++) {
+      var nx = c[0] + dirs[d][0], ny = c[1] + dirs[d][1], k = ny * MAP_W + nx;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      open.push([nx, ny]);
+    }
+  }
+  L.temp = L.temp || {};
+  for (i = 0; i < cells.length; i++) {
+    var jj = cells[i][1] * MAP_W + cells[i][0];
+    L.temp[jj] = { under: L.tiles[jj], puddle: 1,
+                   turns: PUDDLE_TURNS_MIN + rnd(PUDDLE_TURNS_MAX - PUDDLE_TURNS_MIN + 1) };
+    L.tiles[jj] = kind;
+    /* and it puts out whatever was burning where it lands */
+    for (var q = L.clouds.length - 1; q >= 0; q--) {
+      var cl = L.clouds[q];
+      if (cl.kind === 'fire' && cl.x === cells[i][0] && cl.y === cells[i][1]) {
+        L.clouds.splice(q, 1);
+        if (L.burning) delete L.burning[jj];
+      }
+    }
+  }
+  if (cells.length) computeVis();
+  return cells.length;
+}
 /* The stream runs on under a bridge, so a current in the water crosses
    from one bank to the other even though the planks themselves are dry.
    You do not get shocked for standing on the bridge. */
@@ -2800,6 +2980,21 @@ function playerStumbles(dx, dy) {
 function monRunning(m) {
   return mdist(m) <= BATTLE_NEAR && (m.runSteps || 0) >= RUN_AFTER;
 }
+/* A creature goes over its own feet for the same reason you do: it is
+   moving faster than it is looking.  That means one of two things and
+   nothing else - it is running from you, or it is running after somebody
+   who is running from it.  A creature simply walking up to you is not at
+   a dead run however many steps it has taken, and it used to trip over
+   nothing in the middle of an ordinary approach. */
+function monFleeing(m) {
+  return m.flee > 0 || !!P.scare;
+}
+function monChasingAFlight(m) {
+  /* you are the one running: it is chasing a back, and running to keep
+     up with it */
+  return typeof playerRunning === 'function' && playerRunning() &&
+         m.state === 2 && !m.ally;
+}
 function monStumbles(m) {
   /* Not the thief with your purse.  He is not running headlong in a
      fight, he is leaving - a scripted flight with a patience of its own -
@@ -2807,6 +3002,7 @@ function monStumbles(m) {
   if (m.bolted) return false;
   /* four legs, or simply better balance than the rest of them */
   if (m.def.sure) return false;
+  if (!monFleeing(m) && !monChasingAFlight(m)) return false;
   if (!monRunning(m)) return false;
   /* A creature has no dexterity of its own, so its armour class stands
      in for one: the nimble things are the hard ones to hit. */
@@ -2872,6 +3068,203 @@ function touchesRoom(idx, ri) {
   return false;
 }
 
+/* --------------------------------------------------------------- light
+   What fire and lightning throw on the squares around them.  Worked out
+   fresh whenever it is asked for, from whatever is burning or crackling
+   at that instant, and used for two different things: how brightly a
+   square is drawn, and whether you can see it at all.
+
+   That second one is the point.  Light is what makes a thing visible,
+   so a fire burning at the far end of a pitch dark hall is something you
+   see - and so is everything it is lighting - as long as nothing stands
+   between you and it.  Sight and distance do not come into it; the fire
+   is the light.
+
+   Light does not go through stone: the far half of an explosion only
+   lights up if the square between it and the blast is see-through, or a
+   barrel going off on the other side of a wall would light the floor you
+   are standing on. */
+/* Fire is not a painted band.  Each square takes a little off the light
+   falling on it or puts a little on, dealt by where the square is - so
+   it differs from its neighbour and is the same every frame, which
+   matters: light that re-rolls each frame is a flicker, and a whole room
+   flickering is a strobe.  Never brighter than full, since there is
+   nowhere above full to go. */
+function glowVary(x, y, amount, phase) {
+  var h = ((x * 73856093) ^ (y * 19349663) ^ ((phase || 0) * 83492791)) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  /* Downwards only.  Full is full - there is nowhere above it to go - so
+     a variation that went both ways would be flattened against the
+     ceiling on half the squares it touched, and half a jet of flame
+     would come out identical after all. */
+  return 1 - (h % 1000) / 999 * (amount === undefined ? GLOW_VARY : amount);
+}
+/* Which of its two tiles a flame on this square is showing.  The
+   drawing picks the tile with it and the light is dealt with it, so the
+   two cannot drift apart - which is the whole rule: a flame's light
+   changes when the flame does, and at no other moment. */
+function flameFrame(x, y) {
+  return ((Date.now() / FIRE_ANIM_MS + x * 3 + y * 5) | 0);
+}
+/* The variation is put on at the end rather than here, and the reason is
+   worth writing down: a square in the middle of a burning row is lit by
+   its own fire and by both its neighbours, and the brightest of the
+   three wins.  Varying each contribution and then taking the highest is
+   taking the best of three draws, which pulls every square up against
+   the ceiling and flattens the very thing the variation is for - a row
+   of six fires came out between 0.90 and 0.98 instead of 0.80 and 1.00.
+
+   So what is kept here is which source won and what it was worth, and
+   the square is dealt its own share once, afterwards. */
+function glowPut(g, x, y, v, col, vary, phase) {
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return;
+  if (v <= 0) return;
+  var j = y * MAP_W + x;
+  /* Light you have no line to is light you do not see.  A square already
+     in sight needs no second look; anything else is asked for properly,
+     which is what keeps a fire round the corner off your screen. */
+  if (!(L.flags[j] & F_VIS) && !sightClear(P.x, P.y, x, y)) return;
+  var had = g[j];
+  if (had && had.v >= v) return;
+  g[j] = { v: v, col: col, vary: vary, phase: phase };
+}
+/* and the pass that deals it, once each, over a finished map */
+function glowShades(g) {
+  var k;
+  for (k in g) {
+    var e = g[k];
+    if (!e.vary) continue;
+    var j = k | 0;
+    e.v *= glowVary(j % MAP_W, (j / MAP_W) | 0,
+      e.vary === 1 ? GLOW_VARY : e.vary, e.phase);
+    e.vary = 0;
+  }
+  return g;
+}
+/* a flame: itself and the four beside it, corners at half */
+function glowFlame(g, x, y, col, mul, vary, phase) {
+  var d, m = (mul === undefined) ? 1 : mul, w = (vary === undefined) ? 1 : vary;
+  glowPut(g, x, y, GLOW_FULL * m, col, w, phase);
+  for (d = 0; d < DIR4.length; d++)
+    glowPut(g, x + DIR4[d][0], y + DIR4[d][1], GLOW_FULL * m, col, w, phase);
+  for (d = 0; d < DIAG4.length; d++)
+    glowPut(g, x + DIAG4[d][0], y + DIAG4[d][1], GLOW_HALF * m, col, w, phase);
+}
+/* a blast: the same, and half again a square further out */
+function glowBlast(g, x, y, col) {
+  var d;
+  glowFlame(g, x, y, col);
+  for (d = 0; d < DIR4.length; d++) {
+    var mx = x + DIR4[d][0], my = y + DIR4[d][1];
+    if (blocksShot(mx, my)) continue;         /* the near square shades the far */
+    glowPut(g, x + DIR4[d][0] * 2, y + DIR4[d][1] * 2, GLOW_HALF, col, 1);
+  }
+}
+/* A barrel of powder is not a flask of fire.  For the moment it goes up
+   it lights the room the way a lamp would - full out to two squares and
+   half again to four - so a blast in a black hall shows you the hall. */
+function glowBoom(g, x, y, col) {
+  glowLamp(g, x, y, col, BLAST_LIGHT_FULL, BLAST_LIGHT_HALF, 1, 1);
+}
+/* A lamp rather than a flame: a steady light carried about, full out to
+   one distance and half again to the next.  Round, because a lamp is -
+   measured as the crow flies rather than corner to corner, so the pool
+   of light has no corners of its own. */
+function glowLamp(g, x, y, col, full, half, mul, vary) {
+  var dx, dy, m = (mul === undefined) ? 1 : mul;
+  var r = Math.ceil(half);
+  for (dy = -r; dy <= r; dy++) for (dx = -r; dx <= r; dx++) {
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d > half + 0.001) continue;
+    glowPut(g, x + dx, y + dy, (d <= full + 0.001 ? GLOW_FULL : GLOW_HALF) * m, col, vary);
+  }
+}
+/* What the gear you are wearing is throwing on the floor.  A rune of
+   light is a lamp you carry: it is a light like any other, so it shows
+   you the room rather than only brightening what you could already see. */
+function lampOn() {
+  var eq = equippedItems(), i;
+  for (i = 0; i < eq.length; i++) {
+    var r = runeDef(eq[i]);
+    /* Not activeRune: an enchantment is ordinarily a secret until you
+       have studied the thing, and a light that only shines once you know
+       about it is no light at all.  This one gives itself away, and
+       upkeep takes the hint and writes the name down. */
+    if (r && r.n === 'light') return eq[i];
+  }
+  return null;
+}
+function lampLight(g) {
+  if (!lampOn()) return 0;
+  glowLamp(g, P.x, P.y, GLOW_LAMP, LAMP_FULL, LAMP_HALF);
+  return 1;
+}
+/* Everything alight or crackling this instant.
+
+   `standing` asks only for the lasting sort - a fire burning on the
+   floor, a sheet of conjured flame, a creature alight, the lamp you are
+   carrying.  Those are lights the dungeon has, so they decide what you
+   can see and what goes on your map.
+
+   Everything else here is a flash: a bolt of lightning, a sheet of flame
+   out of a wand, the instant a barrel goes up.  They light what they
+   fall on for as long as they last and not one moment longer, and they
+   leave nothing behind on your map - a corridor lit by lightning is a
+   corridor you glimpsed, not a corridor you have walked.
+
+   A flash is counted from the moment it is queued rather than from the
+   moment it starts to draw: a turn is worked out ahead of its playback,
+   so the blast that is about to be seen is already in the world. */
+function lightMap(standing) {
+  var g = {}, i, k;
+  if (!L || !L.tiles || typeof P === 'undefined' || !P) return g;
+  if (P.blind) return g;                  /* no light reaches you at all */
+  /* everything alight on the floor.  A fire on its last turn is a fire
+     going out, and gives half the light it did. */
+  for (i = 0; i < L.clouds.length; i++) {
+    var c = L.clouds[i];
+    if (c.kind !== 'fire') continue;
+    glowFlame(g, c.x, c.y, GLOW_FIRE, c.turns <= 1 ? GLOW_HALF : 1,
+      GLOW_VARY, flameFrame(c.x, c.y));
+  }
+  /* a sheet of conjured flame is a fire standing in the room */
+  for (k in (L.temp || {})) {
+    if (L.tiles[k | 0] !== FIREWALL) continue;
+    glowFlame(g, (k | 0) % MAP_W, ((k | 0) / MAP_W) | 0, GLOW_FIRE);
+  }
+  /* a creature walking about alight carries its own light with it */
+  for (i = 0; i < L.mons.length; i++)
+    if (L.mons[i].burn > 0) glowFlame(g, L.mons[i].x, L.mons[i].y, GLOW_FIRE);
+  /* and whatever you are carrying that glows */
+  lampLight(g);
+  if (standing) return glowShades(g);
+
+  /* ------------------------------------------------------- the flashes */
+  if (G.splash && G.splash.kind === 'blast' && Date.now() <= G.splash.t + BLAST_FLASH_MS)
+    for (i = 0; i < G.splash.cells.length; i++) {
+      if (G.splash.big) glowBoom(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
+      else glowBlast(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
+    }
+  /* The beam of a wand, drawn rather than stamped: a current or a sheet
+     of flame, either way half the light of a fire that is really
+     burning, and gone the instant the beam is. */
+  if (G.bolt && G.bolt.path && beamDrawn(G.bolt.kind) &&
+      Date.now() <= G.bolt.t + beamLife(G.bolt.kind))
+    for (i = 0; i < G.bolt.path.length; i++)
+      glowFlame(g, G.bolt.path[i][0], G.bolt.path[i][1],
+        G.bolt.kind === 'lightning' ? GLOW_BOLT : GLOW_FIRE, GLOW_BEAM,
+        GLOW_VARY_BEAM, ((Date.now() - G.bolt.t) / GLOW_BEAM_MS) | 0);
+  if (G.splash && G.splash.kind === 'zap' && Date.now() <= G.splash.t + BLAST_FLASH_MS)
+    for (i = 0; i < G.splash.cells.length; i++)
+      glowFlame(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BOLT, GLOW_BEAM,
+        GLOW_VARY_BEAM, ((Date.now() - G.splash.t) / GLOW_BEAM_MS) | 0);
+  return glowShades(g);
+}
+/* The two wands whose beam is drawn as one thing running down the row
+   rather than stamped square by square, and how long each is on screen. */
+function beamDrawn(kind) { return kind === 'lightning' || kind === 'fire'; }
+function beamLife(kind) { return kind === 'lightning' ? BOLT_BEAM_LIFE : FIRE_BEAM_LIFE; }
+
 function computeVis() {
   var F = L.flags, T = L.tiles, W = MAP_W, LM = L.litMap;
   var px = P.x, py = P.y, i, x, y, dx, dy;
@@ -2922,10 +3315,33 @@ function computeVis() {
     /* your own lit room, floor and outline both, at any distance */
     if (myLit && (L.roomAt[idx] === myRoom || touchesRoom(idx, myRoom)))
       reach = MAP_W + MAP_H;
-    if (!seeInDark && (blind || L.darkMap[idx])) reach = DARK_RADIUS;
+    /* Night eyes see through the dark - all of it.  A pitch dark room
+       and a room nobody left a lamp in are two different things to
+       everybody else, and to a Night stalker they are the same thing:
+       neither shortens his sight at all.  This used to skip the clamp
+       for the pitch dark and leave the unlit room at a torch's reach,
+       so in the commoner of the two darknesses the perk did nothing. */
+    if (seeInDark) { if (reach < LIT_RADIUS) reach = LIT_RADIUS; }
+    else if (blind || L.darkMap[idx]) reach = DARK_RADIUS;
     if (dist > reach) continue;
     if (sightClear(px, py, x, y)) F[idx] = (F[idx] | F_VIS | F_SEEN) & ~F_MAP;
   }
+  /* ------------------------------------------------------ by firelight
+     A fire is a light, and a light is a thing you see.  Everything it
+     falls on - itself, the squares around it, the wall it is standing
+     against - is visible from anywhere with a clear line to it, however
+     far off that is and however dark the room it is in.  This is the
+     whole difference between a dungeon where a fire at the end of a
+     black hall is a fire at the end of a black hall, and one where it is
+     nothing at all until you have walked up to it. */
+  var lit = lightMap(1), lk;
+  for (lk in lit) {
+    var li = lk | 0;
+    if (F[li] & F_VIS) continue;
+    var lx = li % W, ly = (li / W) | 0;
+    if (sightClear(px, py, lx, ly)) F[li] = (F[li] | F_VIS | F_SEEN) & ~F_MAP;
+  }
+
   /* Light the wall faces bordering anything you can see, so a room never
      looks like it has holes punched in its outline.  Doors sit inside a
      wall, so they get lit exactly the same way - otherwise a doorway you
@@ -3075,6 +3491,8 @@ function farthestFloorFrom(Lv, fx, fy, avoidRoom) {
 
 function enterLevel(depth, how) {
   how = how || 'down';
+  /* whatever else happens, you are on a floor of the dungeon again */
+  G.floorKey = String(depth);
   /* the floor you are stepping off keeps its own keys */
   if (G.depth && G.depth !== depth) returnKeys(G.depth);
   G.depth = depth;
@@ -3656,6 +4074,10 @@ function checkLevelUp() {
     var add = roll(1, LEVEL_HP_DIE) + LEVEL_HP_FLAT;
     P.mhp += add; P.hp += add;
     msg('Welcome to level ' + P.lv + '!', 'c');
+    /* And held up in front of you, once the turn has finished playing
+       out.  Not while a coming of age is waiting: that box says the same
+       thing and then asks you something. */
+    G.levelUp = P.lv;
     /* Some levels come of age.  Queue the choice rather than making it
        here: this can happen in the middle of resolving a blow, and the
        screen has to wait until the turn has finished playing out. */
@@ -3792,6 +4214,9 @@ function perkElemental(dm, kind) {
   return dm;
 }
 function resistPlayer(dm, kind) {
+  /* An ember mushroom is not a matter of degree: while it lasts, fire
+     does nothing to you at all. */
+  if (kind === 'fire' && P.fireproof > 0) return 0;
   var id = PERK_FOR_KIND[kind];
   if (!id || !hasPerk(id)) return dm;
   return softenDamage(dm, PERK_RESIST);
@@ -3817,7 +4242,13 @@ function healPlayer(n) {
 function die(src) {
   G.dead = 1; G.deathBy = src;
   G.mode = 'dying';
-  G.deadAt = beatNow() + DEATH_PAUSE;
+  /* The moment the killing blow actually lands, on the same clock the
+     log is paced by.  A turn is worked out all at once and played back
+     over the next second or so, so the game knows you are dead long
+     before the witch's rock has left her hand - and the flicker used to
+     start the instant it knew, which read as dying of nothing. */
+  G.deadFrom = beatNow();
+  G.deadAt = G.deadFrom + DEATH_PAUSE;
   sound('death');
 }
 
@@ -3885,7 +4316,7 @@ function monAttack(m) {
   if (!sp) return;
   if (sp === 'rust' && hitAny) {
     var bd = P.eq.body;
-    if (bd && !bd.protected && ARMORS[bd.k].n.indexOf('leather') < 0) {
+    if (bd && canRust(bd)) {
       bd.ap--;
       msgFight('Your armor corrodes.', 'R', 'armor -1', 'R', m);
     }
@@ -3975,6 +4406,42 @@ function thunderCells() {
     add(P.x, P.y);
   }
   return cells;
+}
+/* A current let loose on a square.  On dry ground it stays where it is
+   put; in water it runs through the whole of that water and jolts
+   everything standing in it, the player included.  One rule, so a
+   shocking stone and anything else that wants a current can share it. */
+function shockCells(x, y) {
+  if (!waterUnder(x, y)) return [[x, y]];
+  var body = waterBody(x, y), out = [], i;
+  for (i = 0; i < body.length; i++) out.push(body[i]);
+  return out;
+}
+function shockSquares(cells, src) {
+  var i, hit = 0;
+  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'zap' };
+  sound('lightning');
+  for (i = 0; i < cells.length; i++) {
+    var cx2 = cells[i][0], cy2 = cells[i][1];
+    var m2 = monAt(L, cx2, cy2);
+    if (m2) {
+      var dm = elemDamage(m2, perkElemental(roll(SHOCK_DAMAGE[0], SHOCK_DAMAGE[1]), 'lightning'),
+        'lightning');
+      m2.hp -= dm; m2.state = 2; m2.disguise = 0;
+      markHurt(m2, cx2, cy2);
+      hit++;
+      if (m2.hp <= 0) killMonster(m2, true, dm + ' shocked');
+      else msgFight(fightLine('', cap(monShort(m2)), ' is jolted.'), 'c', dm + ' shock', 'c', m2);
+    }
+    /* and you, if you are standing in it.  This is the whole risk of
+       throwing one into the water you are wading through. */
+    if (cx2 === P.x && cy2 === P.y && !G.dead) {
+      hurtPlayer(roll(SHOCK_DAMAGE[0], SHOCK_DAMAGE[1]), src || 'a current', 'lightning');
+      msg('The current runs up your legs!', 'c');
+      hit++;
+    }
+  }
+  return hit;
 }
 function thunderDischarge(gear) {
   var cells = thunderCells(), i, hit = 0;
@@ -4153,27 +4620,15 @@ function monstersMove() {
        The reach is asked once, at the top of the three, and it settles
        the whole of the rest of the round.  Asking it again each turn
        would let a spinner spit, take a step, and spit again. */
-    var spitT = m.def.spitTurns || 0, rushT = m.def.rushTurns || 0;
-    if (spitT + rushT && m.state === 2 && !m.ally) {
-      var round = spitT + rushT;
-      var phase = m.gather || 0;
-      m.gather = (phase + 1) % round;
-      if (phase < spitT) {
-        monWeb(m);                           /* a web, and nothing else */
-      } else {
-        if (phase === spitT) m.rushing = monCanCloseIn(m, rushT) ? 1 : 0;
-        if (m.rushing) monOneMove(m);
-        else if (phase === spitT) monWeb(m);
-        /* and otherwise it stands there: the two turns it gave up when
-           it chose the web over the walk */
-      }
+    /* the spinner has a turn of her own: see spinnerTurn */
+    if (m.def.spinner && m.state === 2 && !m.ally) {
+      spinnerTurn(m);
       if (G.dead) return;
       watched = watched || canSeeMon(m);
       noteSight(m);
       if (watched) beatWait(BEAT_ACT);
       continue;
     }
-    if (spitT + rushT) { m.gather = 0; m.rushing = 0; }
 
     monOneMove(m);
     if (G.dead) return;
@@ -4198,33 +4653,67 @@ function monstersMove() {
 
 function mdist(m) { return Math.abs(m.x - P.x) + Math.abs(m.y - P.y); }
 
-/* Could it get its teeth into you inside this many moves?  A breadth
-   first search three squares deep over ground it could actually stand
-   on, looking for a square beside you - blows are orthogonal, so beside
-   is what matters.  Three deep costs nothing; it is asked once a rush.
-   Straight line distance will not do: a spinner on the far side of a
-   wall is two squares away and cannot touch you. */
-function monCanCloseIn(m, steps) {
-  if (mdist(m) <= 1) return true;
-  var seen = {}, q = [[m.x, m.y, 0]], qi = 0, d;
-  seen[m.y * MAP_W + m.x] = 1;
-  while (qi < q.length) {
-    var c = q[qi++];
-    if (c[2] >= steps) continue;
-    for (d = 0; d < DIR4.length; d++) {
-      var nx = c[0] + DIR4[d][0], ny = c[1] + DIR4[d][1];
-      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
-      var k = ny * MAP_W + nx;
-      if (seen[k]) continue;
-      seen[k] = 1;
-      if (nx === P.x && ny === P.y) return true;
-      if (!walkable(nx, ny) || barrelAt(nx, ny)) continue;
-      if (Math.abs(nx - P.x) + Math.abs(ny - P.y) <= 1) return true;
-      q.push([nx, ny, c[2] + 1]);
-    }
-  }
-  return false;
+/* A step directly away from you, if there is anywhere to put it.  Used
+   by the spinner, who fights by not being where you are. */
+function stepAwayFrom(m) {
+  return stepToward(m, m.x * 2 - P.x, m.y * 2 - P.y);
 }
+/* The web spinner's whole turn.
+
+   She spits twice and backs off while you are on your feet.  The moment
+   the web has you she spends six actions on legs and teeth - one bite,
+   no more, because she is not a fighter - and goes back out with what is
+   left so she can start spitting again.  Six is a lot: it is meant to
+   be, because being stuck is meant to cost you. */
+/* Six actions in one round are six things to watch, not one.  A turn is
+   worked out all at once and played back afterwards, and every step is
+   stamped with the moment it happens - so if nothing moves the clock on
+   between them, all six carry the same stamp and the playback shows the
+   first stride and then the finished position.  That is the teleporting.
+
+   So each point she spends pushes the clock along by its own share of a
+   beat, a little longer than the stride itself, and the round comes out
+   as a scuttle you can follow.  The bite is worth a whole beat: a blow
+   has to be seen to land. */
+function spinnerStepBeat(m, seen) {
+  if (seen || canSeeMon(m)) beatWait(Math.round(BEAT_STEP * SPIN_STEP));
+}
+function spinnerTurn(m) {
+  var i;
+  if (P.webbed > 0) {
+    var pts = SPIN_POINTS, bitten = 0, moved, saw;
+    while (pts > 0) {
+      saw = canSeeMon(m);
+      if (!bitten && mdist(m) === 1 && !P.scare && m.flee <= 0) {
+        monAttack(m);
+        bitten = 1; pts--;
+        if (G.dead || L.mons.indexOf(m) < 0) return;
+        if (saw || canSeeMon(m)) beatWait(BEAT_ACT);
+        continue;
+      }
+      moved = bitten ? stepAwayFrom(m) : stepToward(m, P.x, P.y);
+      if (!moved) break;                  /* nowhere to put a foot */
+      pts--;
+      if (G.dead || L.mons.indexOf(m) < 0) return;
+      spinnerStepBeat(m, saw);
+    }
+    return;
+  }
+  /* on your feet: she keeps her distance and works on changing that */
+  for (i = 0; i < SPIN_SPITS; i++) {
+    var sawSpit = canSeeMon(m);
+    if (!monWeb(m)) break;
+    if (G.dead) return;
+    if (i + 1 < SPIN_SPITS) spinnerStepBeat(m, sawSpit);
+  }
+  if (G.dead) return;
+  if (mdist(m) <= SPIN_KEEP) {
+    var sawBack = canSeeMon(m);
+    if (stepAwayFrom(m)) spinnerStepBeat(m, sawBack);
+  }
+}
+
+
 
 /* can this monster make out the player from where it stands? */
 function monSeesPlayer(m) {
@@ -4457,8 +4946,13 @@ function webHold() {
    down; by the time anything is drawn, the figure on the status line is
    the number of turns that are really left. */
 function stickPlayer(turns) {
+  /* Already stuck fast?  Then this changes nothing.  Web piled on web
+     used to add its own turns to the count, so a spinner that kept
+     spitting could hold you for as long as she liked - and being held
+     for ever is not a fight, it is a wait. */
+  if (P.webbed > 0) return 0;
   P.frozen += turns + 1;
-  P.webbed = Math.max(P.webbed || 0, turns + 1);
+  P.webbed = turns + 1;
   return turns;
 }
 /* the webs on the floor grow old and rot away */
@@ -4479,6 +4973,9 @@ function ageWebs() {
    spits when it cannot get to you - see monBurst. */
 function monWeb(m) {
   if (m.cancel || m.def.sp !== 'web') return false;
+  /* She has to gather it.  One web every other turn, so a spinner is
+     something you can close with rather than a hose. */
+  if (m.spitCd > 0) { m.spitCd--; return false; }
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
   /* No minimum range any more.  A spinner standing over you used to be
      unable to spit at all, so the two gathering turns of its round were
@@ -4489,6 +4986,8 @@ function monWeb(m) {
   /* Wait first, then start the flight from that moment: timed from now
      it is over before the frame is drawn, which reads as the web landing
      on you in the same instant the creature spat it. */
+  /* the spit is happening: she has to gather the next one */
+  m.spitCd = WEB_EVERY - 1;
   var wfly = 170;
   beatWait(wfly);
   G.shot = { sx: m.x, sy: m.y, ex: P.x, ey: P.y, t: beatNow() - wfly, dur: wfly,
@@ -4504,8 +5003,14 @@ function monWeb(m) {
        different matter - that one comes away on your boots. */
     layWeb(P.x, P.y, beatNow(), 1);
     var hold = stickPlayer(webHold());
-    msgFight(fightLine('', cap(monShort(m)), ' spits web over you.'),
-      'c', 'stuck ' + hold, 'O', m);
+    if (hold) {
+      msgFight(fightLine('', cap(monShort(m)), ' spits web over you.'),
+        'c', 'stuck ' + hold, 'O', m);
+    } else {
+      /* on top of the web that already has you: nothing to add */
+      msgFight(fightLine('', cap(monShort(m)), ' spits web over you.'),
+        'c', 'no worse', '6', m);
+    }
     sound('miss');
     return true;
   }
@@ -4693,18 +5198,31 @@ function witchFlask(m) {
   computeVis();
   return true;
 }
+/* A stone that missed, lying where it fell.  It stacks with one already
+   on the square rather than making a second pile of one. */
+function dropStone(x, y) {
+  var k = weaponIndex('stone');
+  var st = mkItem('weapon', k);
+  st.cnt = 1; st.known = 1;
+  return dropNear(x, y, st);
+}
 /* and a stone, when there is nothing better left */
 function witchRock(m) {
   var d = mdist(m);
+  if (m.stones <= 0) return false;             /* she is out of stones */
   if (d < 2 || d > WITCH_ROCK_RANGE) return false;
   if (!shotClear(m.x, m.y, P.x, P.y)) return false;
   if (rnd(100) >= 55) return false;
+  m.stones--;
   beatWait(BEAT_STEP);
   G.shot = { sx: m.x, sy: m.y, ex: P.x, ey: P.y, t: beatNow(), dur: BEAT_STEP,
              spr: 'stone' };
   beatWait(BEAT_STEP);
   sound('miss');
   if (!swing(m.lv, playerAC(), 0)) {
+    /* It went wide, and a stone that goes wide is a stone lying on the
+       floor.  Hers are ordinary stones and yours to throw back. */
+    dropStone(P.x, P.y);
     msgFight(fightLine('', cap(monShort(m)), ' throws a stone and misses.'), '6', 'miss', '6', m);
     return true;
   }
@@ -5265,6 +5783,10 @@ function statColour(k) {
 
 function upkeep() {
   markStats();
+  /* Something that lights the room around you is not a secret for long */
+  var lamp = lampOn();
+  if (lamp && learnRune(lamp))
+    msg(cap(itemName(lamp)) + ' is glowing.', 'y');
   /* Standing in it is touching it, every turn you stand there. */
   if (inWater(P.x, P.y)) soakPlayer('The water burns where it touches you.');
   ageWebs();
@@ -5283,6 +5805,15 @@ function upkeep() {
   if (P.unseen > 0) {
     P.unseen--;
     if (P.unseen === 0) msg('You come back into view.', 'y');
+  }
+  /* the two a mushroom lends you, and takes back */
+  if (P.rage > 0) {
+    P.rage--;
+    if (P.rage === 0) msg('The red haze lifts. Your arm is your own again.', 'y');
+  }
+  if (P.fireproof > 0) {
+    P.fireproof--;
+    if (P.fireproof === 0) msg('The warmth goes out of you.', 'y');
   }
   var burn = 1;
   /* Wanderer boots: you eat little, not nothing.  Three turns in
@@ -5480,6 +6011,9 @@ function scorch(cells, turns, at) {
    and the whole rug goes up. */
 function burnableAt(x, y) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return '';
+  /* A bridge is not ground cover, it is the ground itself - a few planks
+     over a drop - and planks burn. */
+  if (L.tiles[y * MAP_W + x] === BRIDGE) return 'bridge';
   var d = L.decor[y * MAP_W + x];
   if (!d) return '';
   if (BURNS[d]) return BURNS[d];
@@ -5492,7 +6026,7 @@ function catchScenery(c) {
   L.burning = L.burning || {};
   if (L.burning[j] || !burnableAt(c.x, c.y)) return;
   L.burning[j] = 1;
-  c.turns += DECOR_BURN_TURNS;
+  c.turns += burnTurnsFor(burnableAt(c.x, c.y));
   /* and the rest of the rug with it.  The flame passed on is a fixed
      one turn, not however long this square has left: twenty squares of
      rug each handing the others their own count sets a fire going that
@@ -5509,6 +6043,14 @@ function catchScenery(c) {
    is a room full of tinder strung across the floor, and a fire in a nest
    of it should run through the whole nest rather than sit where it was
    lit.  Two or three turns each, so it travels about a square a turn. */
+/* How long a thing burns before it is gone.  Most scenery is a turn;
+   web is a room full of tinder and goes in two or three; a bridge is a
+   plank over a drop and takes about as long. */
+function burnTurnsFor(what) {
+  if (what === 'web') return WEB_BURN_MIN + rnd(WEB_BURN_MAX - WEB_BURN_MIN + 1);
+  if (what === 'bridge') return BRIDGE_BURN_MIN + rnd(BRIDGE_BURN_MAX - BRIDGE_BURN_MIN + 1);
+  return DECOR_BURN_TURNS;
+}
 function catchWebNear(x, y) {
   if (!L.webs) return 0;
   var d, lit = 0;
@@ -5518,10 +6060,27 @@ function catchWebNear(x, y) {
     if (!webAt(nx, ny)) continue;
     var j = ny * MAP_W + nx;
     if (L.burning && L.burning[j]) continue;      /* already alight */
-    dropEmber(nx, ny, WEB_BURN_MIN + rnd(WEB_BURN_MAX - WEB_BURN_MIN + 1));
+    /* The ember dropped here is the flame that lights it, one turn of
+       it.  How long the web then burns is catchScenery's business - it
+       adds the web's own two or three - so sizing the ember for web as
+       well used to leave it smouldering for twice as long. */
+    dropEmber(nx, ny, IGNITE_TURNS);
     lit++;
   }
   return lit;
+}
+/* The planks are gone and the drop is not.  Whatever the bridge spanned
+   comes back, and anybody standing on it is standing on nothing. */
+function burnBridge(x, y) {
+  var j = y * MAP_W + x;
+  var under = (L.under && L.under[j]) || WATER;
+  L.tiles[j] = under;
+  if (L.bspan) delete L.bspan[j];
+  if (L.under) delete L.under[j];
+  if (L.flags[j] & F_VIS) msg('The bridge burns through and falls away.', 'O');
+  /* standing on it when it goes, you go with it */
+  if (P.x === x && P.y === y && under === HOLE) G.pendingFall = 1;
+  return under;
 }
 /* and when that fire finally goes out, what it was standing on is gone */
 function burnAway(x, y) {
@@ -5534,6 +6093,9 @@ function burnAway(x, y) {
      that catches you - so it goes through its own door, which also puts
      back whatever it was spat over. */
   if (what === 'web') { clearWeb(x, y); return what; }
+  /* A bridge that has burned away leaves what it was spanning: the hole
+     or the water is still there, and now there is nothing over it. */
+  if (what === 'bridge') { burnBridge(x, y); return what; }
   var id = L.rugId && L.rugId[j];
   if (!id) { delete L.decor[j]; return what; }
   /* A rug is one thing rather than nine, so the first square of it to go
@@ -5565,37 +6127,23 @@ function saySceneryBurnt(gone) {
   msg('The ' + list + (one ? ' burns away.' : ' burn away.'), '6');
 }
 
-function ageClouds() {
-  var i, hurt = 0, burn = 0, mend = 0, gone = [];
-  for (i = L.clouds.length - 1; i >= 0; i--) {
+/* What the air on your own square does to you.
+
+   Asked at the head of the turn rather than at the tail with everything
+   else.  The clouds used to be aged after the creatures had moved, so
+   the poison was stamped a beat after you had already been drawn walking
+   out of it - which reads as taking damage from a square you have left.
+   It is the same fumes and the same dice; only the moment changed. */
+function cloudsOnYou() {
+  var i, hurt = 0, burn = 0, mend = 0, smoke = 0;
+  for (i = 0; i < L.clouds.length; i++) {
     var c = L.clouds[i];
-    var fire = c.kind === 'fire', kind = c.kind;
-    var m = monAt(L, c.x, c.y);
-    if (kind === 'mend') {
-      /* a red mist puts things back rather than taking them away, and
-         it does not care whose side anybody is on */
-      if (m && m.hp < m.mhp) {
-        m.hp = Math.min(m.mhp, m.hp + roll(MEND_CLOUD[0], MEND_CLOUD[1]));
-        if (canSeeMon(m))
-          msgFight(fightLine('', cap(monShort(m)), ' knits together.'), 'r', 'healed', 'G', m);
-      }
-      if (P.x === c.x && P.y === c.y) mend++;
-    } else if (m && !m.ally) {
-      var d = fire ? perkElemental(roll(FIRE_DAMAGE[0], FIRE_DAMAGE[1]), 'fire')
-                   : roll(1, 3);
-      m.hp -= d; m.state = 2;
-      markHurt(m, c.x, c.y + 1);
-      if (m.hp <= 0) killMonster(m, true, fire ? 'burnt' : 'choked');
-    }
-    if (fire && typeof lightBarrel === 'function') lightBarrel(c.x, c.y);
-    if (fire) catchScenery(c);
-    if (fire) catchWebNear(c.x, c.y);
-    if (kind !== 'mend' && P.x === c.x && P.y === c.y) { if (fire) burn++; else hurt++; }
-    if (--c.turns <= 0) {
-      L.clouds.splice(i, 1);
-      var ate = burnAway(c.x, c.y);
-      if (ate && (L.flags[c.y * MAP_W + c.x] & F_VIS)) gone.push(ate);
-    }
+    if (c.x !== P.x || c.y !== P.y) continue;
+    if (c.at && Date.now() < c.at) continue;    /* still on its way */
+    if (c.kind === 'mend') mend++;
+    else if (c.kind === 'fire') burn++;
+    else if (c.kind === 'smoke') smoke++;
+    else hurt++;
   }
   if (mend && P.hp < P.mhp) {
     var mv = roll(MEND_CLOUD[0], MEND_CLOUD[1]);
@@ -5617,8 +6165,50 @@ function ageClouds() {
     markHurt(P, P.x, P.y - 1);
     hurtPlayer(bd, 'fire', 'fire');
   }
-  /* last, because what the fire did to you matters more than what it
-     did to the furniture */
+  /* Smoke is not poison.  It stings and it makes you cough, and that is
+     about the whole of it - it is what a barrel leaves hanging over the
+     hole it made. */
+  if (smoke) {
+    var sd = roll(SMOKE_DAMAGE[0], SMOKE_DAMAGE[1]);
+    msgTrap('You choke on the smoke.', '6', sd + ' damage', 'O');
+    markHurt(P, P.x, P.y - 1);
+    hurtPlayer(sd, 'smoke');
+  }
+  return hurt + burn + mend + smoke;
+}
+function ageClouds() {
+  var i, gone = [];
+  for (i = L.clouds.length - 1; i >= 0; i--) {
+    var c = L.clouds[i];
+    var fire = c.kind === 'fire', kind = c.kind;
+    var m = monAt(L, c.x, c.y);
+    if (kind === 'mend') {
+      /* a red mist puts things back rather than taking them away, and
+         it does not care whose side anybody is on */
+      if (m && m.hp < m.mhp) {
+        m.hp = Math.min(m.mhp, m.hp + roll(MEND_CLOUD[0], MEND_CLOUD[1]));
+        if (canSeeMon(m))
+          msgFight(fightLine('', cap(monShort(m)), ' knits together.'), 'r', 'healed', 'G', m);
+      }
+    } else if (m && !m.ally) {
+      var d = fire ? perkElemental(roll(FIRE_DAMAGE[0], FIRE_DAMAGE[1]), 'fire')
+                   : kind === 'smoke' ? roll(SMOKE_DAMAGE[0], SMOKE_DAMAGE[1])
+                   : roll(1, 3);
+      m.hp -= d; m.state = 2;
+      markHurt(m, c.x, c.y + 1);
+      if (m.hp <= 0) killMonster(m, true, fire ? 'burnt' : 'choked');
+    }
+    if (fire && typeof lightBarrel === 'function') lightBarrel(c.x, c.y);
+    if (fire) catchScenery(c);
+    if (fire) catchWebNear(c.x, c.y);
+    if (--c.turns <= 0) {
+      L.clouds.splice(i, 1);
+      var ate = burnAway(c.x, c.y);
+      if (ate && (L.flags[c.y * MAP_W + c.x] & F_VIS)) gone.push(ate);
+    }
+  }
+  /* What the air did to you is dealt with at the head of the turn now -
+     see cloudsOnYou - so all that is left here is the furniture. */
   saySceneryBurnt(gone);
 }
 /* everything already standing in a new fire feels it at once */
@@ -5918,10 +6508,14 @@ function teleportPlayer() {
 }
 function doSearch(silent) {
   var found = 0;
-  for (var i = 0; i < DIR4.length; i++) {
-    var x = P.x + DIR4[i][0], y = P.y + DIR4[i][1];
+  /* the square under your own feet counts as well, since a door in the
+     floor is a thing you stand on rather than a thing you stand beside */
+  var about = [[0, 0]].concat(DIR4);
+  for (var i = 0; i < about.length; i++) {
+    var x = P.x + about[i][0], y = P.y + about[i][1];
     if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) continue;
     var keen = 25 + (effWis() - 10) * 5;
+    if (findTrapdoor(x, y, keen)) found = 1;
     if (tileAt(x, y) === SDOOR && rnd(100) < keen) {
       L.tiles[y * MAP_W + x] = DOOR; found = 1;
       msg('You found a secret door!', 'y');
@@ -5933,4 +6527,252 @@ function doSearch(silent) {
     }
   }
   return found;
+}
+
+/* =============================================================== cellars
+   A trapdoor is a door in the floor with a cellar under it: one to three
+   small rooms that are not a floor of the dungeon and do not count as
+   one.  Your depth does not change - you are under the same floor you
+   were standing on - and the staircase back up comes out where you went
+   down.
+
+   Whoever cut these meant to keep something in them, so the room
+   furthest from the way in is worth the walk: a hoard, and a fair chance
+   of a ring or a blade somebody put work into.  Most of them are pitch
+   dark, because nobody has been down to light them in a very long time.
+
+   They are kept in G.floors under a key of their own - "3c" beside "3" -
+   so climbing back down finds the cellar exactly as you left it. */
+function cellarKey(depth) { return depth + 'c'; }
+/* Which of the kept floors you are standing on.  Normally the depth; in
+   a cellar, the cellar's own key. */
+function floorKey() { return G.floorKey || String(G.depth); }
+function inCellar() { return floorKey() !== String(G.depth); }
+
+/* Carve one room into a cellar under construction, and register it. */
+function cellarRoom(Lv, rx, ry, rw, rh, lit) {
+  var x, y, floors = [];
+  var idx = Lv.rooms.length;
+  for (y = ry; y < ry + rh; y++) for (x = rx; x < rx + rw; x++) {
+    var j = y * MAP_W + x;
+    Lv.tiles[j] = FLOOR;
+    Lv.roomAt[j] = idx;
+    floors.push([x, y]);
+  }
+  var r = { gone: 0, id: idx, idx: idx, x: rx, y: ry, w: rw, h: rh,
+            floors: floors, lit: lit ? 1 : 0, dark: lit ? 0 : 1,
+            cx: rx + (rw >> 1), cy: ry + (rh >> 1) };
+  Lv.rooms.push(r);
+  return r;
+}
+/* and a corridor between two points, an elbow at a time */
+function cellarHall(Lv, x0, y0, x1, y1) {
+  var x = x0, y = y0, guard = 0;
+  while ((x !== x1 || y !== y1) && guard++ < 400) {
+    if (x !== x1) x += (x1 > x) ? 1 : -1;
+    else if (y !== y1) y += (y1 > y) ? 1 : -1;
+    var j = y * MAP_W + x;
+    if (Lv.tiles[j] === ROCK) Lv.tiles[j] = CORR;
+  }
+}
+/* Wall every piece of rock that ends up touching the dug out part, so a
+   cellar has an outline like anywhere else. */
+function cellarWalls(Lv) {
+  var x, y, d;
+  for (y = 1; y < MAP_H - 1; y++) for (x = 1; x < MAP_W - 1; x++) {
+    var j = y * MAP_W + x;
+    if (!walkTile(Lv.tiles[j])) continue;
+    for (d = 0; d < DIR8.length; d++) {
+      var k = (y + DIR8[d][1]) * MAP_W + (x + DIR8[d][0]);
+      if (Lv.tiles[k] === ROCK) Lv.tiles[k] = WALL;
+    }
+  }
+}
+function genCellar(depth) {
+  /* Its own small patch of rock, not a floor of the dungeon: half the
+     height, so a cellar never reads as another floor by its shape. */
+  var wasW = MAP_W, wasH = MAP_H;
+  setDims(MAP_MIN_W, Math.max(14, MAP_MIN_H - 6));
+  var Lv = newLevelObj(depth);
+  Lv.cellar = 1;
+  var i;
+  for (i = 0; i < Lv.tiles.length; i++) Lv.tiles[i] = ROCK;
+
+  var n = CELLAR_ROOMS_MIN + rnd(CELLAR_ROOMS_MAX - CELLAR_ROOMS_MIN + 1);
+  var grand = rnd(100) < CELLAR_GRAND_PCT;
+  var longHall = rnd(100) < CELLAR_LONG_HALL_PCT;
+  /* the first room, near the left, and the rest walking away from it */
+  var rooms = [], cx = 3 + rnd(3), cy = 3 + rnd(Math.max(1, MAP_H - 12));
+  for (i = 0; i < n; i++) {
+    var last = (i === n - 1);
+    var rw = CELLAR_ROOM_MIN + rnd(CELLAR_ROOM_MAX - CELLAR_ROOM_MIN + 1);
+    var rh = CELLAR_ROOM_MIN + rnd(CELLAR_ROOM_MAX - CELLAR_ROOM_MIN + 1);
+    /* the last room may be a hall somebody kept lit */
+    if (last && grand) {
+      rw = CELLAR_GRAND_MIN + rnd(CELLAR_GRAND_MAX - CELLAR_GRAND_MIN + 1);
+      rh = CELLAR_GRAND_MIN + rnd(CELLAR_GRAND_MAX - CELLAR_GRAND_MIN + 1);
+    }
+    if (cx + rw > MAP_W - 3) { cx = MAP_W - 3 - rw; }
+    if (cy + rh > MAP_H - 3) { cy = MAP_H - 3 - rh; }
+    if (cx < 2) cx = 2;
+    if (cy < 2) cy = 2;
+    var lit = (last && grand) ? 1 : (rnd(100) >= CELLAR_DARK_PCT);
+    rooms.push(cellarRoom(Lv, cx, cy, rw, rh, lit));
+    /* how far the next one sits from this one */
+    var gap = (last || !longHall) ? 3 + rnd(4)
+                                  : CELLAR_HALL_MIN + rnd(CELLAR_HALL_MAX - CELLAR_HALL_MIN + 1);
+    cx = cx + rw + gap;
+    cy = Math.max(2, Math.min(MAP_H - 8, cy + rnd(5) - 2));
+  }
+  for (i = 1; i < rooms.length; i++)
+    cellarHall(Lv, rooms[i - 1].cx, rooms[i - 1].cy, rooms[i].cx, rooms[i].cy);
+  cellarWalls(Lv);
+
+  /* the way back up, in the first room, is where you came down */
+  var up = rooms[0];
+  Lv.up = { x: up.cx, y: up.cy };
+  Lv.tiles[up.cy * MAP_W + up.cx] = STAIR_UP;
+  /* there is no way down out of a cellar: the only way out is the way in */
+  Lv.stair = { x: up.cx, y: up.cy };
+  Lv.noStair = 1;
+
+  buildLitMap(Lv);
+  buildDarkMap(Lv, depth);
+  Lv.mw = MAP_W; Lv.mh = MAP_H;
+  setDims(wasW, wasH);
+  return { level: Lv, rooms: rooms };
+}
+/* What is down there worth having.  The far room gets the hoard; a good
+   chance of a ring, otherwise something with work put into it. */
+function stockCellar(Lv, rooms, depth) {
+  var far = rooms[rooms.length - 1], i, put = 0;
+  var wasW = MAP_W, wasH = MAP_H;
+  setDims(Lv.mw, Lv.mh);
+  var spots = [];
+  for (i = 0; i < far.floors.length; i++) {
+    /* not on the way out: a hoard piled on the staircase reads as a
+       mistake, and with a one room cellar the two are the same room */
+    if (Lv.up && far.floors[i][0] === Lv.up.x && far.floors[i][1] === Lv.up.y) continue;
+    spots.push(far.floors[i]);
+  }
+  shuffle(spots);
+  var want = CELLAR_HOARD_MIN + rnd(CELLAR_HOARD_MAX - CELLAR_HOARD_MIN + 1);
+  /* the pick of it */
+  var prize = null;
+  if (rnd(100) < CELLAR_RING_PCT) {
+    var rk = pickUnfoundRing();
+    if (rk >= 0) prize = mkItem('ring', rk);
+  }
+  if (!prize) {
+    /* a blade somebody put work into, and a rune as often as not */
+    var wk;
+    do { wk = weightedPick(WEAPONS); } while (WEAPONS[wk].grp);
+    prize = mkItem('weapon', wk);
+    prize.hp = 1 + rnd(3); prize.dp = 1 + rnd(2);
+    addRune(prize, WEAPONS[wk].launch ? 'wb' : 'w', 60);
+  }
+  var pile = [prize];
+  for (i = 1; i < want; i++) pile.push(newGoodItem(depth));
+  var gold = mkItem('gold', 0);
+  gold.cnt = CELLAR_GOLD_MIN + rnd(CELLAR_GOLD_MAX - CELLAR_GOLD_MIN + 1);
+  pile.push(gold);
+  for (i = 0; i < pile.length && i < spots.length; i++) {
+    pile[i].x = spots[i][0]; pile[i].y = spots[i][1];
+    Lv.items.push(pile[i]);
+    put++;
+  }
+  setDims(wasW, wasH);
+  return put;
+}
+
+/* ----------------------------------------------------- the door itself
+   Hidden until it is found, and drawn as plain flagstones until then.
+   A rug laid over one hides it altogether: no amount of looking finds a
+   door under a carpet, and the only way to it is to burn the carpet. */
+function trapdoorAt(x, y) {
+  if (!L.tdoor) return null;
+  return L.tdoor[y * MAP_W + x] || null;
+}
+function trapdoorHidden(x, y) {
+  var td = trapdoorAt(x, y);
+  return !!(td && !td.found);
+}
+/* Is anything lying over it?  A rug is the one thing that hides a door
+   in the floor completely - that is what it is for. */
+function trapdoorCovered(x, y) {
+  return isRugName(L.decor[y * MAP_W + x]);
+}
+function findTrapdoor(x, y, keen) {
+  var td = trapdoorAt(x, y);
+  if (!td || td.found) return 0;
+  if (trapdoorCovered(x, y)) return 0;      /* under a rug: no chance at all */
+  if (rnd(100) >= keen) return 0;
+  td.found = 1;
+  msg('You found a trapdoor in the floor!', 'y');
+  computeVis();
+  return 1;
+}
+/* One per floor now and then, on bare room floor, and a third of them
+   under a rug.  It is laid after the rugs are down, so a rug can be
+   chosen to cover it. */
+function addTrapdoor(Lv, depth) {
+  if (depth < 2) return 0;                  /* not on the first floor */
+  if (rnd(100) >= TRAPDOOR_PCT) return 0;
+  var spots = [], rugged = [], i, ri;
+  for (ri = 0; ri < Lv.rooms.length; ri++) {
+    var r = Lv.rooms[ri];
+    if (r.gone || r.sealed) continue;
+    for (i = 0; i < r.floors.length; i++) {
+      var x = r.floors[i][0], y = r.floors[i][1], j = y * MAP_W + x;
+      if (Lv.tiles[j] !== FLOOR) continue;
+      if (Lv.stair && x === Lv.stair.x && y === Lv.stair.y) continue;
+      if (Lv.up && x === Lv.up.x && y === Lv.up.y) continue;
+      if (itemAt(Lv, x, y) || trapAtLevel(Lv, x, y)) continue;
+      if (Lv.barrels && Lv.barrels[j]) continue;
+      if (isRugName(Lv.decor[j])) rugged.push([x, y]);
+      else if (!Lv.decor[j]) spots.push([x, y]);
+    }
+  }
+  var underRug = rugged.length && rnd(100) < TRAPDOOR_UNDER_RUG_PCT;
+  var pool = underRug ? rugged : spots;
+  if (!pool.length) pool = spots.length ? spots : rugged;
+  if (!pool.length) return 0;
+  var at = pool[rnd(pool.length)];
+  var k = at[1] * MAP_W + at[0];
+  Lv.tiles[k] = TRAPDOOR;
+  Lv.tdoor = Lv.tdoor || {};
+  Lv.tdoor[k] = { found: 0 };
+  return 1;
+}
+
+/* --------------------------------------------------- down, and back up
+   Going down a trapdoor is not going down a floor.  Your depth does not
+   change, the floor above is kept exactly as you left it, and the way
+   back up comes out on the trapdoor itself. */
+function enterCellar() {
+  var key = cellarKey(G.depth);
+  var back = { x: P.x, y: P.y };
+  G.floors = G.floors || {};
+  if (!G.floors[key]) {
+    var made = genCellar(G.depth);
+    stockCellar(made.level, made.rooms, G.depth);
+    made.level.backTo = back;
+    G.floors[key] = made.level;
+  } else G.floors[key].backTo = back;
+  L = G.floors[key]; G.level = L;
+  G.floorKey = key;
+  setDims(L.mw, L.mh);
+  P.x = L.up.x; P.y = L.up.y;
+  computeVis();
+  return true;
+}
+function leaveCellar() {
+  var up = L.backTo || null;
+  L = G.floors[String(G.depth)]; G.level = L;
+  G.floorKey = String(G.depth);
+  setDims(L.mw, L.mh);
+  if (up && walkable(up.x, up.y)) { P.x = up.x; P.y = up.y; }
+  else { var s = arriveOn(L, 'up'); P.x = s.x; P.y = s.y; }
+  computeVis();
+  return true;
 }

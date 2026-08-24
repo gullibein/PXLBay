@@ -399,15 +399,184 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   console.log('web spinners : ' + ws.shots + ' shots over ' + ws.tries + ' set ups - ' +
     ws.stuck + ' landed on your square and held you there, ' +
     ws.laid + ' left web on the ground between you');
-  console.log('             : a round of ' + ws.round + ' turns - ' + ctx.WEB_SPIT_TURNS +
-    ' spitting then ' + ctx.WEB_RUSH_TURNS + ' closing with you; over ' + ws.nearRounds +
-    ' set ups beside you that came to ' + ws.spits + ' spits and ' + ws.melee +
-    ' turns of teeth, and over ' + ws.farRounds + ' out of reach it spat once more and ' +
-    'gave up ' + ws.idle + ' turns');
+  console.log('             : on your feet she spat ' + ws.spits.toFixed(1) + ' webs a turn ' +
+    'and backed off ' + ws.backedOff + ' of ' + ws.setups + ' times without laying a finger ' +
+    'on you; stuck in one, ' + ws.kept + ' of ' + ws.bites + ' rounds she came in, bit once ' +
+    'with her ' + ctx.SPIN_POINTS + ' actions, and was out of reach again by the end of it');
   console.log('             : web costs ' + ws.held.toFixed(1) + ' turns on average (' +
     ctx.WEB_HOLD_MIN + '-' + ctx.WEB_HOLD_MAX + '), spat or walked into, and ' +
     ws.weavers + ' creatures walk their own silk without sticking to it');
   check(ws.bad.length === 0, 'web spinner: ' + [...new Set(ws.bad)].slice(0, 4).join('; '));
+
+  const seen = ctx.stepsAreSeenOK(30);
+  console.log('every step seen: ' + seen.rounds + ' rounds of up to ' + seen.most +
+    ' steps, each stamped ' + seen.avg.toFixed(0) + 'ms after the last - longer than the ' +
+    ctx.MOVE_ANIM_MS + 'ms it takes to cross a square, so none of them is skipped');
+  check(seen.bad.length === 0, 'every step seen: ' + [...new Set(seen.bad)].slice(0, 4).join('; '));
+
+  const tdoor = ctx.trapdoorsOK(14);
+  console.log('trapdoors    : ' + tdoor.pct + ' floors in a hundred have one (' + tdoor.rugged +
+    ' of them under a rug, which cannot be found until it burns); ' + tdoor.went +
+    ' cellars walked - ' + tdoor.hoard.toFixed(1) + ' things in the far room, ' +
+    tdoor.darkPct + '% of their rooms pitch dark, ' + tdoor.prizes + ' with a ring or a good blade');
+  check(tdoor.bad.length === 0, 'trapdoors: ' + [...new Set(tdoor.bad)].slice(0, 4).join('; '));
+
+  const cellSave = ctx.cellarSaveOK(40);
+  console.log('             : and ' + cellSave.tried + ' of them came back out of a save ' +
+    'exactly as they were, cellar and all');
+  check(cellSave.bad.length === 0, 'a saved cellar: ' +
+    [...new Set(cellSave.bad)].slice(0, 4).join('; '));
+
+  const boom = ctx.barrelBlastOK(40);
+  console.log('a barrel goes up: over ' + boom.tried + ' of them - ' + boom.fires.toFixed(1) +
+    ' squares left burning, ' + boom.smoke.toFixed(1) + ' of smoke over the hole, and the ' +
+    'flash lit ' + boom.far.toFixed(1) + ' squares out; smoke does ' +
+    boom.smokeDam.toFixed(1) + ' a turn against poison gas at ' + boom.poisonDam.toFixed(1));
+  check(boom.bad.length === 0, 'a barrel goes up: ' + [...new Set(boom.bad)].slice(0, 4).join('; '));
+
+  const quiet = ctx.inspectSaysNothingIdleOK();
+  check(quiet.bad.length === 0, 'idle lines: ' + [...new Set(quiet.bad)].slice(0, 4).join('; '));
+  console.log('             : and it says nothing about stacking, about which foot a boot ' +
+    'goes on, or about the food clock');
+
+  const glow = ctx.fireLightOK();
+  console.log('firelight    : a row of ' + glow.row + ' fires lit itself to ' + glow.kinds +
+    ' brightnesses between ' + glow.lo + ' and ' + glow.hi + '; over a patch of ' + glow.patch +
+    ' the average square came to ' + glow.mean + ' of full, and it is dealt again each time ' +
+    'the flame swaps tiles and at no other moment');
+  check(glow.bad.length === 0, 'firelight: ' + [...new Set(glow.bad)].slice(0, 4).join('; '));
+
+  const shock = ctx.shockStoneOK();
+  console.log('shocking stone: on dry stone it jolts the square it lands on; thrown into water ' +
+    'it lights the whole pool (' + shock.pool + ' squares), the next pool along not at all, ' +
+    'and your own legs if you are standing in it');
+  check(shock.bad.length === 0, 'the shocking stone: ' + [...new Set(shock.bad)].slice(0, 4).join('; '));
+
+  const laid = ctx.laidDownOK();
+  console.log('your own things: what you drop stays dropped - walking over it says so and ' +
+    'ENTER picks it up, the way an opened chest waits to be asked');
+  check(laid.bad.length === 0, 'dropped things: ' + [...new Set(laid.bad)].slice(0, 4).join('; '));
+
+  const mush = ctx.mushroomsOK();
+  console.log('mushrooms    : ' + mush.kinds + ' kinds, the colours dealt afresh each run - ' +
+    'the bad one costs ' + mush.did.poison + ' hit points, the ghost ' + mush.did.unseen +
+    ' turns unseen, the berserker +' + mush.did.rage + ' strength with speed, ' +
+    'and fire does nothing at all to the ember');
+  check(mush.bad.length === 0, 'mushrooms: ' + [...new Set(mush.bad)].slice(0, 4).join('; '));
+
+  const rstone = ctx.runeStoneSurvivesOK(400);
+  console.log('runed stones : over ' + rstone.tried + ' throws at bare floor, ' + rstone.pct +
+    ' in a hundred were lying there afterwards with the carving still on them; ' +
+    rstone.homes + ' returning stones came home instead of being left behind');
+  check(rstone.bad.length === 0, 'runed stones: ' + [...new Set(rstone.bad)].slice(0, 4).join('; '));
+
+  const insp = ctx.inspectOK();
+  console.log('inspect      : all ' + insp.counted + ' things in the dungeon have something ' +
+    'written about them (longest, the ' + insp.longestName + ', ' + insp.longest +
+    ' characters), and not one of them gives away what it is before you know');
+  console.log('             : the box about you runs to ' + insp.me + ' lines, and ' +
+    insp.told + ' of ' + insp.ef + ' effects explain themselves');
+  check(insp.bad.length === 0, 'inspect: ' + [...new Set(insp.bad)].slice(0, 4).join('; '));
+
+  const spit = ctx.webEveryOtherTurnOK(30);
+  console.log('gathering web: over ' + spit.runs + ' spinners, ' + spit.per.toFixed(1) +
+    ' webs in twelve turns - never two inside ' + ctx.WEB_EVERY + ' turns - and web spat ' +
+    'over a player already stuck holds him not one turn longer');
+  check(spit.bad.length === 0, 'gathering web: ' + [...new Set(spit.bad)].slice(0, 4).join('; '));
+
+  const glowSneak = ctx.glowStealthOK();
+  console.log('carrying a light: it costs ' + (glowSneak.plain - glowSneak.lit) +
+    ' off how quietly you move (' + glowSneak.word + ' -> ' + glowSneak.litWord +
+    '), and a creature four squares off notices you ' + glowSneak.seenLit + '% of the time ' +
+    'against ' + glowSneak.seenDark + '% in the dark');
+  check(glowSneak.bad.length === 0, 'carrying a light: ' +
+    [...new Set(glowSneak.bad)].slice(0, 4).join('; '));
+
+  const night = ctx.nightEyesOK(30);
+  console.log('night eyes   : over ' + night.tried + ' rooms, the perk is worth ' + night.gain +
+    ' more squares of sight in a room nobody left a lamp in - and a room like that and a ' +
+    'pitch dark one now come out the same, which is what "sees in the dark" means');
+  check(night.bad.length === 0, 'night eyes: ' + [...new Set(night.bad)].slice(0, 4).join('; '));
+
+  const witch = ctx.witchStonesOK(40);
+  console.log('the witch    : ' + witch.tried + ' of them threw ' + witch.threw.toFixed(1) +
+    ' stones and then had none left; ' + witch.floor.toFixed(1) +
+    ' of them were lying on the floor afterwards');
+  check(witch.bad.length === 0, 'the witch: ' + [...new Set(witch.bad)].slice(0, 4).join('; '));
+
+  const glass = ctx.glassArmourOK();
+  console.log('glass armour : turns ' + glass.a + ' points of a blow, has a sprite of its own, ' +
+    'and neither a rust trap nor an aquator can touch it');
+  check(glass.bad.length === 0, 'glass armour: ' + [...new Set(glass.bad)].slice(0, 4).join('; '));
+
+  const lamp = ctx.runeOfLightOK();
+  console.log('of light     : a blade or a coat of light lights two squares about you and ' +
+    'half a square more, round rather than square - a pitch dark room went from ' +
+    lamp.dark + ' squares in sight to ' + lamp.seen + ' - and it cannot keep itself secret');
+  check(lamp.bad.length === 0, 'of light: ' + [...new Set(lamp.bad)].slice(0, 4).join('; '));
+
+  const stone = ctx.burningStoneOK(30);
+  console.log('a burning stone: ' + stone.tried + ' thrown at bare floor burned where they fell ' +
+    'for ' + ctx.BURN_TRAIL_TURNS + ' turns - ' + stone.first + ' at full light, and the ' +
+    'second turn, on its way out, at half');
+  check(stone.bad.length === 0, 'a burning stone: ' + [...new Set(stone.bad)].slice(0, 4).join('; '));
+
+  const farFire = ctx.fireLightsFarOK(40);
+  console.log('seen by its own light: ' + farFire.lit + ' fires set down ' + farFire.far +
+    ' squares off in a pitch dark hall (the furthest ' + farFire.most +
+    '), every one of them seen, and what it was lighting with it - but not one behind stone');
+  check(farFire.bad.length === 0, 'seen by its own light: ' +
+    [...new Set(farFire.bad)].slice(0, 4).join('; '));
+
+  const fw = ctx.fireWallCatchesOK();
+  console.log('walls of fire: web pressed against one catches and is gone in ' + fw.turns +
+    ' turns, and so is a table standing beside it');
+  check(fw.bad.length === 0, 'walls of fire: ' + [...new Set(fw.bad)].slice(0, 4).join('; '));
+
+  const bb = ctx.bridgeBurnsOK(40);
+  console.log('burning bridges: ' + bb.tried + ' set alight, through in ' + bb.turns +
+    ' turns each, leaving the drop they spanned - and standing on one over a hole ' +
+    'when it goes drops you');
+  check(bb.bad.length === 0, 'burning bridges: ' + [...new Set(bb.bad)].slice(0, 4).join('; '));
+
+  const pud = ctx.puddlesOK(30);
+  console.log('thrown water : ' + pud.made + ' flasks made a puddle, ' + pud.avg.toFixed(1) +
+    ' squares on average and never more than ' + pud.big + '; none of it on a rug, a bridge ' +
+    'or a stairway; ' + pud.dried + ' dried away again, and it puts a fire out');
+  check(pud.bad.length === 0, 'thrown water: ' + [...new Set(pud.bad)].slice(0, 4).join('; '));
+
+  const sip = ctx.potionSipOK();
+  console.log('a mouthful  : all ' + sip.tried + ' flasks are worth ' + sip.sip +
+    ' on the food clock when you drink them, nourishment its own full helping');
+  check(sip.bad.length === 0, 'a mouthful: ' + [...new Set(sip.bad)].slice(0, 4).join('; '));
+
+  const larder = ctx.foodOnFloorsOK(25);
+  console.log('what to eat : ' + larder.per.toFixed(2) + ' things to eat a floor, worth ' +
+    larder.nour.toFixed(0) + ' on the clock, and ' + larder.barePct +
+    '% of floors with nothing on them');
+  check(larder.bad.length === 0, 'what to eat: ' + [...new Set(larder.bad)].slice(0, 4).join('; '));
+
+  const chasm = ctx.chasmRoomsOK(30);
+  console.log('a chasm room: one room in ' + chasm.one.toFixed(0) + ' is cut clean across by a gap ' +
+    'with a plank bridge over it (' + chasm.chasms + ' of ' + chasm.rooms + '), ' +
+    chasm.wide.toFixed(1) + ' squares of it, wall to wall and cracked along both banks');
+  check(chasm.bad.length === 0, 'a chasm room: ' + [...new Set(chasm.bad)].slice(0, 4).join('; '));
+
+  const zap = ctx.lightningReachOK(60);
+  console.log('lightning    : ' + zap.tried + ' bolts ran to the first wall, the longest ' +
+    zap.longest + ' squares, and every creature in the row felt it - a wand of cold still ' +
+    'stops after fourteen');
+  check(zap.bad.length === 0, 'lightning: ' + [...new Set(zap.bad)].slice(0, 4).join('; '));
+
+  const fuseOK = ctx.barrelFuseOK(12);
+  console.log('powder fuse  : ' + fuseOK.tried + ' barrels caught, every one of them burning ' +
+    'where you can see it, and every one going up one full turn later');
+  check(fuseOK.bad.length === 0, 'powder fuse: ' + [...new Set(fuseOK.bad)].slice(0, 3).join('; '));
+
+  const fum = ctx.fumesAtOnceOK();
+  console.log('fumes        : poison burns you on the step that carries you in, once a ' +
+    'turn, stamped no later than the step itself');
+  check(fum.bad.length === 0, 'fumes: ' + [...new Set(fum.bad)].slice(0, 4).join('; '));
 
   const sdo = ctx.slowDigestionOK();
   if (sdo.bare) console.log('you eat little : hungry after ' + sdo.bare + ' turns barefoot, ' +
@@ -534,7 +703,11 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
 /* --- 8. saving a run and taking it up again ------------------------ */
 {
   let same = 0, tried = 0, mismatch = null, sizes = [];
-  for (let s = 0; s < 10; s++) {
+  /* Keep dealing seeds until enough runs have lived long enough to be
+     worth saving.  A fixed ten used to be enough and then was not: the
+     number that survive 260 turns is a coin toss, and this check is
+     about the save file rather than about how dangerous the dungeon is. */
+  for (let s = 0; s < 60 && tried < 8; s++) {
     if (!ctx.playAWhile(52000 + s, 260)) continue;   /* dead runs cannot be saved */
     tried++;
     const before = ctx.runPrint();
@@ -566,10 +739,20 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
     'every creature came back pointing at the real table entry'));
   check(md.length === 0, 'monster entries after loading: ' + md.slice(0, 3).join('; '));
 
-  /* three slots that do not tread on one another */
-  ctx.playAWhile(61001, 200); const s0 = ctx.runPrint(); ctx.saveInto(0);
-  ctx.playAWhile(61002, 200); const s1 = ctx.runPrint(); ctx.saveInto(1);
-  ctx.playAWhile(61003, 200); const s2 = ctx.runPrint(); ctx.saveInto(2);
+  /* Three slots that do not tread on one another.  The run has to be
+     alive when it is saved: once you are dead the game stops working out
+     what you can see - the last view is the one you are left looking at -
+     so a dead run's sight is a turn behind, and loading it back works it
+     out afresh.  That is not the slots treading on each other, and this
+     check is about the slots.  A seed whose walk ends in death simply
+     gets another one. */
+  const savedRun = (seed, slot) => {
+    for (let n = 0; n < 8; n++)
+      if (ctx.playAWhile(seed + n * 100, 200)) { const p = ctx.runPrint(); ctx.saveInto(slot); return p; }
+    return null;
+  };
+  const s0 = savedRun(61001, 0), s1 = savedRun(61002, 1), s2 = savedRun(61003, 2);
+  check(s0 && s1 && s2, 'no run survived long enough to fill all three slots');
   ctx.loadFrom(0); const g0 = ctx.runPrint();
   ctx.loadFrom(2); const g2 = ctx.runPrint();
   ctx.loadFrom(1); const g1 = ctx.runPrint();

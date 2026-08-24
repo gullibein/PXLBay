@@ -41,6 +41,11 @@ PAL = {
     'k': (0xd2, 0x9d, 0x63),      # tan
     's': (0xf0, 0xbf, 0x99),      # skin
     'm': (0xff, 0x7f, 0xa8),      # pink
+    # the four colours the Persian rug is painted in
+    'q': (0x8b, 0x23, 0x22),      # rug: the deep red field
+    'Q': (0xb9, 0x25, 0x29),      # rug: the bright red
+    'j': (0xbf, 0xa5, 0x8c),      # rug: the cream
+    'J': (0x2d, 0x25, 0x2c),      # rug: the near black
     'w': (0x9c, 0xa5, 0xb8),      # metal dark
     'W': (0xe6, 0xed, 0xf5),      # metal bright
 }
@@ -179,6 +184,18 @@ spr('stairs_up', [
     "...66633",
     ".....633",
     ".....666"])
+
+# A door in the floor: planks with a ring to pull it up by, and a dark
+# seam down the side where it does not quite sit flush.
+spr('trapdoor', [
+    "nnnnnnnn",
+    "nNNNNNNn",
+    "nN0NNNNn",
+    "nNNN0NNn",
+    "nNNNNNNn",
+    "nNN0NNNn",
+    "nNNNNN6n",
+    "nnnnnnnn"])
 
 spr('trap', [
     "........",
@@ -405,6 +422,49 @@ spr('mushroom', [
     ".66666..",
     "........"])
 
+# The other four mushrooms.  Same shape, different cap: which colour does
+# what is dealt out afresh every run, so the shape has to be the one thing
+# they all share.
+spr('mush_b', [
+    "........",
+    "..BBB...",
+    ".BBbBB..",
+    "BBbBBBB.",
+    "..666...",
+    "..666...",
+    ".66666..",
+    "........"])
+
+spr('mush_y', [
+    "........",
+    "..yyy...",
+    ".yyOyy..",
+    "yyOyyyy.",
+    "..666...",
+    "..666...",
+    ".66666..",
+    "........"])
+
+spr('mush_p', [
+    "........",
+    "..PPP...",
+    ".PPpPP..",
+    "PPpPPPP.",
+    "..666...",
+    "..666...",
+    ".66666..",
+    "........"])
+
+spr('mush_g', [
+    "........",
+    "..GGG...",
+    ".GGgGG..",
+    "GGgGGGG.",
+    "..666...",
+    "..666...",
+    ".66666..",
+    "........"])
+
 spr('berries', [
     "........",
     "...G....",
@@ -625,6 +685,19 @@ spr('armor_p', [
     "6WWWWWW6",
     ".6WWWW6.",
     "..6666.."])
+
+# Glass armour: a coat of something that is not metal.  Pale cyan with a
+# white highlight down one side, so it reads as glass rather than as one
+# more grey breastplate.
+spr('armor_glass', [
+    ".c....c.",
+    "cccccccc",
+    "c7cccccc",
+    "c7ccccBc",
+    "cc7cccBc",
+    "ccccccBc",
+    ".ccccBc.",
+    "..cccc.."])
 
 spr('shield', [
     ".666666.",
@@ -1635,6 +1708,17 @@ spr('stone_ice', [
     "........",
     "........"])
 
+# A stone with a current in it: a forked line, the way lightning is drawn.
+spr('stone_shock', [
+    "........",
+    "..777...",
+    ".74c47..",
+    ".7cyc7..",
+    ".74c47..",
+    "..777...",
+    "........",
+    "........"])
+
 spr('pin', [
     "........",
     "...PP...",
@@ -1717,108 +1801,124 @@ spr('dagger_throw', [
     "...k...."])
 
 # ----- a rug ------------------------------------------------------------
-# Nine pieces so a rug can be any size and still have proper edges, plus
-# a second middle so the pattern is not a grid of stamps.  All of them
-# read out as the same thing when you look at them.
-spr('rug_nw', [
-    "........",
-    ".rrrrrrr",
-    ".rnnnnnn",
-    ".rnRRRRR",
-    ".rnRoooo",
-    ".rnRoRRR",
-    ".rnRoRnn",
-    ".rnRoRnR"])
+# A Persian rug, painted 4 tiles wide and 6 tall and folded in half twice:
+# the left half is the mirror of the right and the top half the mirror of
+# the bottom, so the whole of it is these six tiles and the drawing turns
+# them over as it lays them.  Which of them a rug of a given size is cut
+# from is RUG_CUT in part1_core.js.
+#
+# Row 0 is the border, row 1 the field between border and medallion, row 2
+# the middle of the medallion.  Column 0 is the border and column 1 the
+# middle of a four-wide rug - but a three-wide rug has a middle column of
+# its own, which is never mirrored because it is its own reflection, and
+# that is column 'c'.
+spr('rug_00', [
+    "jqjqjqjq",
+    "qQqQqQqQ",
+    "jqQjjQJj",
+    "qQjJQjjJ",
+    "jqjQJQQQ",
+    "qQQjQjJj",
+    "jqJjQJqq",
+    "qQjJQjqq"])
 
-spr('rug_n', [
-    "........",
-    "rrrrrrrr",
-    "nnnnnnnn",
-    "RRRRRRRR",
-    "oooooooo",
-    "RRRRRRRR",
-    "nnnnnnnn",
-    "RnRnRnRn"])
+spr('rug_01', [
+    "jqjqjqjq",
+    "qQqQqQqj",
+    "jQJJQjjq",
+    "QJjjJQJQ",
+    "JqQQQQqJ",
+    "qjqjqjJj",
+    "qjqqqjqq",
+    "jjqjjqqq"])
 
-spr('rug_ne', [
-    "........",
-    "rrrrrrr.",
-    "nnnnnnr.",
-    "RRRRRnr.",
-    "ooooRnr.",
-    "RRRoRnr.",
-    "nnRoRnr.",
-    "RnRoRnr."])
+spr('rug_10', [
+    "jqjQQqqj",
+    "qQQJqjjj",
+    "jqJjQqqq",
+    "qQJjQjqj",
+    "jqQJQJqj",
+    "qQjQQjjq",
+    "jqjJQJqQ",
+    "qjQQQjqq"])
 
-spr('rug_w', [
-    ".rnRoRnR",
-    ".rnRoRnn",
-    ".rnRoRRR",
-    ".rnRoooo",
-    ".rnRoRRR",
-    ".rnRoRnn",
-    ".rnRoRRR",
-    ".rnRoooo"])
+spr('rug_11', [
+    "qqjqqqqq",
+    "qqjqQqqj",
+    "jjjqqqjJ",
+    "qqqqqjqQ",
+    "qqjqqjJQ",
+    "qjqjqqjq",
+    "qqjqqqqj",
+    "qqqqqqqq"])
 
-spr('rug_c', [
-    "RnRnRnRn",
-    "nnnnnnnn",
-    "RRRRRRRR",
-    "oooooooo",
-    "oooooooo",
-    "RRRRRRRR",
-    "nnnnnnnn",
-    "RnRnRnRn"])
+spr('rug_20', [
+    "jqjJQqqq",
+    "qQQJQjqj",
+    "jqjQJqqq",
+    "qQQjQjqq",
+    "jqQjQqqQ",
+    "qQjQQjqq",
+    "jqQJqqqq",
+    "qQjQJjqq"])
 
-spr('rug_c2', [
-    "nRnRnRnR",
-    "RooooooR",
-    "noRRRRon",
-    "RoRnnRoR",
-    "RoRnnRoR",
-    "noRRRRon",
-    "RooooooR",
-    "nRnRnRnR"])
+spr('rug_21', [
+    "jqqQqqqj",
+    "qjqqqqjq",
+    "jqqqqJjQ",
+    "qqqjjjJq",
+    "qqqjqJQj",
+    "qqJjJqjq",
+    "qjjJQjQJ",
+    "jQqqjqqQ"])
 
-spr('rug_e', [
-    "RnRoRnr.",
-    "nnRoRnr.",
-    "RRRoRnr.",
-    "ooooRnr.",
-    "RRRoRnr.",
-    "nnRoRnr.",
-    "RRRoRnr.",
-    "ooooRnr."])
+# The middle column of a three-wide rug.  It is laid down the spine of the
+# rug and mirrored only top to bottom, so unlike every other tile it is
+# never turned over left to right.
+spr('rug_0c', [
+    "qjqjjqjq",
+    "jqQqqQqj",
+    "qjjQQjjq",
+    "QJQJJQJQ",
+    "JqQQQQqJ",
+    "jJjqqjJj",
+    "qqjqqjqq",
+    "qqqjjqqq"])
 
-spr('rug_sw', [
-    ".rnRoRnR",
-    ".rnRoRnn",
-    ".rnRoRRR",
-    ".rnRoooo",
-    ".rnRRRRR",
-    ".rnnnnnn",
-    ".rrrrrrr",
-    "........"])
+spr('rug_1c', [
+    "qqqqqqqq",
+    "QqqjjqqQ",
+    "qqjqqjqq",
+    "qjJQQJjq",
+    "qjqQQqjq",
+    "qqjJJjqq",
+    "qqqjjqqq",
+    "qqqqqqqq"])
 
-spr('rug_s', [
-    "RnRnRnRn",
-    "nnnnnnnn",
-    "RRRRRRRR",
-    "oooooooo",
-    "RRRRRRRR",
-    "nnnnnnnn",
-    "rrrrrrrr",
-    "........"])
+spr('rug_2c', [
+    "qqqjjqqq",
+    "qqjqQjqq",
+    "qJjQqjJq",
+    "qjJqqJjq",
+    "JjQjjQjJ",
+    "jqjqqjqj",
+    "jjQJJQjj",
+    "jqJQQJqj"])
 
-spr('rug_se', [
-    "RnRoRnr.",
-    "nnRoRnr.",
-    "RRRoRnr.",
-    "ooooRnr.",
-    "RRRRRnr.",
-    "nnnnnnr.",
-    "rrrrrrr.",
-    "........"])
+# The middle row of a rug woven an odd number of tiles tall - three, five,
+# seven - where the pattern has to stand on its own rather than fold
+# against its twin.  It goes in the inner columns; the border column of
+# that row is the medallion's own outer tile, and a three-wide rug has
+# its spine there instead.
+spr('rug_c1', [
+    "qqqqqqqj",
+    "qqqqqqjq",
+    "qqqqqjqJ",
+    "qQjqjqJQ",
+    "qjJqjqJQ",
+    "qqqqqjqJ",
+    "qqqqqqjq",
+    "qqqqqqqj"])
 
 # ---------------------------------------------------------------- font 5x7
 F = {}
@@ -1942,7 +2042,7 @@ LAYOUT = [
                    'water', 'water2', 'holy', 'holy2', 'hole',
                    'bridge_h', 'bridge_v', 'bars', 'kerb']),
 
-    ('ways',      ['stairs_down', 'stairs_up', 'keyhole', 'ice_wall', 'fire_wall',
+    ('ways',      ['stairs_down', 'stairs_up', 'trapdoor', 'keyhole', 'ice_wall', 'fire_wall',
                    'door_wood', 'door_bronze', 'door_iron',
                    'door_silver', 'door_gold', 'door_crystal']),
 
@@ -1953,9 +2053,9 @@ LAYOUT = [
                    'rubble', 'table', 'chair', 'barrel',
                    'trap', 'trap_dart', 'trap_gas', 'trap_pit']),
 
-    ('rugs',      ['rug_nw', 'rug_n', 'rug_ne',
-                   'rug_w', 'rug_c', 'rug_c2', 'rug_e',
-                   'rug_sw', 'rug_s', 'rug_se']),
+    # ten tiles, folded twice: see the rug block above
+    ('rugs',      ['rug_00', 'rug_01', 'rug_0c', 'rug_10', 'rug_11', 'rug_1c',
+                   'rug_20', 'rug_21', 'rug_2c', 'rug_c1']),
 
     ('chests',    ['chest', 'chest_open', 'pouch',
                    'chest_wood', 'chest_bronze', 'chest_iron',
@@ -1964,7 +2064,8 @@ LAYOUT = [
                    'key_silver', 'key_gold', 'key_crystal']),
 
     ('treasure',  ['gold', 'gold2', 'amulet', 'crystal', 'pin', 'dynamite',
-                   'food', 'fruit', 'mushroom', 'berries',
+                   'food', 'fruit', 'mushroom', 'mush_b', 'mush_y',
+                   'mush_p', 'mush_g', 'berries',
                    'scroll', 'wand', 'wand2', 'wand3', 'staff', 'staff2',
                    'ring_b', 'ring_g', 'ring_r', 'ring_c', 'ring_y', 'ring_p',
                    'ring_m', 'ring_o', 'ring_n']),
@@ -1975,9 +2076,9 @@ LAYOUT = [
     ('arms',      ['sword', 'dagger', 'dagger_throw', 'mace', 'axe', 'spear',
                    'bow', 'bow_long', 'crossbow', 'arrow', 'bolt',
                    'stone', 'stone_blast', 'stone_slow', 'stone_return',
-                   'stone_fire', 'stone_ice']),
+                   'stone_fire', 'stone_ice', 'stone_shock']),
 
-    ('armour',    ['armor_l', 'armor_c', 'armor_p',
+    ('armour',    ['armor_l', 'armor_c', 'armor_p', 'armor_glass',
                    'shield', 'shield2', 'shield3',
                    'cap', 'helm', 'crown',
                    'boots', 'sandals', 'ironboots']),
@@ -1995,6 +2096,17 @@ LAYOUT = [
                    'mk_z', 'mk_q', 'mk_x', 'mk_ally']),
 ]
 
+# Sprites deliberately taken out of the game altogether - the definition
+# above is gone as well as the placement, so there is nothing left to
+# notice their absence.  A name listed here is retired on purpose and the
+# check further down lets it go; a name that vanishes without being
+# listed here still stops the build, which is the whole point of that
+# check.  The old rug was nine pieces cut for a nine-slice; the Persian
+# rug that replaced it is six tiles laid mirrored, so none of the nine
+# has anywhere to go.
+RETIRED = ['rug_nw', 'rug_n', 'rug_ne', 'rug_w', 'rug_c', 'rug_c2',
+           'rug_e', 'rug_sw', 'rug_s', 'rug_se']
+
 names = []
 for _group, _members in LAYOUT:
     names.extend(_members)
@@ -2007,7 +2119,7 @@ if _dupes:
 _missing = [n for n in names if n not in S]
 if _missing:
     raise SystemExit('placed but never drawn: %s' % ', '.join(_missing))
-_dropped = sorted(n for n in S if n not in names)
+_dropped = sorted([n for n in S if n not in names] + RETIRED)
 if _dropped:
     print('dropped (never drawn by the game):', ', '.join(_dropped))
 

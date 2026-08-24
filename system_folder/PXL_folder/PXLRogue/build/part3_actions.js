@@ -149,7 +149,10 @@ function afterStep() {
   } else if (tr) springTrap(tr);
   var st = tileAt(P.x, P.y);
   if (st === STAIR) msg('Stairs down. Press ENTER.', 'c');
-  else if (st === STAIR_UP) msg('Stairs up. Press ENTER.', 'c');
+  else if (st === STAIR_UP) msg(inCellar() ? 'The way back up. Press ENTER.'
+                                           : 'Stairs up. Press ENTER.', 'c');
+  else if (st === TRAPDOOR && !trapdoorHidden(P.x, P.y))
+    msg('A trapdoor. Press ENTER to climb down.', 'c');
 }
 
 /* Walking into the dark, and out of it again.  Said once at the step
@@ -229,9 +232,50 @@ function noteUnderfoot() {
   else if (it.t === 'gold') msg('Gold on the floor. Click it to take it.', 'y');
   else msg(cap(itemName(it)) + ' lies here. Click it to take it.', 'c');
 }
+/* Something you put down yourself, lying where you left it.  Like an
+   opened chest it waits to be asked: walking over your own cache on the
+   way past should not empty it back into your pack. */
+function laidHere() {
+  var it = itemAt(L, P.x, P.y);
+  return (it && it.laid && it.t !== 'chest') ? it : null;
+}
+/* Anything under your feet that is still under your feet.  Two ways that
+   happens: you put it there yourself, or your pack was full when you
+   walked over it.  Either way it is picked up by asking - and after you
+   have emptied a slot to make room, asking is exactly what you want to
+   do.  Gold is not one of these: it goes in your purse, and your purse
+   is never full.
+
+   A chest is its own thing and answers ENTER by opening. */
+function takeableHere() {
+  var it = itemAt(L, P.x, P.y);
+  if (!it || it.t === 'chest' || it.t === 'gold') return null;
+  return it;
+}
+/* and picking it up when you do ask.  It stops being a thing you laid
+   down the moment it is back in your hands. */
+function takeLaid(it) {
+  if (!it) return 0;
+  var n = L.items.length, was = it.laid;
+  delete it.laid;
+  autoPickup();
+  /* it went nowhere - a full pack - so it is still where it was, and
+     still yours if it was yours */
+  if (L.items.length === n && L.items.indexOf(it) >= 0) {
+    if (was) it.laid = 1;
+    if (typeof openNote === 'function') openNote('The pack is full.');
+    return 0;
+  }
+  return 1;
+}
 function autoPickup() {
   var it = itemAt(L, P.x, P.y);
   if (!it) return;
+  /* your own, put down on purpose: it waits for ENTER */
+  if (it.laid && it.t !== 'chest') {
+    msg(cap(itemName(it)) + '. Press ENTER to pick it up.', 'k');
+    return;
+  }
   sound('pickup');
   if (it.t === 'gold') {
     var coin = hasPerk('scavenger') ? Math.round(it.cnt * PERK_GOLD_MULT) : it.cnt;
@@ -331,6 +375,7 @@ function equipFromFloor(it) {
   }
   if (cur) {
     takeOffEffects(cur);
+    cur.laid = 1;                    /* yours, put down: it waits for ENTER */
     if (dropNear(P.x, P.y, cur)) msg('You put down ' + itemName(cur) + '.', '6');
     else msg(cap(itemName(cur)) + ' is lost in the clutter.', 'R');
   }
@@ -743,9 +788,7 @@ function springTrap(tr) {
     }
     case 'rust': {
       var bd = P.eq.body, rusted = 0;
-      if (bd && !bd.protected && ARMORS[bd.k].n.indexOf('leather') < 0) {
-        bd.ap--; rusted = 1;
-      }
+      if (bd && canRust(bd)) { bd.ap--; rusted = 1; }
       msgTrap('A gush of water hits your head.', 'B',
         rusted ? 'armor -1' : 'no harm', rusted ? 'R' : '6');
       soakPlayer('It burns like acid.');
@@ -820,8 +863,25 @@ function monTrap(m, tr) {
 function useStairs() {
   var t = tileAt(P.x, P.y);
 
+  /* A door in the floor: down into the cellar under this floor, which is
+     not a floor of the dungeon and does not count as one.  Hidden ones
+     are not there to be used until they have been found. */
+  if (t === TRAPDOOR) {
+    if (trapdoorHidden(P.x, P.y)) return false;
+    if (inCellar()) return false;
+    enterCellar();
+    msg('You lift the trapdoor and climb down.', 'c');
+    return true;
+  }
+
   /* the way back up - never above the floor you started on */
   if (t === STAIR_UP) {
+    /* out of a cellar is back up through the trapdoor you came down */
+    if (inCellar()) {
+      leaveCellar();
+      msg('You climb back up through the trapdoor.', 'c');
+      return true;
+    }
     if (G.depth <= 1) {
       if (P.amulet) { G.mode = 'win'; return false; }
       msg('The staircase has collapsed. You cannot get out!', 'R');
@@ -833,6 +893,7 @@ function useStairs() {
   }
 
   if (t !== STAIR) return false;
+  if (inCellar()) return false;             /* a cellar has no way further down */
   if (P.amulet && G.depth === 1) { G.mode = 'win'; return false; }
   enterLevel(G.depth + 1, 'down');
   msg('You descend to floor ' + floorName() + '.', 'c');
@@ -852,6 +913,7 @@ function stow(it, why) {
     if (!hadRoom) msg('Your pack is full - it goes in the pouch.', 'w');
     return false;
   }
+  it.laid = 1;
   dropNear(P.x, P.y, it);
   msg('No room anywhere - you drop ' + itemName(it) + '.', 'O');
   return true;
@@ -934,7 +996,36 @@ function eat(it) {
   else if (G.hungerState > 0) G.hungerState--;
   msg(F.line, F.col || 'G');
   removeItem(it, 1);
+  /* and whatever else was in it.  Eating one is the only way to find
+     out which colour was which, so eating one is what teaches you. */
+  if (F.mush) { eatMushroom(F.mush); KNOWN.mush[it.k] = 1; }
   return true;
+}
+
+/* What a mushroom does besides feed you.  One of the five only feeds. */
+function eatMushroom(kind) {
+  switch (kind) {
+    case 'poison':
+      msg('That one was bad. Your stomach turns over.', 'g');
+      if (!hasProp('sustain strength') && !hasPerk('ironblood'))
+        P.str = Math.max(3, P.str - 1);
+      hurtPlayer(MUSH_POISON[0] + rnd(MUSH_POISON[1] - MUSH_POISON[0] + 1),
+        'a sickening mushroom', 'poison');
+      break;
+    case 'unseen':
+      P.unseen = Math.max(P.unseen, MUSH_TURNS);
+      msg('You fade out of the world. Nothing can see you.', 'c');
+      break;
+    case 'rage':
+      P.rage = Math.max(P.rage, MUSH_TURNS);
+      P.haste = Math.max(P.haste, MUSH_TURNS);
+      msg('A red haze comes down. You are strong and quick.', 'R');
+      break;
+    case 'fireproof':
+      P.fireproof = Math.max(P.fireproof, MUSH_TURNS);
+      msg('You go warm all through. Fire holds nothing for you.', 'O');
+      break;
+  }
 }
 
 /* ---------------------------------------------------------- potions */
@@ -1034,6 +1125,13 @@ function quaff(it) {
       P.conf = 0; P.hallu = 0; P.blind = 0;
       healPlayer(roll(1, 4));
       break;
+  }
+  /* A flask is a flask: whatever was in it, you drank it, and on a floor
+     where food is scarce that mouthful counts for something.  The flask
+     of nourishment has its own, much larger, helping and does not want
+     a sip on top of it. */
+  if (n !== 'nourishment') {
+    P.food = Math.min(FOOD_MAX, P.food + POTION_SIP);
   }
   if (id) KNOWN.pot[k] = 1;
   computeVis();
@@ -1226,13 +1324,32 @@ function blowBarrel(bx, by) {
       if (ox * ox + oy * oy > BARREL_BLAST_SQ) continue;
       cells.push([x, y]);
     }
-  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast' };
+  /* `big` marks it as a barrel rather than a flask: the flash is drawn
+     out of two sprites rather than one, and it throws light a good deal
+     further than anything else down here. */
+  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
   sound('boom');
   msgTrap('A barrel of powder goes up!', 'R', 'blast', 'R');
   /* the neighbours catch before the blast clears them away */
   for (var i = 0; i < cells.length; i++)
     if (barrelAt(cells[i][0], cells[i][1])) lit += lightBarrel(cells[i][0], cells[i][1]);
   for (i = 0; i < cells.length; i++) blastSquare(cells[i][0], cells[i][1], BARREL_DAMAGE);
+  /* What it leaves behind: a few squares still alight for a turn or two,
+     and a cloud of smoke over the spot where the barrel stood.  Neither
+     is much on its own; together they are what tells you, three turns
+     later, that something went up here. */
+  var want = BARREL_FIRES_MIN + rnd(BARREL_FIRES_MAX - BARREL_FIRES_MIN + 1);
+  var open = [];
+  for (i = 0; i < cells.length; i++)
+    if (walkable(cells[i][0], cells[i][1]) && !inWater(cells[i][0], cells[i][1]))
+      open.push(cells[i]);
+  shuffle(open);
+  for (i = 0; i < open.length && i < want; i++)
+    dropEmber(open[i][0], open[i][1],
+      BARREL_FIRE_TURNS_MIN + rnd(BARREL_FIRE_TURNS_MAX - BARREL_FIRE_TURNS_MIN + 1),
+      beatNow());
+  spawnCloud(bx, by, 'smoke',
+    SMOKE_TURNS_MIN + rnd(SMOKE_TURNS_MAX - SMOKE_TURNS_MIN + 1), beatNow());
   /* give the new opening a face, the way dynamite does */
   faceTheRock(cells);
   /* and the squares it opened join the room they opened into, or they
@@ -1393,7 +1510,11 @@ function zapWand(it, dx, dy) {
      powder is a solid thing.  A sheet of flame goes straight through one
      and lights it on the way past. */
   var stopsAtPowder = (n === 'magic missile');
-  for (i = 0; i < 14; i++) {
+  /* Lightning runs to the first wall, however far off that is - it is a
+     current crossing the room, not a missile with a range.  Everything
+     else stops after fourteen squares as it always did. */
+  var reach = (n === 'lightning') ? MAP_W + MAP_H : 14;
+  for (i = 0; i < reach; i++) {
     x += dx; y += dy;
     if (isDoorish(x, y)) { path.push([x, y]); break; }   /* stopped by the door */
     if (blocksShot(x, y)) break;
@@ -1736,7 +1857,12 @@ function throwAtSquare(it, tx, ty) {
        to come back, or runed to do something first */
     if (WEAPONS[it.k].rune) {
       msg(cap(WEAPONS[it.k].n) + ' clatters to the ground.', '6');
+      var runeChg = it.chg || 0;
       stoneRune(WEAPONS[it.k].rune, { x: tx, y: ty }, it, flight);
+      /* and the same chance of coming through it as a stone thrown at
+         something: the rune is not always spent by going off once */
+      if (WEAPONS[it.k].rune !== 'return' && (runeChg > 0 || rnd(100) < runeKeepPct()))
+        keepRuneStone(it, tx, ty, runeChg > 0 ? runeChg - 1 : 0);
     } else if (!flyHome(it, tx, ty, flight)) {
       msg(cap(WEAPONS[it.k].n) + ' clatters to the ground.', '6');
       dropNear(tx, ty, likeItem(it));
@@ -1776,6 +1902,8 @@ function throwAtSquare(it, tx, ty) {
     var blessed = what === 'holy';
     /* thrown at your own feet, or near enough to break over them */
     if (tx === P.x && ty === P.y) soakPlayer('The water burns you.');
+    /* and the water itself goes on the floor and lies there */
+    var pud = spillWater(tx, ty, blessed);
     if (victim) {
       /* Water puts a fire breather out.  It is not damage - it is the
          difference between being shot at from across the room and not. */
@@ -1795,8 +1923,11 @@ function throwAtSquare(it, tx, ty) {
       } else if (victim.def.sp !== 'fireball') {
         msgFight(fightLine('', cap(monShort(victim)), ' is merely wet.'), '6', 'wet', '6', victim);
       }
+    } else if (pud) {
+      msg((blessed ? 'Blessed water' : 'Water') + ' spreads across ' +
+        (pud > 1 ? pud + ' squares' : 'the floor') + '.', 'c');
     } else msg(blessed ? 'The blessing soaks away into the stone.'
-                       : 'A puddle spreads across the floor.', '6');
+                       : 'The water soaks away into the stone.', '6');
   } else if (what === 'daze') {
     if (victim) {
       victim.conf = (victim.conf || 0) + rnd(8) + 8;
@@ -1828,6 +1959,30 @@ function countOf(it) {
    weapon, with everything about it that mattered carried over.  Four
    places used to build this by hand and the charm would have been
    dropped by the first one that forgot. */
+/* How often a runed stone comes through a throw with its rune still on
+   it.  The same things that get your arrows back get your stones back. */
+function runeKeepPct() {
+  var p = RUNE_RECOVER_PCT;
+  if (carryingRing('battle luck')) p = Math.max(p, LUCK_RECOVER_PCT);
+  if (hasPerk('scavenger')) p = 100 - (100 - p) / 2;
+  return p;
+}
+/* Put it back on the floor where it fell, carving and all - or in your
+   pack if there is nowhere clear to put it down, which is better than
+   quietly losing it. */
+function keepRuneStone(am, x, y, chg) {
+  var again = mkItem('weapon', am.k);
+  again.cnt = 1; again.hp = am.hp; again.dp = am.dp;
+  again.known = am.known; again.chg = chg || 0;
+  if (am.homing) again.homing = 1;
+  /* A stone that counts its flights home carries the count with it.  A
+     fresh one starts at RETURN_USES, so handing the player a new item
+     here would wind a spent stone back up to full - which is a stone
+     that never runs out, by way of surviving a throw. */
+  if (am.ret !== undefined) again.ret = am.ret;
+  if (!dropNear(x, y, again) && !addItem(again)) dropNear(P.x, P.y, again);
+  return again;
+}
 function likeItem(am) {
   var c = mkItem('weapon', am.k);
   c.cnt = 1; c.hp = am.hp; c.dp = am.dp; c.known = am.known;
@@ -2002,12 +2157,12 @@ function fireAt(best) {
      pick up again.  If there is nowhere clear to put it down - a corner
      already piled with things - it goes back in your pack rather than
      being quietly lost, which is the whole point of charging it. */
-  if (chargedRune && W.rune !== 'return') {
-    var again = mkItem('weapon', am.k);
-    again.cnt = 1; again.hp = am.hp; again.dp = am.dp;
-    again.known = am.known; again.chg = keepChg;
-    if (!dropNear(best.x, best.y, again) && !addItem(again))
-      dropNear(P.x, P.y, again);
+  /* Charged, it always survives; uncharged, it survives about a quarter
+     of the time - a rune cut into stone is not always used up by one
+     throw, and a stone you can go and pick up again is worth carrying. */
+  if (W.rune && W.rune !== 'return' && (chargedRune || rnd(100) < runeKeepPct())) {
+    var where = landed || best;
+    keepRuneStone(am, where.x, where.y, chargedRune ? keepChg : 0);
   }
   return true;
 }
@@ -2081,6 +2236,19 @@ function stoneRune(rune, target, am, flight) {
         }
       } else msg('Frost spreads where the stone lands.', 'c');
       break;
+    /* A stone with a current in it.  Where it lands it jolts whatever is
+       standing there; landed in water, the water carries it to everything
+       standing in the same pool - which is why it is worth aiming at the
+       shallows rather than at the creature. */
+    case 'shock': {
+      var at = target && target.x !== undefined ? target : { x: P.x, y: P.y };
+      var cells = shockCells(at.x, at.y);
+      var wet = cells.length > 1;
+      var got = shockSquares(cells, 'a shocking stone');
+      msgTrap(wet ? 'The water crackles with current!' : 'The stone cracks and sparks.',
+        'c', got ? got + ' caught' : 'nothing caught', got ? 'c' : '6');
+      break;
+    }
     case 'slow':
       if (L.mons.indexOf(target) >= 0) {
         target.slowed = STONE_SLOW_TURNS;
@@ -2640,4 +2808,193 @@ function computeScore() {
   var s = P.gold + P.exp;
   if (P.amulet) s += 10000;
   return s;
+}
+
+/* ================================================================ INSPECT
+   The box that opens on a thing in your pack.  Three pieces: what it
+   looks like in the hand, what it does, and what is worth knowing about
+   this particular one.
+
+   The first of the three is the rule that matters: it describes what you
+   can actually see.  An unidentified flask is a flask of coloured
+   liquid, and saying "a clean red brew that smells of iron" over one you
+   have never drunk would hand you the whole game. */
+/* Do you know this well enough to know what it is worth?  A price is a
+   fact about the thing itself, not about the one in your hand, so it
+   waits until you can put a name to the kind. */
+function worthKnown(it) {
+  if (!it) return false;
+  switch (it.t) {
+    case 'potion': return !!KNOWN.pot[it.k];
+    case 'scroll': return !!KNOWN.scr[it.k];
+    case 'wand': return !!KNOWN.wand[it.k];
+    case 'ring': return !!it.known;
+  }
+  if (isGear(it) || it.t === 'weapon') return kindKnown(it);
+  return true;
+}
+function loreFor(kind, name) {
+  return (LORE[kind] && LORE[kind][name]) || LORE_KIND[kind] || '';
+}
+function itemLore(it) {
+  if (!it) return '';
+  var d = itemDef(it);
+  switch (it.t) {
+    case 'potion':
+      if (KNOWN.pot[it.k]) return loreFor('potion', d.n);
+      return 'A stoppered flask of ' + APPEAR.pot[it.k] + ' liquid. There is no telling ' +
+             'what is in it until somebody drinks it.';
+    case 'scroll':
+      if (KNOWN.scr[it.k]) return loreFor('scroll', d.n);
+      return 'A rolled sheet titled "' + APPEAR.scr[it.k] + '". The words mean nothing ' +
+             'until they are read out.';
+    case 'wand':
+      if (KNOWN.wand[it.k]) return loreFor('wand', d.n);
+      return cap(artic(APPEAR.wand[it.k])) + '. What it is for is anybody\'s guess ' +
+             'until it is pointed at something.';
+    case 'ring':
+      if (it.known) return loreFor('ring', d.n);
+      return 'A ring, and a ring tells you nothing. What it is for is its own business ' +
+             'until you have worn it.';
+    case 'food': return loreFor('food', FOODS[it.k].n);
+    case 'crystal': return loreFor('other', 'crystal');
+    case 'dynamite': return loreFor('other', 'dynamite');
+    case 'pin': return loreFor('other', 'pin');
+    case 'key': return 'A heavy ' + MATS[it.k] + ' key, cut for one lock and no other.';
+    case 'chest': return loreFor('other', 'chest');
+    case 'pouch': return loreFor('other', 'pouch');
+    case 'amulet': return loreFor('other', 'amulet');
+    case 'gold': return loreFor('other', 'gold');
+  }
+  if (isGear(it) || it.t === 'weapon') {
+    /* A piece of kit you have not placed yet is described by its look
+       and its shape, which is all you have to go on. */
+    if (hidesItsName(it))
+      return cap(artic(looksLike(it))) + '. Nobody can say what a piece of kit is worth ' +
+             'until they have had it on.';
+    return loreFor(it.t, d.n);
+  }
+  return '';
+}
+/* The second and third pieces: everything the panel says, and then the
+   rest of it - the part there was never room for beside the pack. */
+function itemDetail(it) {
+  if (!it) return [];
+  var out = itemNotes(it).slice(), d = itemDef(it), i;
+  function add(s, c) { out.push([s, c || '6']); }
+  switch (it.t) {
+    case 'potion':
+      add('drink it, or hurl it at something', 'c');
+      add('a mouthful takes the edge off your hunger', '6');
+      break;
+    case 'scroll':
+      add('read it aloud to use it', 'c');
+      if (KNOWN.scr[it.k] && d.txt) add(d.txt, '6');
+      break;
+    case 'wand':
+      if (KNOWN.wand[it.k]) {
+        add('zap it down a row of squares', 'c');
+        if (d.txt) add(d.txt, '6');
+      } else add('zapping one is how you learn it', '4');
+      break;
+    case 'gold': add('it counts towards your score', 'y'); break;
+    case 'crystal': add('crush it; it takes no turn to swallow', 'c'); break;
+    case 'key': add('it stays on your belt, not in the pack', '6'); break;
+  }
+  if (it.t === 'weapon') {
+    if (d.two) add('both hands, so no shield', 'O');
+    /* What actually happens to a runed stone when it goes off.  It used
+       to say the rune was spent by one throw, which was never true of
+       the returning stone and is no longer true of any of them. */
+    if (d.rune === 'return') add('it flies back to your hand', 'G');
+    else if (d.rune) {
+      add('the rune goes off where it lands', '6');
+      add('about ' + runeKeepPct() + ' throws in a hundred leave it whole', 'c');
+    }
+  }
+  if (isGear(it) && d.norust) add('nothing corrodes it', 'c');
+  /* What it would fetch - but only once you know what it is.  A flask
+     worth two hundred gold is obviously not the thirst quencher, so
+     printing the price over an unknown one hands you the answer. */
+  if (d && d.w && worthKnown(it)) add('worth about ' + d.w + ' gold', 'y');
+  if (it.br && !it.brKnown) add('there is magic in it you cannot read', 'p');
+  if (isGear(it) && !numbersKnown(it)) add('put it on to learn what it is worth', '4');
+  return out;
+}
+
+/* -------------------------------------------------- the box about you
+   The panel beside the pack has room for four lines about the man
+   himself.  This is the rest of it: what you are carrying into a fight,
+   what it is worth in numbers, and how far down you have got. */
+function selfDetail() {
+  var out = [], w = P.eq.rh, d = w ? WEAPONS[w.k] : null;
+  function add(s, c) { out.push([s, c || '6']); }
+  function stat(n, v, m) { return n + ' ' + v + (v < m ? '(' + m + ')' : ''); }
+  add('Level ' + P.lv + ', ' + xpText() + ' experience', 'w');
+  add('Health ' + P.hp + ' of ' + P.mhp, P.hp * 2 < P.mhp ? 'R' : 'G');
+  /* the three of them on one line, with what they were in brackets
+     wherever something has drained one */
+  add(stat('Str', effStr(), P.mstr) + '  ' + stat('Dex', effDex(), P.mdex) +
+      '  ' + stat('Wis', effWis(), P.mwis),
+    (P.str < P.mstr || P.dex < P.mdex || P.wis < P.mwis) ? 'R' : '6');
+  add('Protection ' + playerAC() + ' from what you wear', 'c');
+  add(w ? ('Armed with ' + itemName(w)) : 'Bare handed', w ? 'w' : 'O');
+  if (d) add('It does ' + d.d[0] + 'd' + d.d[1] + ', ' + sgn(playerDamBonus()) + ' from you', '6');
+  add('Sneak ' + stealthWord() + ', dodge ' + dodgeChance() + '%', 'c');
+  add('Food ' + foodPct() + '% - ' + (G.hungerState ? foodWord() : 'not hungry'),
+    G.hungerState ? 'O' : 'G');
+  add('Gold ' + P.gold + ', pack ' + packCount() + ' of ' + N_SLOTS, 'y');
+  add('Floor ' + (-G.depth) + ', turn ' + G.turn, '6');
+  if (P.amulet) add('You are carrying the Amulet', 'y');
+  return out;
+}
+/* ------------------------------------------------ the box of effects
+   The same list the panel shows, with the explanation the panel has no
+   room for.  Each entry is the short line, its colour, and a sentence
+   underneath saying what it actually means for you. */
+function effectsDetail() {
+  var out = [], i;
+  var short = playerEffects();
+  for (i = 0; i < short.length; i++) out.push([short[i][0], short[i][1], '']);
+  function explain(match, words) {
+    for (var j = 0; j < out.length; j++)
+      if (!out[j][2] && out[j][0].indexOf(match) === 0) { out[j][2] = words; return; }
+  }
+  explain('CURSED', 'A curse works on you until it is lifted at a shrine or read off you.');
+  explain('hungry', 'Your wounds close half as fast until you eat something.');
+  explain('weak', 'You heal not at all until you eat something.');
+  explain('starving', 'You are losing health every turn. Eat anything you have.');
+  explain('confused', 'Your steps go where they like, not where you send them.');
+  explain('blind', 'You cannot see the room, only what you can reach.');
+  explain('hallucinating', 'Nothing down here is wearing its own face.');
+  explain('hasted', 'You act twice for every turn the dungeon takes.');
+  explain('stuck in web', 'The web holds you. More of it will not hold you longer.');
+  explain('frozen solid', 'You can do nothing at all until the ice lets go.');
+  explain('held fast', 'Something has you, and you are going nowhere until it stops.');
+  explain('gripped', 'It has hold of you. Kill it or break away.');
+  explain('monsters flee', 'Nothing down here will close with you while it lasts.');
+  explain('seeing invisible', 'What is hiding from your eyes is not hiding from them now.');
+  explain('unseen', 'Very little notices you at all until you strike something.');
+  explain('ringed in fire', 'Anything that comes within reach of you catches light.');
+  explain('monster sight', 'You feel every living thing nearby, through stone and dark alike.');
+  explain('seeing all', 'Seams, traps and the invisible are all plain to you.');
+  explain('in the dark', 'A dark room shows you one square unless your eyes are made for it.');
+  explain('running', 'Running away from a fight is how a man goes over.');
+  explain('hands glow', 'The next blow you land leaves it reeling.');
+  explain('carrying the Amulet', 'Carry it up the stairs and out, and the run is won.');
+  /* the perks and the runes explain themselves - they have a long form
+     already, written for the box that offers them */
+  var pk = perkList();
+  for (i = 0; i < pk.length; i++)
+    if (pk[i].txt && pk[i].txt !== pk[i].s) explain(pk[i].n + ':', cap(pk[i].txt) + '.');
+  var eq = equippedItems();
+  for (i = 0; i < eq.length; i++) {
+    var rn = activeRune(eq[i]);
+    if (rn && rn.txt) explain(runeEffect(eq[i], rn), cap(rn.txt) + ', on your ' +
+      shortItem(eq[i]) + '.');
+    var dd = itemDef(eq[i]);
+    if (dd && dd.prop && PROP_TEXT[dd.prop])
+      explain(PROP_TEXT[dd.prop][0], 'From your ' + shortItem(eq[i]) + '.');
+  }
+  return out;
 }

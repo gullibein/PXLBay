@@ -903,6 +903,1046 @@ fire waits 440ms" line is derived from two `Date.now()` readings, so it
 occasionally prints 441. The check itself is an ordering one and is not
 flaky.
 
+## Twelve things, in one go (session of 17-22 Aug 2026)
+
+A list handed over in one message and worked through unattended.  Every
+one of them has a check that was proved to fail on the old code first,
+and all four suites are green.
+
+### A powder barrel burns for a turn first
+
+Measured before changing anything: the fuse was already two ticks, which
+is one full turn.  Left alone; `barrelFuseOK` now pins it so it stays
+that way, and pins that the barrel is visibly alight while it burns.
+
+### The web spinner spits twice a turn and keeps her distance
+
+The five-turn round is gone.  `spinnerTurn` is the whole of it now:
+two webs a turn (`SPIN_SPITS`), and if she is within `SPIN_KEEP` of you
+she backs off a square afterwards so she can keep spitting.  The moment
+you are stuck, she gets `SPIN_POINTS` (6) to spend on moving and
+biting - **one** bite in a round, and if she has points left after it
+she runs back out again.  `monCanCloseIn` is deleted.
+
+### Lightning is drawn, and it runs to the wall
+
+The wand of lightning used to stamp a row of `bolt` sprites over 14
+squares.  Now `zapWand` gives it a reach of the whole map, so it stops
+at the first thing that blocks a shot, and everything standing in the
+row takes it.  `drawLightning` in `part4_render.js` draws the current
+itself: points every square along the path, kicked alternately to each
+side (`BOLT_WOBBLE`) with the kinks unevenly spaced (`BOLT_SLIP`), three
+passes dark to bright (`BOLT_GLOW`, `BOLT_BLUE`, `BOLT_CORE`) and a fork
+off the side here and there.  It re-jags every `BOLT_FLICKER_MS`, so it
+crawls.  Checks: `lightningReachOK` in the harness (to the wall, past
+fourteen, everything in the row hit, and a wand of cold still stops at
+fourteen) and "a bolt of lightning" in `test_render.js` (blue, several
+shades, spans the path, crooked, and not one sprite stamped).
+
+### You start flickering before the blow lands
+
+`die()` records `G.deadFrom`, and the blink only starts once
+`Date.now()` has reached it - so the rock or the fireball is seen to
+arrive first.
+
+### A chasm across a room, about one room in twenty five
+
+`addStream(L, r, HOLE)` already existed and already laid a bridge over
+the gap; it just about never happened.  Measured: **one room in 98**.
+`addStream` refuses a room it cannot span cleanly, and takes about one
+attempt in six, so `CHASM_CHANCE` went 6 -> 33, which measures **one
+room in 24**.  `chasmRoomsOK` holds it between 1-in-18 and 1-in-35 and
+checks every one runs wall to wall, has planks over it, and has cracked
+flagstones along the banks.
+
+A room the floor has fallen out of is no longer picked for a special
+room (`roomIsCut`): a powder store cut in half is a powder store with
+half the barrels.  A nest of web now works out where it will go before
+laying a strand, and tries another corner if the one it picked has
+nowhere to spread.
+
+### Stumbling, for both of you
+
+A creature only trips when it is running from you, or running after
+somebody who is running from it: `monStumbles` asks `monFleeing` and
+`monChasingAFlight`.  Measured over 40 seeds that this did not make the
+game harder - 27 runs alive against 22 on the old rule.
+
+### A left click looks, a right click asks
+
+In the pack, a left click with a real mouse picks the thing out and
+shows its name; only a right click opens the menu.  A finger has no
+second button, so a tap still opens it (`usingMouse()`).
+
+### A wall of fire sets things alight, and bridges burn
+
+`fireWallsCatch()` runs at the head of `ageTempWalls()`: every sheet of
+flame lights the powder under it, catches the web beside it, and drops
+an ember on anything burnable in the eight squares around it.  A bridge
+counts as something that burns now (`BRIDGE_BURN_MIN/MAX`, two or three
+turns); when it goes, what it spanned comes back, and standing on one
+over a hole when it goes drops you.
+
+One bug found on the way: the ember dropped to light a thing was sized
+for that thing, and then `catchScenery` added the thing's burning time
+on top - so web took six turns rather than three.  The ember is now
+`IGNITE_TURNS` (one turn of flame) and the material supplies its own.
+
+### The map does not move at all until you are centred
+
+Ownership of the glide is explicit: `WALK_ON_MAN` says whether the step
+being walked belongs to the man or to the map, `manLag()` and `mapLag()`
+hand it to one of them, and `camFollow` sets it as it decides.  Off
+centre, the map is held perfectly still and the man glides; centred, the
+map glides and the man does not.
+
+### Poison and fire in the air hit you at once
+
+`cloudsOnYou()` was split out of `ageClouds()` and is called at the top
+of the turn, before the beat is spent - so what the air does to you
+happens as you step into it rather than after.
+
+### Water thrown makes a puddle
+
+`spillWater(x, y, holy)` lays one to four connected squares of water
+(`PUDDLE_MIN/MAX`) where the flask broke, holy water laying the blessed
+sort.  It will not lie on a rug (which soaks it up), on a bridge (a
+plank over a drop), on a stairway (cut into the floor, and it drains),
+in a doorway, or on a square another conjuring is already holding.  It
+puts out any fire it lands on, and it dries after `PUDDLE_TURNS_MIN..MAX`
+turns - the same `L.temp` machinery a wall of fire uses, which is why
+`placeTempWall` now remembers the floor under the puddle rather than the
+puddle.
+
+### Every flask is a mouthful
+
+Food was scarce enough to die of.  Measured on the old code: **0.12**
+things to eat a floor, and 83% of floors with nothing on them at all.
+Two changes, both small: every potion you drink is worth `POTION_SIP`
+(120) on the food clock - the flask of nourishment excepted, which is a
+meal already - and a quarter of floors get a snack lying about
+(`FLOOR_SNACK_PCT`), a mushroom or a handful of berries rather than a
+ration.  Rations are as rare as they were.  Now: **0.36** things to eat
+a floor, 209 on the clock from the floor plus about 290 from flasks.
+`potionSipOK` and `foodOnFloorsOK` hold both ends of it.
+
+### Three probes that were measuring the wrong thing
+
+Not loosened - corrected, and each still catches what it was written
+for:
+
+- **beats** asserted a creature stays within ten squares of its post.
+  But a round is two or three places *in its own room*, and rooms can be
+  long: fifteen squares from its post and still exactly where it belongs.
+  It now asserts it never leaves the room it was posted in (a post in a
+  corridor keeps the distance bound).  Verified it still catches
+  drifting: with `wanderStep` made to walk toward the player it reports
+  "one left the room it was posted in and was 24 squares away".
+- **the hole corners** check counted every one-pixel cut on the screen
+  and expected twelve.  A chasm is a hole too and has its corners cut
+  the same way, so it now asserts no pixel is cut off a square that is
+  not a hole.
+- **three setup probes** (`throwAnywhereOK`, the fireball line,
+  `wearFromFloorOK`) picked a square without asking whether it was dry
+  floor, or stood on whatever the floor happened to leave there.  With
+  more gaps about, they started picking holes.
+
+## Light, and a spinner that no longer teleports (session of 22 Aug 2026)
+
+### Every step of a six point round is seen
+
+The playback machinery was right all along: each step a creature takes
+is pushed onto `m.anim` stamped with the instant it happens, and the
+renderer walks that queue.  But `spinnerTurn` spent all six points
+without moving the clock on, so all six steps carried the same stamp -
+and two steps stamped with the same instant cannot both be shown.  The
+playback drew the first stride and then the finished position, which is
+exactly the teleporting.
+
+Each point she spends now pushes the clock along by `SPIN_STEP` (0.3) of
+a beat - 150ms, comfortably longer than the 110ms a stride takes to
+cross a square - and the bite is worth a whole `BEAT_ACT`, because a blow
+has to be seen to land.  Measured on a real round: five steps at
+0, 150, 150, 150, then 652ms across the bite.
+
+`stepsAreSeenOK` in the harness pins it: no two steps of a round share a
+moment, none starts before the last has finished crossing, and the whole
+round is still a flurry rather than six turns.  It also checks the same
+for a quick creature's second step.  On the old code it reports "two
+steps of one round share the same moment".
+
+### Fire and lightning light the room
+
+New in `part4_render.js`: `buildGlow()` works out, once a frame, what
+every burning or crackling thing is throwing on the squares around it,
+and the map pass reads it twice.
+
+- **a flame** - a fire cloud, a sheet of conjured flame, a creature
+  walking about alight - lights its own square and the four beside it at
+  full, and the four corners at half.  That half is what makes the pool
+  read as round rather than square.
+- **a blast** does the same and reaches one square further along the
+  four ways, at half.  The far square only lights up if the square
+  between it and the blast is see-through, so a barrel going off behind a
+  wall does not light the floor you are standing on.
+- **lightning** lights one square about it like a flame, in blue.
+
+Two things happen on a lit square.  What is drawn there is brought up
+towards full brightness - `a + (1 - a) * v` - so a dark square beside a
+flame really does light up and a corner comes halfway up.  And a wash of
+the light's own colour (`GLOW_FIRE`, `GLOW_BLAST`, `GLOW_BOLT` at
+`GLOW_WASH`) is laid over the square with `lighter`, over the floor, the
+furniture and whoever is standing in it - so it reads in a room that was
+already lit.  The wash goes on after the dungeon and before anything you
+are being asked to read, so a menu or a cursor is never washed orange.
+
+### A fire is a light, and a light is a thing you see
+
+The first cut of this had it backwards: light only fell on squares you
+could already see, so a fire at the far end of a pitch dark hall showed
+nothing at all until you had walked up to it.  That is not how light
+works - light is what makes a thing visible in the first place.
+
+So `lightMap()` moved out of the renderer and into the rules, where
+`computeVis` reads it: every square the light falls on is visible from
+any distance, however dark the room it is in, as long as `sightClear`
+holds between you and it.  Round a corner it is not, and neither is the
+floor it lights there - the wash is drawn only where the sight pass has
+already said you can see.
+
+`fireLightsFarOK` sets a fire down at the end of a hall it has just
+blacked out - eighteen squares off on average, the furthest twenty nine -
+and checks the fire and what it lights are seen, that the floor two
+beyond the fire is not (it does not reach), and that a fire with stone
+between you and it shows nothing.  `losSanity`, which asserts nothing is
+visible beyond the lamp's reach, now knows about firelight as the one
+other way a distant square can be lit.
+
+"light from fire" in `test_render.js` measures the whole falloff off the
+real draw calls - which squares were washed, how strongly, in what
+colour, that the blast's light dies with its flash, that lightning's is
+blue, that nothing is lit with nothing burning - and separately that a
+dark square beside a flame is drawn at full and a dark corner halfway
+up.  The fake canvas now records the alpha and the composite operation
+of a `fillRect`, which is what makes that measurable at all.
+
+## Light that ends with what makes it, and glass (session of 22 Aug 2026)
+
+### A beam is a light in the air, not a fire on the floor
+
+Lightning and the sheet of flame out of a wand now throw `GLOW_BEAM`
+(half) of what the same thing burning on the floor would - and, more to
+the point, they stop the instant the beam does.
+
+That took splitting the light in two.  `lightMap(1)` asks for the
+**standing** sort only: a fire on the floor, a sheet of conjured flame, a
+creature alight, the lamp you are carrying.  Those are lights the dungeon
+has, so `computeVis` reads that one and they decide what you can see and
+what goes on your map.  `lightMap()` adds the **flashes** - the bolt, the
+wand's flame, the instant a barrel goes up - which light what they fall
+on for exactly as long as they last and leave nothing behind: a corridor
+lit by lightning is a corridor you glimpsed, not one you have walked.
+The drawing pass now draws a square that is lit even when it is not on
+your map, and forgets it again when the flash goes.
+
+A fire on its last turn gives half the light of one that is properly
+burning, which is also what a **burning stone** thrown at bare floor now
+looks like: it bursts, burns where it lies for `BURN_TRAIL_TURNS` (2)
+turns, full light on the first and half on the second.
+`burningStoneOK` measures all three.
+
+### The wand of fire is drawn, and always has a light
+
+**The bug:** the sheet of flame was a row of `flame` sprites, and its
+light came entirely from the fire it left burning behind it - which
+`scorch` refuses to lay on water, in a doorway or on any square you
+cannot walk onto.  Fire a wand of fire across a stream and you got a
+beam of flame with no light anywhere near it.
+
+Now the beam carries its own light, and it is drawn rather than stamped:
+`drawBeam` is the bolt's own machinery with the numbers in a table, so
+lightning and flame are one drawing with different dice.  Flame gets a
+third of the bolt's swing and twice as many points, so it runs nearly
+straight down the row and ripples instead of zigzagging; it licks off its
+own side constantly rather than forking now and then; and it is red at
+the edge, orange through it, pale yellow at the core.
+
+### Glass armour
+
+`{ n: 'glass armor', a: 6, p: 4, w: 380, norust: 1 }` - turns a blow like
+banded mail, rare, and worth a good deal.  Nothing corrodes it: the two
+places that used to ask `name.indexOf('leather') < 0` now ask `canRust`,
+which knows about leather, about a scroll of protection, and about glass.
+A rust trap and an aquator are both measured against it in
+`glassArmourOK`.
+
+It has a sprite of its own, added through the procedure in `CLAUDE.md` -
+and the sheet on the machine was **repainted since the last session**
+(thirty sprites), so the migration was run against that one, staged down
+from the device first.  `migrate_sheet.py` reported `graphics altered:
+none` and the font intact, and it was checked again afterwards
+cell-by-cell against the staged copy.  `armor_glass` is the one newly
+drawn cell: pale cyan placeholder, waiting to be painted.
+
+### "of light"
+
+A rune for a blade or a breastplate (`t: 'wg'`).  It is a lamp you carry:
+`LAMP_FULL` (2.3) squares of full light about you and half a square more
+beyond that, measured as the crow flies so the pool is round.  The full
+ring is set a little past two on purpose - two along and one up wants to
+be inside it, or the pool reads as a cross.
+
+It is a light like any other, so it is `lightMap`'s standing sort: in a
+pitch dark room it does not merely brighten what you could already see,
+it shows you the room (measured: 9 squares in sight, 34 with it on).
+
+And it is the one enchantment that cannot keep itself secret.  Every
+other rune sleeps until you have studied the thing; a light that only
+shines once you know about it is no light at all.  So `lampOn` reads the
+rune rather than the *known* rune, and `upkeep` takes the hint and writes
+the name down - "Your long sword is glowing."
+
+## Web, stones, dark eyes and a box to look in (session of 22 Aug 2026)
+
+### One web every other turn, and no piling it on
+
+`WEB_EVERY` (2): a spinner has to gather the next one, so she spits at
+most once in two turns.  And `stickPlayer` now refuses outright when you
+are already stuck: web on web used to add its own turns to the count, so
+a spinner who kept spitting could hold you as long as she liked, and
+being held for ever is not a fight, it is a wait.  She still spits over
+you - it just does not make it any worse.
+
+`webEveryOtherTurnOK` measures both: twelve turns of asking produces six
+webs, never two inside two turns, and four more webs on a stuck player
+add nothing to the count.
+
+### The witch carries ten stones
+
+`WITCH_STONES` (10), counted down as she throws.  When they are gone she
+has nothing left to throw, however long you stand there.  Every stone
+that goes wide is now lying on the floor - `dropStone` puts it where it
+fell, stacking with anything already there - so a long fight with a witch
+leaves you a handful of stones of your own.
+
+### Night eyes see through every kind of darkness
+
+**The bug:** there are two darknesses.  A room marked pitch dark, and the
+far commoner sort - a room nobody left a lamp in.  The sight pass skipped
+its dark clamp for a Night stalker, which fixed the first and did nothing
+whatever for the second: an unlit room still gave him a torch's reach of
+four squares, exactly what anybody else gets.
+
+Now night eyes lift the reach to `LIT_RADIUS` on any square, dark or
+merely unlit.  Measured: 59 more squares of sight in a room with no lamp
+in it, and the two kinds of darkness now come out identical, which is
+what "sees in the dark" has to mean.
+
+### And a light costs you your quiet
+
+`GLOW_STEALTH` (22) off `stealthScore` while anything of light is
+equipped - about what soft boots are worth the other way.  Measured on a
+creature four squares off: it notices you 66% of the time against 46% in
+the dark.  It is the price of the lamp, and the rune's line in the
+EFFECTS list says so: "armor glows: lit, easily seen".
+
+### INSPECT
+
+Every one of the 128 things in the dungeon can be held up and looked at:
+a box with its picture at twice size, its name, a line or two about what
+it actually is, and its details in full - the panel beside the pack has a
+column 128 pixels wide, and this has the screen.
+
+`LORE` in `part1_core.js` carries a written line for every item; `LORE_KIND`
+catches anything that ever gets added without one.  `itemLore` picks
+between the two, and - the rule that matters - describes **what you can
+see**: an unidentified flask is a flask of aquamarine liquid, not "a
+clean red brew that smells of iron".  `itemDetail` is the panel's notes
+plus the part there was never room for.  The price waits on `worthKnown`
+for the same reason: a flask worth two hundred gold is obviously not the
+thirst quencher.
+
+Reached three ways: `Inspect` on every item's menu, `i` on the square
+under the cursor, and the top right panel.
+
+### The other two panels
+
+The middle panel opens a box about the man himself - level, health, the
+three stats with what they were in brackets wherever something has
+drained one, protection, what you are armed with and what it does, how
+quietly you move, how often you slip aside, food, gold, floor and turn.
+
+The bottom one opens a box about everything working on you: every effect
+named, with a sentence under each saying what it means.  Perks and runes
+explain themselves out of their own long form.  When it will not all fit,
+the **names** all stay and the explanations fill what room is left -
+cutting the list short would mean the effect you most needed to know
+about was the one that fell off the bottom.
+
+`inspectOK` in the harness walks all 128 items and checks each has a
+finished sentence about it, that no unknown thing names itself or prices
+itself, and that the two boxes about the player have something to say.
+"inspecting a thing" in `test_render.js` opens the box on sixteen kinds
+of thing and checks it has a picture, a good deal of writing, and fits on
+the screen every time; that the menu offers it on everything; that a key
+or a click puts it away; and that the three panels are three separate
+things to press that open three different boxes.
+
+## Runed stones, quieter descriptions, and the story so far (23 Aug 2026)
+
+### A runed stone is not always used up
+
+`RUNE_RECOVER_PCT` (25): a rune cut into stone survives going off about
+a quarter of the time, and the stone is lying there afterwards with its
+carving intact - not worn down to a pebble.  The same things that get
+your arrows back (a ring of battle luck, the scavenger perk) get your
+stones back too, and a charged one still always survives.  Both throwing
+paths do it now - at a creature and at bare floor.  Measured over 400
+throws: 25 in a hundred.
+
+The returning stone is not part of this: it has its own arrangement and
+comes home, which is what the box now says about it.
+
+### Descriptions that only say what is worth saying
+
+Out: whether a thing stacks, how to throw a pile one at a time, which
+part of you a boot goes on, how many turns of the food clock a ration is
+worth, and "one throw and the rune is spent" - which was never true of
+the returning stone and is no longer true of any of them.
+
+In: "the rune goes off where it lands", "about 25 throws in a hundred
+leave it whole", and "it flies back to your hand" for the returning one.
+The leather armour reads as asked: "...it is light and tough. Definitely
+better than nothing."
+
+`inspectSaysNothingIdleOK` walks every item and fails if any of the five
+retired lines comes back.
+
+### The frame walks onto the panels
+
+`panelRects()` is one list of three rectangles, read by the drawing, by
+the mouse and by the arrow keys - so what you see framed, what you click
+and what ENTER opens are the same three boxes by construction.
+
+Right off the edge of the grid steps onto them, up and down walk the
+three, left comes back to the square you left, ESC steps off rather than
+shutting the pack, and ENTER or SPACE opens the one the frame is on.  The
+grid's own cursor stands aside while the frame is out there, so there is
+never a yellow frame in two places.  Pressing the top panel with nothing
+under the cursor says so rather than doing nothing at all.
+
+### The story so far
+
+The panel keeps the last sixty lines because it walks that list every
+frame.  `G.hist` keeps `HIST_KEEP` (800) - the whole talk of the run -
+and **T**, or a press on the panel's own text, opens it: a full screen
+box, opened at the last thing said, with the arrows walking back into the
+past (PAGE UP/DOWN, HOME and END as well), a rule between turns and a
+bar down the edge showing how much run there is.
+
+It is drawn after the side panel rather than inside the map's drawing -
+every other box over the dungeon lives inside the map area, and this one
+takes the whole screen, so drawn there the panel painted over it.
+
+The help screen says so.  It had no spare row - it is exactly as tall as
+the screen - so the two keys that read rather than do now share a line:
+`?  T   read a square / read the log`.
+
+## Trapdoors, cellars and a barrel that goes up properly (23 Aug 2026)
+
+### Four small ones
+
+A **returning stone** that comes through a throw carries its own tally
+with it - `keepRuneStone` copies `ret` - so a spent one cannot wind
+itself back up to full by surviving.  The **quagga is a skeleton** now
+(name and hint; the sprite was already repainted).  **ESC out on the
+panels** closes the pack, since the left arrow is what steps back into
+the grid and pressing ESC twice to leave read as the key not working.
+And the **frame round a panel** is drawn at the end of `drawInv` rather
+than with the hit areas - the rules between the panels sit exactly on its
+top line and were painting over it.
+
+### A barrel of powder
+
+Four things it does now that it did not.  The flash is drawn from three
+sprites dealt by each square's own hash rather than the same flame
+stamped twenty times.  It lights the room like a lamp for the moment it
+goes up - `glowBoom`, full to two squares and half to four - instead of
+a flask's one-square pool.  It leaves `BARREL_FIRES_MIN..MAX` squares
+burning for a turn or two.  And it hangs a cloud of **smoke** over the
+hole: the poison cloud's own machinery with a third colour, tinted grey
+off the same sheet trick that tints the red mist, and `SMOKE_DAMAGE`
+(1-2) instead of poison's 1-3.
+
+`barrelBlastOK` measures all of it, including that smoke is kinder than
+poison, and that the whole lot clears.
+
+### Trapdoors, and the cellars under them
+
+A new tile, `TRAPDOOR`, hidden until it is found and drawn as plain
+flagstones until then.  `doSearch` looks at the square under your own
+feet as well as the four beside it now, since a door in the floor is a
+thing you stand on.  About one floor in four has one.
+
+**Under a rug it cannot be found at all.**  `findTrapdoor` refuses while
+`trapdoorCovered` holds, so the only way to that one is to burn the
+carpet off it.  That took a fix in `tidyRugs`: it rolls up any rug that
+has lost a square to something that is not flagstones, and a trapdoor
+under one counted as lost - so laying a door under a carpet made the
+carpet disappear.  A `TRAPDOOR` square is now still floor as far as the
+rug is concerned, which is the whole point of it.
+
+Down the trapdoor is a **cellar**: `genCellar` digs one to three small
+rooms in its own patch of rock, joined by corridors, with the way back up
+in the first room and the hoard in the last.  Four in five of its rooms
+are pitch dark.  One in three cellars puts a long hallway before the last
+room; one in four makes that room a large lit hall.  `stockCellar` fills
+the far room: a ring a third of the time, otherwise a blade with plusses
+on it and a rune more often than not, plus a few good things and a purse
+of gold.
+
+It is **not a floor of the dungeon**.  `G.depth` does not change, the
+floor above is kept exactly as it was, and the cellar is kept beside it
+under a key of its own - `"3c"` next to `"3"` - with `G.floorKey` saying
+which of the two you are standing in.  The way up comes out on the
+trapdoor itself.  `cellarSaveOK` saves a run from inside one and loads it
+back: same cellar, same hoard, same square, and the way out still works.
+
+### Three probes corrected on the way
+
+Adding a trapdoor to the generator moves the dice, and three checks were
+leaning on where the dice used to fall: the spinner probe measured a lane
+whose middle square it never checked was walkable, the camera probe gave
+up if the player did not happen to start with two clear squares in a row,
+and the hole probe dug its pit wherever it liked - including squares out
+of sight, which are not drawn at all.  All three now look for what they
+actually need.
+
+## The Persian rug (23 Aug 2026)
+
+The rug used to be a nine-slice: ten cells on the sheet - four corners,
+four edges and two middles dealt like a chequerboard - stamped out to
+whatever size the room allowed.  It is now one Persian design, taken
+from a picture, and every rug in the game is a slice of that one design.
+
+### Six tiles, laid mirrored
+
+The design is four squares across and six down and symmetrical both
+ways, so only a quarter of it is kept: two columns of three tiles,
+`rug_00` `rug_01` `rug_10` `rug_11` `rug_20` `rug_21` (row, then column).
+The other three quarters are those same tiles laid over - mirrored left
+to right, top to bottom, or both.  Rebuilding the whole picture from that
+quarter differs from the original in 20 pixels of 1536, all of them on
+the two fold seams, so the design really is symmetrical and nothing is
+lost by keeping a quarter of it.
+
+A square of rug carries in its name which tile it is and which way it
+went down: `rug_11`, `rug_11h`, `rug_11v`, `rug_11hv`.  `rugTileName()`
+in `part1_core.js` builds the name; `drawDecor` in `part4_render.js`
+reads it and draws through the new `sprMirror()`, which is `sprFlip`
+generalised to either axis (`sprFlip` now calls it).
+
+### Which tiles a small rug is cut from
+
+A rug is symmetrical both ways whatever size it is, so a rug is written
+out a quarter at a time as well: its top left corner, down to and
+including its middle row and middle column.  `RUG_CUT` in
+`part1_core.js` holds one line per size - fifteen of them, `'2x2'` to
+`'4x6'` - and each entry is `[row, column]` of the tile to use.
+`rugSquareName()` folds it out: `min(dx, w-1-dx)` says which square of
+the quarter this is, `dx > w-1-dx` says whether it is mirrored to get
+there, and the middle row or column of an odd-sized rug is its own
+reflection and goes down as painted.
+
+Which tiles a size is cut from is taste rather than arithmetic - the
+medallion has to end up in the middle whether there are six rows to play
+with or two - so changing any size is one line and touches nothing else.
+Sizes 2-4 tall use the medallion tile (row 2) for the middle row's inner
+columns and the field tile (row 1) for its outer ones, which is how
+Gulli drew the 4x4 by hand; 5 and 6 tall are the design's own rows.
+
+Widths run 2-4 and heights 2-6 (`RUG_MAX_W`, `RUG_MAX_H`): no rug is
+bigger than the design it is cut from, so no tile is ever repeated
+unmirrored.
+
+### The old ten cells are retired
+
+`gen_atlas.py` refuses to write when a sprite disappears, which is right
+- but it had no way to say a sprite was taken out on purpose when its
+definition is deleted outright rather than merely unplaced.  It has a
+`RETIRED` list now, holding the ten old rug names; anything that vanishes
+without being listed there still stops the build.
+
+**Gulli's repaint of those ten cells went with them.**  The sheet that
+came off the device had fresh fringes painted on the old nine-slice
+pieces and a repainted `trap_pit`; `trap_pit` carried across untouched,
+the rug cells had nowhere to go.  If the new rug wants a fringe it has to
+be painted into the six tiles.
+
+### What proves it
+
+- `rugCutTableFaults()` checks the table itself: every size the
+  generator can ask for has a quarter written out, each quarter is half
+  the rug rounded up both ways, and every tile it names is on the sheet.
+  A quarter a row short would fold the wrong square onto the middle with
+  nothing else noticing.
+- `rugSliceFaults()` in `harness.js`, run on every floor that has a rug:
+  every square names one of the six tiles, the rug is a size the table
+  allows, every square is the tile `RUG_CUT` gives for it, and it
+  reads the same from either end - the square opposite any square across
+  the middle is the same tile mirrored the other way.  On an `addRug`
+  that stamps the six tiles in a repeating grid: 590 faults.
+- "the rug" in `test_render.js` lays a rug of all fifteen allowed sizes
+  in turn and checks every square came off its own cell turned the way
+  its name says.  The fake canvas now records `mirX`/`mirY` (the sign of
+  each axis) as well as `flip`, because `flip` alone cannot tell a
+  left-to-right mirror from a top-to-bottom one.  On a `drawDecor` that
+  stamps the tile the right way up: 125 faults, one for every mirrored
+  square of every size.
+
+## The rug, second pass: a spine, and always upright (23 Aug 2026)
+
+Two corrections from Gulli, both with a picture of the rug he wanted.
+
+### A three-wide rug has a middle column of its own
+
+The design is four wide and folds down the middle, so a three-wide rug
+has a column with no twin to mirror against.  It used to borrow the
+four-wide design's inner column, which meant the middle of the rug was
+half of something.  There are now three tiles painted for it - `rug_0c`,
+`rug_1c`, `rug_2c`, taken from his 3x6 picture - laid down the spine and
+mirrored only top to bottom.  The game's 3x6 is pixel-for-pixel his
+picture.
+
+`rugCutTableFaults()` guards the pair of rules that go with them: a spine
+tile belongs in the middle column of an odd-width rug and nowhere else,
+and nothing else belongs there - anywhere else it would be laid against a
+mirrored copy of itself, and the pattern would not meet.
+
+### Every rug is woven upright
+
+A rug is taller than it is wide.  One lying across a room is that same
+rug turned a quarter circle, so `RUG_CUT` holds upright sizes only -
+twelve of them, `'2x2'` to `'4x6'` - and `rugUpright()` turns a square of
+a rug on the floor back to the square of the upright rug it came from.
+The name carries the turn: `rug_11hvr`.  `sprMirror()` in
+`part4_render.js` grew a quarter-turn argument and mirrors *inside* the
+turn, which is the order the thing was made in - woven, then laid down.
+
+Because the short side of the design is four squares and the long side
+six, a rug on the floor can now be up to six squares across if it is
+short enough (`RUG_MAX_SHORT`, `RUG_MAX_LONG`); `addRug` takes in
+whichever side is shorter if the dice give something longer than four
+both ways.
+
+### A 3x5 rug repeats the field row
+
+The middle row of an odd-height rug is its own reflection, and half a
+medallion is not.  A 3x5 takes the field tile again rather than the
+medallion's half - his instruction, and the same reasoning as the spine.
+
+### What proves it
+
+- The per-floor check knows which way a rug is lying: every square of a
+  rug across a room says `r` and every square of an upright one does
+  not, and the fold across the room's left-to-right is the rug's own
+  top-to-bottom when it is turned.  Against a generator that names the
+  squares of a turned rug as if it were upright: 602 faults.
+- The render check now lays every size **both ways up** - 21 in all - and
+  compares the whole canvas transform, not just which axes were
+  mirrored: `[0,1,-1,0]` is a quarter turn and nothing else is.  It also
+  folds each drawn rug in half both ways and requires the two halves to
+  be the same tile drawn reflected, skipping the middle row or column,
+  which folds onto itself.  Against a `drawDecor` that ignores the turn:
+  349 faults.
+- Table faults proved on a spine tile moved off the middle (2 faults) and
+  on a size left out (1).
+
+### A gap in the line-of-sight check, found on the way
+
+Moving the rug dice reshuffled the dungeon and the soak's LOS phase
+failed twice: one square visible ten squares off, outside the lit room.
+It turned out to be the documented third rule - *the face of a wall
+standing beside something you can see is lit, so an outline never has
+holes punched in it* - reaching a wall beside a corridor square that was
+itself part of the lit room's outline.  The probe knew about the lit room
+and about fire, but not about wall faces.
+
+Measured before touching anything: 7 such squares in 2,400 turns on the
+new code and **11 on the build delivered an hour earlier**, so it is not
+new and not the rug's doing - the phase samples 6 seeds and had simply
+never landed on one.
+
+`losSanity` now excuses a blocking square that stands beside a visible
+square you could walk on, and says how many it excused (38 over the LOS
+phase).  The allowance is deliberately looser than the rule that draws
+it - any of the eight neighbours, at any distance - so it stays a check
+on what may be seen rather than a copy of the code that decides it.  It
+still bites: a light reaching three squares too far fails it.
+
+## The rug, third pass: a middle row, and no more two-by-twos (23 Aug 2026)
+
+### One new tile, for the middle row
+
+A rug woven an odd number of tiles tall has a middle row with no twin to
+fold against, the same problem the spine solved for odd widths.
+`rug_c1` is painted for it - taken from Gulli's 4x5 picture, where it is
+the only new tile - and goes in the inner columns of that row.  The
+border column of the middle row is the design's own `rug_20`, and a
+three-wide rug has its spine there instead.
+
+Sizes with a middle row now use it: 2x3, 2x5, 4x5 (`rug_c1`), and the
+three-wide ones keep `rug_1c` down the spine.  3x3's middle row took the
+field tile on its border column before and now takes `rug_20`, matching
+the 4x5.
+
+`rugCutTableFaults()` guards it the way it guards the spine: a `c` row
+tile belongs in the middle row of an odd-height rug and nowhere else.
+Unlike the spine that rule is one-directional - the middle row is not
+made only of `c` tiles - so it is written that way rather than pretending
+otherwise.  Proved on `rug_c1` moved into 4x6's field row: 1 fault.
+
+His picture and the game's 4x5 differ in 8 pixels, all on the fold
+between the two middle columns: rows 1 and 3 of his copy are not quite
+mirrored across it.  The game draws the tile and its exact mirror.
+
+### Nothing smaller than two by three
+
+`RUG_MIN_LONG` is 3.  A room with only two squares to spare both ways
+gets no rug at all; a rug that comes out two by two is let out along
+whichever wall has the room for it.  The per-floor check calls a 2x2 rug
+'smaller than anything woven' - proved by putting `'2x2'` back in the
+table: 4 faults, from the table and from the floors both.
+
+Rugs on the floor went from 15.0 squares each to 21.2, and from 52 floors
+in 96 to 67 - the minimum size pushes small rooms into laying a real rug
+rather than a coaster.
+
+### The save-slot check was reading a dead run's sight
+
+Moving the rug dice again turned `test_rules.js` red: 'the slots
+overwrote one another'.  It was not the slots.  The three runs it saves
+are walked 200 turns and one of them now dies on turn 173; once you are
+dead the game stops working out what you can see, so the sight flags
+stand still at the moment of death - and loading the run back works them
+out afresh.  Eight squares of firelight appeared, the print differed, and
+the check blamed the slots.
+
+Traced by hand: `runPrint` hashes `L.flags`, the flags differed by
+`F_VIS|F_SEEN` on eight squares round a fire, `computeVis` proved
+idempotent, and the difference vanished when the dead turn was excluded -
+`tickT` and the game's own turn both end `if (!G.dead) computeVis()`.
+
+The check now saves only a run that is still alive, taking another seed
+if one dies, and says why in the comment.  It still bites: with
+`saveInto` writing every slot to slot one, it fails.
+
+## Stones, hints, selectable text, mushrooms and a way to the cellar (23 Aug 2026)
+
+### Stones are a little more common
+
+Not through the item table - a stone's weight there barely reaches the
+floor, measured at 0.78 to 0.79 stones a floor over 500 floors when the
+weight was raised by half.  Ammunition is scattered on purpose instead
+(`scatterAmmo`), and that is where the lever is: `AMMO_ARROW_PCT` (the
+share of those piles that are arrows) went 48 to 44, and a stone pile
+went from one or two to one to three.  **0.78 stones a floor to 1.11**,
+with arrows barely touched (0.41 to 0.37).
+
+The soak's pile check asked for "no more than 2", a number that was true
+of the old table.  It now asks the table what a handful is and keeps the
+rule that made it small - a cap of 4 fails on its own.
+
+### The hints
+
+A period instead of the dash in the studying hint, the long sword hint in
+Gulli's words, the rug hint gone, and three new ones: T for the log, the
+keys worth learning, and the ESC menu's help screen.  `test_render` now
+insists some hint names T and some hint names ?.
+
+### Words can be picked out of a dialog
+
+The game is a picture: there is no text on the page for the browser to
+select.  So the drawing writes down what it drew - every run of text in
+`TEXTS`, every box in `BOXES`, the same bargain `HITS` already made for
+the things you can click - and a drag over a dialog is worked out from
+those records: which run and which letter each end of the drag is over,
+everything between them in reading order, a band painted behind them and
+the words drawn again on top.  Ctrl+C (or the Mac's) copies.
+
+Two things made it fiddly and are worth knowing:
+
+- a line of a hint is drawn **a letter at a time** (each one has to be
+  able to come out red), so a "run" is as often one character as a
+  sentence.  What separates two runs in the copied text is therefore the
+  gap between them, not the runs: none at all and they are one word, a
+  step down the screen and they are two lines, anything else is a space.
+- a drag inside a dialog used to push the map about.  It no longer does,
+  and neither does a drag anywhere else while a dialog is up.
+
+`part4_render.js` holds it all: `dialogUp()`, `selRuns/selSegments/
+selPoint/selText`, `drawSelection`, `selCopy`.  Proved by ripping the
+selection out of `onMouseMove`: 4 faults, including the map moving again.
+
+### Five mushrooms
+
+One of them is only food.  The others are poison, invisibility, a
+berserker's strength and speed, and immunity to fire - `MUSH_TURNS` (20)
+each.  Which colour is which is dealt afresh every run the way a potion's
+is: `MUSH_LOOKS` are the five sprites, `APPEAR.mush` deals them,
+`KNOWN.mush` remembers what eating one taught you, and an unknown one is
+"a blue mushroom" until then.
+
+`P.rage` lends `MUSH_RAGE_STR` through `strBonus()` - a count of turns
+rather than a change to the figure, so nothing has to be put back when it
+wears off - and `P.fireproof` is caught in `resistPlayer`, which is the
+one funnel every kind of damage goes through.  `mushroomsOK()` in the
+harness checks all of it, effects included, and that fire still hurts
+without the ember.
+
+Four new sprites (`mush_b/y/p/g`); the painted red one is the fifth look.
+
+### What you drop stays dropped
+
+Walking over your own cache used to empty it back into your pack.  A
+thing you put down is marked `laid` and waits for ENTER, exactly the way
+a chest you have already opened does - `laidHere()` and `takeLaid()` in
+`part3_actions.js`, and `'take'` in the ENTER choice list.  Gear swapped
+off you on the floor is marked the same way.
+
+### A cellar in the playtest build
+
+`A CELLAR` is a third choice in the playtest menu, and it asks which
+sort: a trapdoor in the open, or one under a rug.  Either way it finds a
+floor that has one, marks it found, and stands you beside it.  40 goes at
+each found one every time.
+
+## Five probes corrected, and why
+
+Changing how often a stone turns up moves the dice, and five checks were
+leaning on where they used to fall.  None of them was loosened; each was
+asking its question of a floor that no longer answered it.
+
+- **the dragon's breath** gave up if the player did not happen to start
+  with four clear squares in front of him - `straightLine4(1)` goes and
+  stands somewhere that has.
+- **the web spinner** was stepping onto a trap and being frozen by it,
+  which is not the same as being stuck in web.  The probe now picks a
+  square with no trap on it.
+- **the wand of lightning** measured the clear squares in a row and
+  expected the current to reach exactly that many.  A row that ends at a
+  doorway is one longer: the bolt stops **on** the door, which is lit by
+  it.  And the same probe counted bolt sprites anywhere on the screen -
+  a thunder discharge round your own feet is drawn with that sprite and
+  stands on its own squares, so the count is now taken along the path.
+- **the hole** and **the light of a fire** both wanted a patch of open
+  lit flagstones in front of the player, and this floor had none in
+  sight - bigger rugs cover more of it now.  Both lay their own ground
+  (`clearPatch`) and put it back afterwards.
+- **dim corners** wanted a remembered corner to be drawn from the faded
+  sheet and waited for a 60-frame walk to wander past one.  It now puts a
+  wall in a patch of remembered floor and looks at that.  Proved still to
+  bite by drawing those patches from the plain sheet: it fails.
+
+## Bags, a notice box, chest suppers and a current (23 Aug 2026)
+
+### One box for anything that stops you
+
+`openNote(line)` puts a line up in front of whatever it interrupted and
+anything at all puts it away.  It remembers what it interrupted, so a
+pouch that will not hold any more says so over the pack and hands the
+pack back afterwards - `G.note.back`, and `drawFrame` draws that mode
+first and the notice over the top of it.  The log is still where the game
+talks to you; this is for the things that stop what you were doing, which
+have to be seen to have happened.
+
+Three of them so far: "The pouch is full.", "The pack is full.", "The
+chest is full." (which was a line in the log before), and "Welcome to
+level X!".
+
+### Pack and pouch, both ways
+
+Every item in the pack offers **Put in pouch** when you are carrying one,
+and every item in the pouch offers **Put in pack**.  A pouch is not
+offered a place inside itself.
+
+`takeFromBox` needed a second thought: it used `addItem`, and `addItem`
+puts a thing in the first place it will go - which, when the pack is
+full, is a pouch.  Taking something out of the pouch put it straight back
+in, and looked like nothing had happened.  Out of a **pouch** it is now
+the pack or nowhere; out of a **chest** it is still anywhere it fits.
+
+### Welcome to level X
+
+`checkLevelUp` queues `G.levelUp` and the box goes up when the turn has
+finished playing out - the same place the coming-of-age choice waits for.
+If a perk choice is queued, no box: that screen says the same thing and
+then asks you something.
+
+### Drinking out of a chest
+
+The chest menu offered only Take.  A flask you meant to drink and a meal
+you meant to eat now say so there, along with Inspect.  `removeItem`
+already looks inside chests, so what is drunk out of one leaves it.
+
+### A shocking stone
+
+The sixth runed stone.  On dry ground it jolts the square it lands on; in
+water the whole pool goes up - `shockCells` walks the water body, which
+is the same walk the thunder discharge uses - and everything standing in
+that pool is jolted, **you included** if you are wading in it.  A second
+pool a step away feels nothing.  `SHOCK_DAMAGE` is 3-6.
+
+The spark is stamped on every square of the pool at once, which with one
+little sprite reads as wallpaper.  Each square turns its own by an eighth
+of a circle or two, dealt by the square's own coordinates - so it is
+different from its neighbour's and the same every frame, which matters:
+a spark that re-rolls each frame is a strobe.  `sprSpin()` in
+`part4_render.js` turns a sprite by any angle at all; a quarter circle
+lands on the pixel grid and an eighth does not, which for a spark is the
+point of it.
+
+### What proves it
+
+- `shockStoneOK()`: dry ground covers one square, a pool covers all of
+  it, the pool next door none of it, your own legs if you are in it and
+  not if you are not.  Proved on a stone that spreads on dry ground (9
+  squares), and on one that stops at the square it lands on (4 faults).
+- "bags and notices" in `test_render`: the pack and the pouch pass things
+  both ways, a full one puts a box up **and the box is drawn**, any key
+  hands the pack back, a chest offers Drink and the flask leaves the
+  chest, and a level gained is held up unless a perk choice is waiting.
+  Proved on a build with the pouch option and the level notice ripped
+  out: 3 faults.
+- "a current in water": at least eight sparks over the pool, three or
+  more angles between them, and the same angles next frame.  Proved on
+  sparks all drawn the right way up: 1 angle.
+
+## Picking up what you stepped over, and firelight that is not a band (23 Aug 2026)
+
+### ENTER takes what is under you
+
+Walking over something with a full pack leaves it where it is and says
+so.  Until now nothing would pick it up afterwards but walking off the
+square and back on with room - and even then only by accident.
+
+`takeableHere()` is the general form of last round's `laidHere()`:
+anything lying under you that has not been picked up, however it came to
+be there - your own cache, or something you stepped over.  Gold is not
+one of them: it goes in your purse, and a purse is never full.  ENTER
+takes it (`'take'` in the underfoot list, ahead of wearing it where it
+lies, which is only the answer while there is still no room), and with no
+room it puts the "The pack is full." box up rather than doing nothing.
+
+And the game offers it: `offerUnderfoot()` runs when the pack closes, so
+emptying a slot and closing the pack says *"An oaken staff here. Press
+ENTER to pick it up."*  Otherwise you would have to leave the square and
+come back to be told again.
+
+### Firelight varies from square to square
+
+Every square a jet of flame or a current lit came out at exactly the same
+brightness, which reads as a painted band rather than as fire.  `glowPut`
+now takes a `vary` flag, and the light on a square is multiplied by
+`glowVary(x, y)`: a hash of where the square is, so it differs from its
+neighbour and is **the same every frame** - light that re-rolls each
+frame is a flicker, and a whole room flickering is a strobe.
+
+`GLOW_VARY` is 0.2, and it only ever takes light away.  Two-sided
+variation was tried first and was worse: full is a ceiling, so half the
+squares were flattened against it and came out identical after all.
+Measured along an eight-square jet with the row beside it: 16 squares,
+0.81 to 1.00, ten distinct brightnesses.  A lamp is left alone - a steady
+light is steady - so the ring of light round a glowing blade is exactly
+as it was.
+
+### What proves it
+
+- The three probes that compared light against an exact figure now
+  compare it against the band it has to land in, **and** insist that no
+  fire lights every square it touches to fewer than three brightnesses -
+  a probe that only widened the tolerance would pass just as happily with
+  the variation taken out again.  Proved by taking it out: 4 faults.
+- The burning stone's second turn is checked as a ratio of its first as
+  well as against the band, since both carry the same square's own
+  variation.
+- "bags and notices" grew a full-pack case: something stepped over stays
+  on the floor, closing the pack after making room says so, ENTER takes
+  it rather than starting to shoot, and closing the pack over bare floor
+  says nothing at all.  Proved with the offer and the general underfoot
+  rule removed: 3 faults.
+
+### "something sleeps in it"
+
+The EFFECTS list is what is going on with *you*, and one of its lines
+read "something sleeps in it" - naming neither the thing nor what sleeps,
+and printed twice over, word for word, when two of the things you were
+wearing had an enchantment you had not read yet.  It now says
+`sleeping rune: long sword`, which is the form the cursed line already
+uses (`cursed: <item>`) and the word the help screen uses for them.
+Checked in `test_render`: two unread enchantments give two lines, they
+are not the same line, each names what it is in, and each fits the
+column.  The old wording fails both of the first two.
+
+### A rug with a door in the floor under it
+
+A trapdoor is a **tile**, and only the plain-flagstone case drew what was
+lying on a square - so a rug with a trapdoor under it had a bare stone in
+the middle of the pattern, which is exactly what a rug laid over one must
+not look like.  The TRAPDOOR case in `drawMapAt` now draws its decor the
+same way FLOOR does, and the door itself still does not show through a
+rug over it.  "a rug over a trapdoor" in `test_render` puts a rug square
+over a hidden door and insists a rug tile is drawn there, that the door
+is not, and that a door with nothing over it still is.  Without the fix:
+one fault.
+
+### Every fire varies, on its own flame's beat
+
+The variation reached beams and left ordinary fire looking flat, for two
+reasons worth writing down.
+
+**It was dealt per contribution, not per square.**  A square in the
+middle of a burning row is lit by its own fire and by both its
+neighbours, and the brightest wins - so every square was the best of
+three or four draws and the whole patch sat against the ceiling.
+Measured over a patch of thirty burning squares: the average square came
+out at 0.96 of full where the rule allows down to 0.80.  `glowPut` now
+records which source won and what it was worth, and `glowShades()` deals
+each square its own share once over the finished map.  Same patch: 0.89.
+
+**And it was dealt once and left there.**  A flame swaps between its two
+tiles every `FIRE_ANIM_MS`, and the light it throws is now dealt again on
+exactly that beat - `flameFrame(x, y)` is the counter, and the drawing
+picks the tile with the same call, so the two cannot drift apart.  A
+light that changed while the flame stood still would be a loose
+connection; one that stood still while the flame changed would be the
+light of something that is not there.  One burning square over 700ms:
+0.966 0.966 0.801 0.852 0.844 0.993 0.895.
+
+`fireLightOK()` checks all of it: a row of fires lights itself to several
+brightnesses, each inside the band, the average over a patch sits in the
+**middle** of what the rule allows rather than at the top of it, the
+light on a square is exactly what its own flame's frame deals, it does
+not move while the frame does not, and a beam varies by more than a fire
+does.  Proved on the two ways it was wrong before: dealing the variation
+per contribution gives 0.962 and fails; not tying it to the flame's
+counter fails the frame check.
+
+### The light of a beam varies too
+
+The variation was there but nobody could see it.  A beam's light is
+halved to begin with - it is a light in the air, not a fire on the floor
+- so the same 20% of it came to about two points of alpha.  A beam now
+has its own share (`GLOW_VARY_BEAM` 0.45) and varies over time as well,
+a step every `GLOW_BEAM_MS`: the current is already redrawn crackling
+every few frames, and its light crackling with it is the same thing said
+twice.  Measured in a dark room: the squares a bolt lights are drawn at
+0.68 to 0.77 against an unlit 0.55, so half the lift now varies.
+`glowVary` takes an amount and a phase; the probe checks the beam's own
+band, the spread it achieves, and the rule behind the number - a beam has
+to vary by more than a fire, whose light is twice as strong.  Setting it
+back to a fire's share fails that.
+
 ## Still to convert, in likely order of worth
 
 From profiling `test_rules.js` (boots remaining by caller):

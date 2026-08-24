@@ -2,7 +2,8 @@
    Part 4 : renderer (true 320x200), inventory screen, input, main loop.
    ============================================================ */
 
-var cv, cx, atlasImg, splashImg, fonts = {}, hurtSheet = null, dimSheet = null, ready = false;
+var cv, cx, atlasImg, splashImg, fonts = {}, hurtSheet = null, dimSheet = null,
+    smokeSheet = null, ready = false;
 /* The page that wraps these files names the splash screen.  Nothing else
    does - not the test harness, which loads the parts on their own - so
    the file's own name is the fallback rather than a crash at boot. */
@@ -100,6 +101,7 @@ function boot() {
     var keys = Object.keys(COLS);
     for (var i = 0; i < keys.length; i++) fonts[keys[i]] = makeFont(COLS[keys[i]]);
     hurtSheet = makeTint('#d82b2b');
+    smokeSheet = makeTint(SMOKE_COL);
     dimSheet = makeDim();
     soundStart();
     fitBars();
@@ -280,6 +282,20 @@ var HITS = [];
 function hit(x, y, w, h, what, i) {
   HITS.push({ x: x, y: y, w: w, h: h, what: what, i: i });
 }
+/* Every run of text drawn this frame, and every box drawn round one.
+   The drawing already knows where each string landed and nothing else
+   does, so it writes both down as it goes - the same bargain HITS makes
+   for the things you can click.  Between them they are what lets a
+   dialog's words be picked up with the mouse. */
+var TEXTS = [], BOXES = [], TEXT_REC = 1;
+/* the boxes a dialog is made of, newest last, so the one on top wins */
+function boxAt(mx, my) {
+  for (var k = BOXES.length - 1; k >= 0; k--) {
+    var b = BOXES[k];
+    if (mx >= b.x && my >= b.y && mx < b.x + b.w && my < b.y + b.h) return b;
+  }
+  return null;
+}
 function hitAt(mx, my) {
   /* last drawn is on top */
   for (var k = HITS.length - 1; k >= 0; k--) {
@@ -312,6 +328,16 @@ function onMouseMove(e) {
   if (!MOUSE.held.drag &&
       Math.max(Math.abs(dx), Math.abs(dy)) >= DRAG_SLOP) MOUSE.held.drag = 1;
   if (!MOUSE.held.drag) return;
+  /* Dragging inside a dialog draws a selection through its words.  It
+     used to push the map about instead, which is a strange thing for a
+     box of text to do to the room behind it. */
+  if (MOUSE.held.sel) {
+    G.sel = G.sel || { box: MOUSE.held.sel, ax: MOUSE.held.x, ay: MOUSE.held.y };
+    G.sel.bx = m.x; G.sel.by = m.y;
+    return;
+  }
+  /* and a drag anywhere else while a dialog is up moves nothing at all */
+  if (dialogUp()) return;
   /* picking the map up again is a change of mind about where you were
      going, so whatever was waiting on the view is dropped */
   G.waiting = null;
@@ -539,7 +565,12 @@ function onMouseDown(e) {
   var m = mousePos(e);
   MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
   if (e.preventDefault) e.preventDefault();
-  MOUSE.held = { x: m.x, y: m.y, right: e.button === 2, drag: 0,
+  /* A press inside a dialog's box is the start of a selection through
+     its words rather than a hand on the map.  The box is remembered, so
+     the drag cannot wander out of the dialog it began in. */
+  var inBox = (!e.button || e.button === 0) && dialogUp() ? boxAt(m.x, m.y) : null;
+  selClear();
+  MOUSE.held = { x: m.x, y: m.y, right: e.button === 2, drag: 0, sel: inBox,
                  dx: (G.drag ? G.drag.dx : 0), dy: (G.drag ? G.drag.dy : 0),
                  /* to the fraction, so picking the map up again does not
                     snap it to the nearest square first */
@@ -567,12 +598,19 @@ function clickAt(mx, my, right) {
      ahead of the panel buttons on purpose: a click meant to put the box
      away should not also open the pack behind it. */
   if (G.mode === 'room') { roomKey('Enter'); return; }
+  /* a notice stands over whatever it interrupted, and anything at all
+     puts it away - the same bargain the room box makes */
+  if (G.mode === 'note') { noteKey('Enter'); return; }
   /* the pack, wherever you are */
   if (h && h.what === 'pack' && !right) {
     PANEL_FLASH = { what: 'pack', t: Date.now() };
     if (G.mode === 'inv') closeInv(); else openInv();
     return;
   }
+  /* The talk down the side of the screen: pressing it reads the whole of
+     it back.  Only from the dungeon - with the pack open the panel is
+     not there, and the box would have nothing behind it. */
+  if (h && h.what === 'log' && !right && G.mode === 'play') { openStory(); return; }
   /* and waiting a turn, which SPACE does and a finger otherwise cannot */
   if (h && h.what === 'wait' && !right) {
     PANEL_FLASH = { what: 'wait', t: Date.now() };
@@ -594,6 +632,10 @@ function clickAt(mx, my, right) {
       return;
     case 'hint':
       hintKey(h && h.what === 'hint' && h.i === 1 ? 'Escape' : ' ');
+      return;
+    case 'story':
+      /* a click anywhere puts it away; the arrows are for reading it */
+      storyKey('Escape');
       return;
     case 'help':
       onKey({ key: 'Escape', preventDefault: function () { } });
@@ -847,9 +889,20 @@ function drawCtxMenu() {
 }
 /* The pack screen: a square, a button, or a row of the item menu. */
 function invClick(h, right) {
+  /* A box held open takes the click and goes away, wherever it landed */
+  if (G.inspect) { closeInspect(); return; }
   if (!h) { if (G.menu) closeItemMenu(); return; }
   if (h.what === 'menu') { G.menu.i = h.i; menuKey('Enter'); return; }
   if (G.menu) { closeItemMenu(); return; }
+  /* The three panels down the right are things to press, not decoration:
+     the top one opens the box about whatever the cursor is on, the
+     middle one the box about you, the bottom one the box of effects. */
+  if (h.what === 'panel') {
+    var pr = panelRects(), pi;
+    for (pi = 0; pi < pr.length; pi++) if (pr[pi].kind === h.i) G.panelSel = pi;
+    openPanel(panelOn());
+    return;
+  }
   if (h.what === 'btn') {
     (G.pouch ? G.pcur : G.cur).r = btnRow();
     (G.pouch ? G.pcur : G.cur).c = h.i;
@@ -859,11 +912,16 @@ function invClick(h, right) {
   }
   if (h.what === 'cell') {
     var cur = G.pouch ? G.pcur : G.cur;
+    G.panelSel = null;
     cur.r = h.i.r; cur.c = h.i.c;
-    /* Either button asks what you want done with it.  A click used to
-       act on the thing straight away, which made a stone fly the moment
-       you touched it and gave a potion no way to be anything but drunk. */
-    invSpace();
+    /* The left button picks the thing out and says what it is; the right
+       one asks what you want done with it.  Both used to open the menu,
+       so there was no way to look at a thing with a mouse without a list
+       of verbs jumping over it.
+       A finger has no second button, so a tap has to open the menu -
+       otherwise a touch screen could look at everything and do nothing
+       with any of it. */
+    if (right || !usingMouse()) invSpace();
     return;
   }
 }
@@ -887,13 +945,41 @@ function sprFrom(sheet, name, px, py, alpha) {
    way looks wrong walking the other, and one 8x8 cell can face both ways
    without costing a second cell on the sheet. */
 function sprFlip(name, px, py, alpha) {
+  sprMirror(name, px, py, alpha, 1, 0);
+}
+/* The same sprite, mirrored either way or both and then turned in
+   quarter circles clockwise.  A design that is symmetrical about its
+   middle - a rug - is painted a quarter at a time and the other three
+   quarters are the same tiles turned over; and a rug is woven upright,
+   so one lying across a room is the whole of it turned a quarter.  The
+   mirroring happens first, inside the turn, which is the order the rug
+   was made in: woven, then laid down. */
+function sprMirror(name, px, py, alpha, mx, my, quarters) {
+  quarters = ((quarters || 0) % 4 + 4) % 4;
+  if (!mx && !my && !quarters) { spr(name, px, py, alpha); return; }
   var i = IX[name]; if (i === undefined) return;
   if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA * alpha;
   cx.save();
-  cx.translate(px + TS, py);
-  cx.scale(-1, 1);
+  cx.translate(px + TS / 2, py + TS / 2);
+  if (quarters) cx.rotate(quarters * Math.PI / 2);
+  cx.scale(mx ? -1 : 1, my ? -1 : 1);
   cx.drawImage(atlasImg, (i % ATLAS.cols) * TS, ((i / ATLAS.cols) | 0) * TS, TS, TS,
-    0, 0, TS, TS);
+    -TS / 2, -TS / 2, TS, TS);
+  cx.restore();
+  if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA;
+}
+/* Turned by any angle at all about its own middle.  Quarter circles
+   land on the pixel grid and anything else does not - an eighth of a
+   circle comes out ragged, which for a spark is the point of it. */
+function sprSpin(name, px, py, alpha, radians) {
+  var i = IX[name]; if (i === undefined) return;
+  if (!radians) { spr(name, px, py, alpha); return; }
+  if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA * alpha;
+  cx.save();
+  cx.translate(px + TS / 2, py + TS / 2);
+  cx.rotate(radians);
+  cx.drawImage(atlasImg, (i % ATLAS.cols) * TS, ((i / ATLAS.cols) | 0) * TS, TS, TS,
+    -TS / 2, -TS / 2, TS, TS);
   cx.restore();
   if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA;
 }
@@ -924,6 +1010,9 @@ function sprSC(name, py, k) { sprS(name, ((SW - TS * k) / 2) | 0, py, k); }
 var TPAD = 0;
 function text(s, px, py, col, scale) {
   s = String(s); scale = scale || 1;
+  if (TEXT_REC && s)
+    TEXTS.push({ s: s, x: px, y: py, w: textW(s, scale),
+                 h: (FNT.glyphH + TPAD * 2) * scale, scale: scale, col: col });
   py += TPAD * scale;
   var f = fonts[col] || fonts.w;
   var pen = px;
@@ -994,6 +1083,7 @@ function line(x0, y0, x1, y1, col) {
   }
 }
 function frame(x, y, w, h, col) {
+  if (TEXT_REC) BOXES.push({ x: x, y: y, w: w, h: h });
   rect(x, y, w, 1, col); rect(x, y + h - 1, w, 1, col);
   rect(x, y, 1, h, col); rect(x + w - 1, y, 1, h, col);
 }
@@ -1054,6 +1144,12 @@ function logPush(m) {
   m.t = G.turn;
   G.log.push(m);
   if (G.log.length > 60) G.log.splice(0, G.log.length - 60);
+  /* and the whole story of the run, which the panel has no room for and
+     the T key does.  The panel's own list is trimmed hard because it is
+     walked every frame; this one is only read when it is asked for. */
+  G.hist = G.hist || [];
+  G.hist.push({ s: m.s, c: m.c, fx: m.fx || '', fc: m.fc || '4', t: G.turn, d: G.depth });
+  if (G.hist.length > HIST_KEEP) G.hist.splice(0, G.hist.length - HIST_KEEP);
 }
 /* Everything still waiting its turn to be said, brought forward to now.
    Called when you press a key: if you are going faster than the pacing,
@@ -1095,7 +1191,15 @@ function resumeMode() {
   /* You came of age.  It waits for the fighting to stop and for the
      blow that earned it to finish being told - the pending choice sits
      there and is offered on the first quiet turn. */
-  if (G.perkPick && perkReady()) { G.mode = 'perk'; settleHp(); return; }
+  if (G.perkPick && perkReady()) { G.mode = 'perk'; settleHp(); G.levelUp = 0; return; }
+  /* A level gained, said out loud.  A coming of age announces it
+     itself, so this waits to see whether one is coming. */
+  if (G.levelUp && !G.perkPick) {
+    var gained = G.levelUp; G.levelUp = 0;
+    settleHp();
+    openNote('Welcome to level ' + gained + '!');
+    return;
+  }
   if (G.queuePick) {
     G.pickJob = G.queuePick; G.queuePick = null;
     G.invMode = 'pick'; G.sel = null; setPouch(null);
@@ -1131,6 +1235,9 @@ function camTarget() {
    first frame, and snapped whenever you are somewhere else entirely -
    a new floor, a fall, a teleport. */
 var WALK_AT = null;
+/* The man has finished crossing his square.  If he is standing in the
+   middle of the screen the view takes the glide back from here. */
+function walkArrived() { if (!G.drag) WALK_ON_MAN = 0; }
 function camWalkTo() {
   if (typeof P === 'undefined' || !P) return;
   if (!WALK_AT) { WALK_AT = { x: P.x, y: P.y }; return; }
@@ -1138,10 +1245,10 @@ function camWalkTo() {
   /* In a fight, or a long way off, the view is simply where you are. */
   if (Math.abs(dx) > WALK_LAG_MAX + 2 || Math.abs(dy) > WALK_LAG_MAX + 2 ||
       (typeof battleNear === 'function' && battleNear())) {
-    WALK_AT.x = P.x; WALK_AT.y = P.y; return;
+    WALK_AT.x = P.x; WALK_AT.y = P.y; walkArrived(); return;
   }
   if (Math.abs(dx) < WALK_LAG_SNAP && Math.abs(dy) < WALK_LAG_SNAP) {
-    WALK_AT.x = P.x; WALK_AT.y = P.y; return;
+    WALK_AT.x = P.x; WALK_AT.y = P.y; walkArrived(); return;
   }
   WALK_AT.x += dx * WALK_CHASE;
   WALK_AT.y += dy * WALK_CHASE;
@@ -1154,6 +1261,20 @@ function walkLag() {
   if (!WALK_AT || typeof P === 'undefined' || !P) return { x: 0, y: 0 };
   return { x: P.x - WALK_AT.x, y: P.y - WALK_AT.y };
 }
+/* Whose glide it is.
+
+   Centred, the view follows you: the world slides past and you stay in
+   the middle of the screen, so the lag belongs to the map.
+
+   Off centre and walking towards the middle, the map is held exactly
+   where the hand left it - camFollow cancels the step against the drag -
+   and the lag must not be put on the map as well, or the picture lurches
+   a tile and crawls back on every single step.  That crawl was the jerk.
+   Off centre, the glide belongs to the man: he walks across a map that
+   does not move at all, which is what was asked for. */
+var WALK_ON_MAN = 0;
+function manLag() { return WALK_ON_MAN ? walkLag() : { x: 0, y: 0 }; }
+function mapLag() { return WALK_ON_MAN ? { x: 0, y: 0 } : walkLag(); }
 /* How far, in pixels, to shift the whole map from where its tiles say it
    is, so that it appears at CAM_AT rather than at the whole-tile offset
    it is drawn on.
@@ -1165,7 +1286,7 @@ function walkLag() {
    every slide before easing it back, and that is what made a dragged map
    look as though it were being torn about. */
 function camSlip() {
-  var w = camTarget(), g = walkLag();
+  var w = camTarget(), g = mapLag();
   return { x: Math.round((w.x - CAM_AT.x + g.x) * TS),
            y: Math.round((w.y - CAM_AT.y + g.y) * TS) };
 }
@@ -1270,7 +1391,10 @@ function camFollow() {
   var hx = 0, hy = 0;
   if (Math.abs(sdx) === 1 && sdx === Math.sign(G.drag.dx)) hx = sdx;
   if (Math.abs(sdy) === 1 && sdy === Math.sign(G.drag.dy)) hy = sdy;
-  if (!hx && !hy) return;
+  /* A step that was not absorbed is a step the map goes with, so the
+     glide goes back onto the map. */
+  if (!hx && !hy) { if (sdx || sdy) WALK_ON_MAN = 0; return; }
+  WALK_ON_MAN = 1;
   /* Hold the map exactly where it is.  The tile offset shrinks by the
      step, which leaves every square drawn on the pixel it was already
      on - and CAM_AT has to shrink with it, or the drawing is suddenly a
@@ -1284,6 +1408,10 @@ function camFollow() {
   G.drag.dx -= hx; G.drag.dy -= hy;
   CAM_AT.x -= hx; CAM_AT.y -= hy;
   if (!G.drag.dx && !G.drag.dy) G.drag = null;
+  /* Arriving in the middle does not hand the glide back at once: the man
+     is still part way across the square he is arriving on, and moving
+     the map under him then is the very lurch this is here to stop.  It
+     goes back when he has actually got there - see camWalkTo. */
 }
 
 /* ------------------------------------------------------- walking there
@@ -1424,6 +1552,10 @@ function tick(took) {
      through a trap door felt like taking the stairs. */
   if (G.pendingFall) { G.pendingFall = 0; fallDown(); }
   G.turn++;
+  /* The air on the square you are standing on, before anything else in
+     the world takes its turn: poison you walked into burns you as you
+     arrive rather than a beat after you are seen to walk out again. */
+  cloudsOnYou();
   /* your action has already been stamped at the head of the turn; give it
      a moment to be seen before the dungeon answers */
   beatWait(BEAT_PLAYER);
@@ -1466,7 +1598,17 @@ function onKey(e) {
   if (!ready) return;
   var k = e.key;
   if (k === 'F5' || (e.ctrlKey && k === 'r')) return;
+  /* Words picked out of a dialog are copied with the key that copies
+     everything else.  Nothing else in the game answers to it, so it can
+     be caught here before the rest of the keyboard is dealt with. */
+  if ((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'C')) {
+    if (G.sel) { e.preventDefault(); selCopy(); }
+    return;
+  }
   e.preventDefault();
+  /* any key at all is the end of a selection: it was made to be read or
+     copied, not to sit there while the game goes on underneath it */
+  if (G.sel && !((e.ctrlKey || e.metaKey))) selClear();
   soundWake();          /* browsers keep audio asleep until you act */
 
   /* SHIFT holds the panel open.  While it is open the arrows push the
@@ -1511,7 +1653,9 @@ function onKey(e) {
     case 'pause': pauseKey(k); return;
     case 'slots': slotsKey(k); return;
     case 'hint': hintKey(k); return;
+    case 'story': storyKey(k); return;
     case 'room': roomKey(k); return;
+    case 'note': noteKey(k); return;
     case 'look': lookKey(k); return;
     case 'inv': invKey(k); return;
     case 'dir': dirKey(k); return;
@@ -1523,6 +1667,10 @@ function onKey(e) {
 }
 
 function playKey(k) {
+  /* Everything said this run, read back.  It takes no turn and changes
+     nothing, so it is allowed even in mid-jump - unlike everything else
+     down here. */
+  if (k === 't' || k === 'T') { openStory(); return; }
   /* nothing at all while you are in mid-jump: you are not standing
      anywhere to act from */
   if (warping()) return;
@@ -1560,13 +1708,24 @@ function playKey(k) {
     var here = tileAt(P.x, P.y);
     var box = openBoxHere();
     var wearable = wearHere();
+    /* Anything lying under you that has not been picked up: your own
+       cache, or something you walked over with a full pack.  Wearing it
+       where it lies is the answer when there is still no room for it;
+       picking it up is the answer once there is. */
+    var laid = takeableHere();
+    if (laid && wearable && freeSlot() < 0) laid = null;
     var underfoot = (here === STAIR) ? 'down' :
                     (here === STAIR_UP) ? 'up' : (box ? 'look' :
-                    (wearable ? 'wear' : null));
+                    (laid ? 'take' : (wearable ? 'wear' : null)));
     if (underfoot && shootableNow()) {
       G.choice = { what: underfoot, box: box, wear: wearable, i: 0 };
       G.mode = 'choose';
       return;
+    }
+    if (underfoot === 'take') {
+      G.msgq = [];
+      if (takeLaid(laid)) { tick(true); return; }
+      finishMsgs(); return;
     }
     if (underfoot === 'wear') {
       G.msgq = [];
@@ -1649,7 +1808,7 @@ function shootableNow() {
    Standing on an open chest with a loaded bow and a foe in view, ENTER
    is ambiguous.  Rather than guess, it asks - two lines, one keypress. */
 var CHOICE_LABEL = { down: 'Climb down', up: 'Climb up', look: 'Open chest',
-                     wear: 'Put it on' };
+                     wear: 'Put it on', take: 'Pick it up' };
 function choiceOpts() {
   if (!G.choice) return [];
   return [['shoot', 'Shoot'],
@@ -1922,6 +2081,89 @@ function drawHints() {
   text('SPACE another   ESC back', x + 5, y + h - 10, '4');
 }
 
+
+/* ================================================== the story so far
+   The panel keeps the last few lines of talk, because that is all it has
+   room for.  Everything said since the run began is kept as well, and
+   this is the box that reads it back: the T key opens it, so does a
+   click on the panel's own text, and the arrows walk it.
+
+   It opens at the bottom - the last thing said - because that is where
+   you were reading, and scrolls up into the past from there. */
+var STORY_PAD = 5;
+function storyLines() {
+  var out = [], i, j, h = G.hist || [];
+  var w = SW - 8 - STORY_PAD * 2;
+  var lastTurn = -1;
+  for (i = 0; i < h.length; i++) {
+    var e = h[i];
+    /* a rule between turns, so a long fight does not read as one speech */
+    if (lastTurn >= 0 && e.t !== lastTurn) out.push({ s: '', c: '4', gap: 1 });
+    lastTurn = e.t;
+    var lines = wrap(e.s, w);
+    for (j = 0; j < lines.length; j++) out.push({ s: lines[j], c: e.c || 'w' });
+    if (e.fx) out.push({ s: e.fx, c: e.fc || '4', ind: 1 });
+  }
+  if (!out.length) out.push({ s: 'Nothing has happened yet.', c: '4' });
+  return out;
+}
+/* How many rows of talk fit between the heading and the footer.  Every
+   row is counted as a full line even though the rules between turns are
+   drawn shorter than one, so the box always ends above the footer rather
+   than in it. */
+function storyRoom() { return (((SH - 10 - STORY_PAD * 2 - LH * 2 - 4) / LH) | 0); }
+function openStory() {
+  var lines = storyLines();
+  /* at the bottom: the last thing said, which is where you were */
+  G.story = { at: Math.max(0, lines.length - storyRoom()) };
+  G.mode = 'story';
+}
+function closeStory() { G.story = null; resumeMode(); }
+function storyKey(k) {
+  if (!G.story) { G.mode = 'play'; return; }
+  var lines = storyLines(), room = storyRoom();
+  var end = Math.max(0, lines.length - room);
+  var d = keyDir(k);
+  if (d && d[1]) { G.story.at = clamp(G.story.at + d[1], 0, end); return; }
+  if (d) return;                                  /* left and right do nothing */
+  if (k === 'PageUp') { G.story.at = clamp(G.story.at - room, 0, end); return; }
+  if (k === 'PageDown') { G.story.at = clamp(G.story.at + room, 0, end); return; }
+  if (k === 'Home') { G.story.at = 0; return; }
+  if (k === 'End') { G.story.at = end; return; }
+  closeStory();
+}
+function drawStory() {
+  if (!G.story) return;
+  var lines = storyLines(), room = storyRoom(), i;
+  var end = Math.max(0, lines.length - room);
+  if (G.story.at > end) G.story.at = end;
+  var w = SW - 8, h = SH - 8, x = 4, y = 4;
+  rect(x, y, w, h, '#0b0d1c');
+  frame(x, y, w, h, '#636d85');
+  text('THE STORY SO FAR', x + STORY_PAD, y + 3, 'y');
+  var top = G.story.at;
+  var ly = y + 3 + LH + 2;
+  for (i = 0; i < room && top + i < lines.length; i++) {
+    var row = lines[top + i];
+    if (row.gap) { rect(x + STORY_PAD, ly + 1, w - STORY_PAD * 2, 1, '#2b3352'); ly += 4; continue; }
+    text(row.s, x + STORY_PAD + (row.ind ? 4 : 0), ly, row.c);
+    ly += LH;
+  }
+  /* where you are in it, and how to get about */
+  var foot = end ? ('UP/DOWN scroll   ' + Math.round(top * 100 / end) + '%   ESC back')
+                 : 'ESC back';
+  rect(x + STORY_PAD, y + h - LH - 5, w - STORY_PAD * 2, 1, '#2b3352');
+  text(foot, x + STORY_PAD, y + h - LH - 2, '4');
+  /* a bar down the right hand edge, so the length of the run is visible */
+  if (end) {
+    var bh = h - 12, bx = x + w - 3;
+    rect(bx, y + 6, 1, bh, '#2b3352');
+    var kh = Math.max(4, Math.round(bh * room / lines.length));
+    rect(bx, y + 6 + Math.round((bh - kh) * top / end), 1, kh, '#636d85');
+  }
+  hit(x, y, w, h, 'story', 0);
+}
+
 /* -------------------------------------------------- a room announced
    Walking into a room somebody built stops the game and says so, in a
    box over the middle of the map with the room's own picture in it.  Any
@@ -1936,6 +2178,44 @@ function roomKey(k) {
   if (k !== 'Enter' && k !== ' ' && k !== 'Tab' && k !== 'Escape') return;
   G.roomBox = null;
   G.mode = 'play';
+}
+
+/* ------------------------------------------------------------ a notice
+   One line held up in front of you until you touch something: a bag that
+   will not hold any more, a level gained.  The log is where the game
+   talks to you and it is the right place for nearly everything, but a
+   thing that stops what you were doing has to be seen to have happened -
+   otherwise you press the same key again and wonder why nothing moved.
+
+   It remembers what it interrupted, so a bag that is full says so over
+   the pack and hands the pack back afterwards. */
+function openNote(line, title) {
+  G.note = { line: String(line), title: title || '', back: G.mode };
+  G.mode = 'note';
+  G.msgq = [];
+}
+function noteKey(k) {
+  if (k !== 'Enter' && k !== ' ' && k !== 'Tab' && k !== 'Escape') return;
+  var back = G.note ? G.note.back : 'play';
+  G.note = null;
+  G.mode = (back && back !== 'note') ? back : 'play';
+}
+function noteLines() {
+  return G.note ? wrap(G.note.line, ROOM_BOX_W - 12) : [];
+}
+function drawNote() {
+  if (!G.note) return;
+  var lines = noteLines(), i;
+  var w = ROOM_BOX_W;
+  var head = G.note.title ? LH + 4 : 0;
+  var h = 6 + head + lines.length * 9 + 6;
+  var x = VIEW_PX + ((VIEW_W * TS - w) >> 1);
+  var y = VIEW_PY + ((VIEW_H * TS - h) >> 1);
+  rect(x, y, w, h, '#0b0d1c');
+  frame(x, y, w, h, '#636d85');
+  if (G.note.title) text(G.note.title, x + 6, y + 5, 'y');
+  for (i = 0; i < lines.length; i++) text(lines[i], x + 6, y + 6 + head + i * 9, 'w');
+  hit(x, y, w, h, 'note', 0);
 }
 function drawRoomBox() {
   if (!G.roomBox) return;
@@ -1956,6 +2236,126 @@ function drawRoomBox() {
   var ty = y + 5 + head + 4;
   for (i = 0; i < lines.length; i++) text(lines[i], x + 6, ty + i * 9, 'w');
   hit(x, y, w, h, 'room', 0);
+}
+
+
+/* The three panels down the right of the pack, as rectangles.  One list,
+   read by the drawing, by the mouse and by the arrow keys, so the frame
+   you see, the thing you click and the thing ENTER opens are all the
+   same three boxes. */
+function panelRects() {
+  var x = INV_TXT_X - 2, w = INV_COL_W + 4;
+  return [{ kind: 'item', x: x, y: 18, w: w, h: 39 },
+          { kind: 'you', x: x, y: 57, w: w, h: 40 },
+          { kind: 'effects', x: x, y: 97, w: w, h: SH - 97 }];
+}
+/* Which of them the frame is sitting on, or -1 for none */
+function panelOn() { return (G.panelSel === undefined || G.panelSel === null) ? -1 : G.panelSel; }
+function openPanel(i) {
+  var p = panelRects()[i];
+  if (!p) return false;
+  if (p.kind === 'you') return openSelfBox();
+  if (p.kind === 'effects') return openEffectsBox();
+  /* The top panel is about whatever the frame was last on in the grid.
+     Walking out to the panels along an empty row leaves it on an empty
+     square, and a key press that does nothing at all reads as broken. */
+  var it = refGet(bindRef(cursorRef()));
+  if (!it) { G.msgq = []; msg('There is nothing on that square to look at.', '6'); return false; }
+  return openInspect(it);
+}
+
+/* ==================================================== the INSPECT box
+   A thing held up and looked at properly.  Three of these: one for an
+   item, one for the man himself, and one for whatever is working on him.
+   They are the same box with different insides, drawn over the pack and
+   dismissed by anything at all - a key, a tap, a click.
+
+   The pack has a column 128 pixels wide to say what a thing is.  This
+   has the whole screen, which is the point of it. */
+var INSPECT_W = 176, INSPECT_PAD = 6;
+function openInspect(it) {
+  if (!it) return false;
+  G.inspect = { kind: 'item', item: it };
+  return true;
+}
+function openSelfBox() { G.inspect = { kind: 'you' }; return true; }
+function openEffectsBox() { G.inspect = { kind: 'effects' }; return true; }
+function closeInspect() { G.inspect = null; }
+/* What goes in it: a picture, a heading, some prose, and then the list */
+function inspectBody() {
+  var b = G.inspect, i;
+  if (!b) return null;
+  if (b.kind === 'item') {
+    var it = b.item;
+    return { icon: itemSprite(it), title: cap(itemName(it)),
+             lore: itemLore(it), rows: itemDetail(it) };
+  }
+  if (b.kind === 'you') {
+    var rows = selfDetail();
+    return { icon: 'hero', title: 'You', lore: '', rows: rows };
+  }
+  return { icon: 'heart', title: 'What is working on you', lore: '',
+           rows: [], pairs: effectsDetail() };
+}
+function drawInspect() {
+  var b = inspectBody(), i, j;
+  if (!b) return;
+  var w = INSPECT_W, pad = INSPECT_PAD, colW = w - pad * 2;
+  var head = TS * 2;
+  var lore = b.lore ? wrap(b.lore, colW) : [];
+  /* every row wrapped in advance, so the box is exactly as tall as what
+     is going in it - and no taller than the screen */
+  var rows = [], r;
+  for (i = 0; i < b.rows.length; i++) {
+    var wl = wrap(b.rows[i][0], colW);
+    for (j = 0; j < wl.length; j++) rows.push([wl[j], b.rows[i][1]]);
+  }
+  var top = pad + head + 3;
+  var maxRows = (((SH - 8) - top - (lore.length ? lore.length * LH + 4 : 0) - pad) / LH) | 0;
+  /* A list of things with an explanation under each: every one of them
+     is named, and the explanations fill whatever room is left over.
+     Cutting the list short instead would mean the effect you most needed
+     to know about was the one that fell off the bottom. */
+  if (b.pairs) {
+    var heads = [], bodies = [], need = 0;
+    for (i = 0; i < b.pairs.length; i++) {
+      heads.push(wrap(b.pairs[i][0], colW));
+      bodies.push(b.pairs[i][2] ? wrap(b.pairs[i][2], colW) : []);
+      need += heads[i].length;
+    }
+    var spare = maxRows - need, show = [];
+    for (i = 0; i < b.pairs.length; i++) {
+      show.push(bodies[i].length && bodies[i].length <= spare);
+      if (show[i]) spare -= bodies[i].length;
+    }
+    rows = [];
+    for (i = 0; i < b.pairs.length; i++) {
+      for (j = 0; j < heads[i].length; j++) rows.push([heads[i][j], b.pairs[i][1]]);
+      if (show[i]) for (j = 0; j < bodies[i].length; j++) rows.push([bodies[i][j], '4']);
+    }
+  }
+  var more = 0;
+  if (rows.length > maxRows) { more = rows.length - maxRows + 1; rows = rows.slice(0, maxRows - 1); }
+  var h = top + (lore.length ? lore.length * LH + 4 : 0) + rows.length * LH + (more ? LH : 0) + pad;
+  var x = ((SW - w) >> 1), y = ((SH - h) >> 1);
+  if (y < 2) y = 2;
+  rect(x, y, w, h, '#0b0d1c');
+  frame(x, y, w, h, '#636d85');
+  if (b.icon && IX[b.icon] !== undefined) sprS(b.icon, x + pad, y + pad, 2);
+  var tx = x + pad + TS * 2 + 6;
+  var tl = wrap(b.title, w - pad - (tx - x));
+  for (i = 0; i < tl.length && i < 2; i++)
+    text(tl[i], tx, y + pad + ((head - tl.length * LH) >> 1) + i * LH, 'y');
+  var ly = y + top;
+  if (lore.length) {
+    for (i = 0; i < lore.length; i++) { text(lore[i], x + pad, ly, 'w'); ly += LH; }
+    ly += 1;
+    rect(x + pad, ly, colW, 1, '#2b3352');
+    ly += 3;
+  }
+  for (i = 0; i < rows.length; i++) { text(rows[i][0], x + pad, ly, rows[i][1]); ly += LH; }
+  if (more) text('...and ' + more + ' more', x + pad, ly, '4');
+  hit(x, y, w, h, 'inspect', 0);
 }
 
 /* ------------------------------------------------------- looking about
@@ -2087,11 +2487,27 @@ function openInv() {
   settleHp();      /* no lag on a screen you opened to read */
   G.mode = 'inv'; G.invMode = 'normal'; G.invOpen = 1;
   G.sel = null; setPouch(null); G.menu = null;
+  G.panelSel = null; G.inspect = null;
   G.msgq = [];
 }
 function closeInv() {
   G.invOpen = 0; G.sel = null; setPouch(null); G.invMode = 'normal';
   G.menu = null; G.mode = 'play'; G.msgq = [];
+  G.panelSel = null; G.inspect = null;
+  /* You walked over something with a full pack, opened the pack and made
+     room.  Closing it is the moment to say that the thing is still there
+     and can be had for one key - otherwise you have to walk off the
+     square and back on to be told again. */
+  offerUnderfoot();
+}
+/* what is lying under you and could be picked up right now */
+function offerUnderfoot() {
+  if (G.dead || G.mode !== 'play') return;
+  var it = (typeof takeableHere === 'function') ? takeableHere() : null;
+  if (!it || freeSlot() < 0) return;
+  if (carriedItems().indexOf(it) >= 0) return;
+  msg(cap(itemName(it)) + ' here. Press ENTER to pick it up.', 'k');
+  finishMsgs();
 }
 function cursorRef() {
   /* Row -1 is the equip row.  You can climb up onto it out of a chest or
@@ -2135,10 +2551,28 @@ function bindRef(ref) { if (ref.kind === 'pouch') ref.pouch = G.pouch; return re
 function invKey(k) {
   settleLog();
   G.beat = 0;
+  /* A box held open over the pack takes the next key, whatever it is,
+     and goes away.  Reading it is the whole of what it is for. */
+  if (G.inspect) { closeInspect(); return; }
   if (G.invMode === 'menu' && G.menu) { menuKey(k); return; }
+  /* i, for the thing under the cursor - the one verb worth a key of its
+     own, since it is the only one that can never do any harm */
+  if (k === 'i' || k === 'I') { openInspect(refGet(bindRef(cursorRef()))); return; }
   var d = keyDir(k);
   if (d) {
+    /* On the panels down the right: up and down walk the three of them,
+       and left steps back into the grid where you came from. */
+    if (panelOn() >= 0) {
+      if (d[0] < 0) { G.panelSel = null; return; }
+      if (d[1]) G.panelSel = clamp(G.panelSel + d[1], 0, panelRects().length - 1);
+      return;
+    }
     var cur = G.pouch ? G.pcur : G.cur;
+    /* Off the right hand edge of the grid and onto the panels.  They are
+       the only other thing on the screen worth landing on, and reaching
+       them with a finger or a mouse but not with the keys made them feel
+       like decoration. */
+    if (d[0] > 0 && cur.c >= 4 && cur.r !== btnRow()) { G.panelSel = 0; return; }
     /* The row under the grid is the row of buttons, whether the grid is
        your pack or an open chest.  They used to be reachable only from
        the pack, so with a chest open there was no way to walk onto them
@@ -2156,6 +2590,10 @@ function invKey(k) {
     closeInv(); return;
   }
   if (k === 'Escape') {
+    /* Out on the panels, ESC is the way out of the pack altogether -
+       stepping back into the grid is what the left arrow is for, and
+       having to press ESC twice to leave read as the key not working. */
+    if (panelOn() >= 0) { G.panelSel = null; closeInv(); return; }
     if (G.sel) { G.sel = null; return; }
     if (G.pouch && G.pouch.t !== 'chest') { setPouch(null); G.sel = null; return; }
     if (G.pouch) { setPouch(null); G.sel = null; closeInv(); return; }
@@ -2204,6 +2642,8 @@ function pressInvButton(what) {
 }
 
 function invSpace() {
+  /* the frame is on a panel: the only thing to do with one is open it */
+  if (panelOn() >= 0) { openPanel(panelOn()); return; }
   var target = bindRef(cursorRef());
   if (target.kind === 'button') { pressInvButton(target.what); return; }
   var titem = refGet(target);
@@ -2272,9 +2712,18 @@ function invSpace() {
    rather than guessing.  Only the things that item can actually do
    are offered. */
 function itemActions(it, ref) {
-  /* Reaching into a chest, the only sensible thing to do is take it. */
-  if (ref.kind === 'pouch' && G.pouch && G.pouch.t === 'chest')
-    return [['takeout', 'Take'], ['move', 'Move'], ['cancel', 'Cancel']];
+  /* Reaching into a chest, mostly what you want is to take it out - but
+     a flask you meant to drink and a meal you meant to eat need not come
+     out first and go back in.  What is drunk out of a chest leaves the
+     chest: removeItem looks in there too. */
+  if (ref.kind === 'pouch' && G.pouch && G.pouch.t === 'chest') {
+    var box = [];
+    if (it.t === 'potion') box.push(['use', 'Drink']);
+    else if (it.t === 'food') box.push(['use', 'Eat']);
+    box.push(['takeout', 'Take'], ['move', 'Move'], ['inspect', 'Inspect'],
+             ['cancel', 'Cancel']);
+    return box;
+  }
 
   var out = [];
   if (ref.kind === 'eq') {
@@ -2308,12 +2757,23 @@ function itemActions(it, ref) {
   /* Moving things between the pack and a chest by carrying them across
      two screens is more trouble than it is worth, so each side offers a
      one-press way over. */
-  if (ref.kind === 'pouch') out.push(['takeout', 'Take']);
+  if (ref.kind === 'pouch')
+    out.push(['takeout', G.pouch && G.pouch.t === 'pouch' ? 'Put in pack' : 'Take']);
   else if (G.box && it.t !== 'chest' && !(ref.kind === 'eq' && it.cursed) &&
            (!G.pouch || G.pouch === G.box))
     out.push(['putin', 'Put in chest']);
+  /* And a pouch you are carrying is the same offer as a chest at your
+     feet: somewhere to put a thing down without walking it across two
+     screens.  A pouch cannot go in a pouch, and neither can anything
+     that is on you and will not come off. */
+  if (ref.kind !== 'pouch' && it.t !== 'pouch' && carriedPouch() &&
+      !(ref.kind === 'eq' && it.cursed))
+    out.push(['putbag', 'Put in pouch']);
   out.push(['move', 'Move']);
   if (!(ref.kind === 'eq' && it.cursed)) out.push(['drop', 'Drop']);
+  /* Every single thing can be looked at properly, whatever else it can
+     or cannot be done with. */
+  out.push(['inspect', 'Inspect']);
   out.push(['cancel', 'Cancel']);
   return out;
 }
@@ -2342,14 +2802,13 @@ function doMenuAction(act) {
   G.msgq = [];
   switch (act) {
     case 'cancel': return;
+    case 'inspect': openInspect(it); return;
     case 'move': G.sel = { item: it, ref: ref }; return;
     case 'takeout': takeFromBox(it, ref); return;
+    case 'putbag': putInPouch(it, ref); return;
     case 'putin': {
       if (!G.box) return;
-      if (!chestRoom(G.box)) {
-        msg('The chest is full. ' + contCount(G.box) + ' of ' + CHEST_CAP + ' squares.', 'R');
-        finishMsgs(); return;
-      }
+      if (!chestRoom(G.box)) { openNote('The chest is full.'); return; }
       chestPut(G.box, it);
       refSet(ref, null);
       msg('You put ' + itemName(it) + ' in the chest.', 'w');
@@ -2386,6 +2845,11 @@ function dropFromPack(it, ref) {
   } else {
     refSet(ref, null);
   }
+  /* Put down on purpose, and therefore not picked up again by accident:
+     walking back over your own things helps itself to none of them.  It
+     is the same bargain an opened chest makes - it sits there with its
+     lid up until you say. */
+  it.laid = 1;
   dropNear(P.x, P.y, it);
   msg('You drop ' + itemName(it) + '.', 'w');
 }
@@ -2423,12 +2887,51 @@ function beginPin(it) {
 
 /* Out of the chest and into your pack.  Shared by ENTER and by the
    menu, so both do exactly the same thing. */
+/* Out of a bag and into the pack.  Not addItem: that puts a thing in
+   the first place it will go, and the first place it will go when the
+   pack is full is a pouch - which is where this one already was.  It
+   would look like nothing had happened. */
 function takeFromBox(it, ref) {
   G.msgq = [];
-  var got = addItem(it);
-  if (!got) { msg('Your pack is full.', 'R'); finishMsgs(); return false; }
+  var from = (ref && ref.pouch) || G.pouch;
+  var fromBag = from && from.t === 'pouch';
+  var got;
+  if (!fromBag) got = addItem(it);          /* out of a chest: anywhere it fits */
+  else {
+    /* out of the pouch: the pack itself, or nowhere.  Anywhere it fits
+       would be the pouch it is already in. */
+    var f = freeSlot(), i;
+    got = null;
+    for (i = 0; i < N_SLOTS; i++)
+      if (stackable(P.slots[i], it)) { P.slots[i].cnt += it.cnt; got = P.slots[i]; break; }
+    if (!got && f >= 0) { P.slots[f] = it; got = it; }
+  }
+  if (!got) { openNote('The pack is full.'); return false; }
   refSet(ref, null);
   msg('You take ' + itemName(it) + '.', 'w');
+  G.sel = null; finishMsgs();
+  return true;
+}
+
+/* the pouch you are carrying, if you are carrying one */
+function carriedPouch() {
+  for (var i = 0; i < N_SLOTS; i++)
+    if (P.slots[i] && P.slots[i].t === 'pouch') return P.slots[i];
+  return null;
+}
+/* and into it: the other half of the same offer */
+function putInPouch(it, ref) {
+  G.msgq = [];
+  var bag = carriedPouch();
+  if (!bag) return false;
+  var j, put = null;
+  for (j = 0; j < POUCH_CAP; j++)
+    if (stackable(bag.items[j], it)) { bag.items[j].cnt += it.cnt; put = bag.items[j]; break; }
+  if (!put) for (j = 0; j < POUCH_CAP; j++) if (!bag.items[j]) { bag.items[j] = it; put = it; break; }
+  if (!put) { openNote('The pouch is full.'); return false; }
+  if (ref.kind === 'eq') { P.eq[ref.key] = null; takeOffEffects(it); }
+  else refSet(ref, null);
+  msg('You put ' + itemName(it) + ' in the pouch.', 'w');
   G.sel = null; finishMsgs();
   return true;
 }
@@ -2442,6 +2945,7 @@ function boxHere() {
 }
 
 function invEnter() {
+  if (panelOn() >= 0) { openPanel(panelOn()); return; }
   var target = bindRef(cursorRef());
   if (target.kind === 'button') { pressInvButton(target.what); return; }
   var it = refGet(target);
@@ -2486,12 +2990,163 @@ function render() {
      themselves, so a click can never act on a button that is no longer
      on the screen. */
   HITS = [];
+  TEXTS = []; BOXES = [];
   drawFrame();
+  drawSelection();
   drawHoverTile();
   drawPointer();
 }
+
+/* ==================================================== picking up words
+   The game is a picture, so there is no text on the page for a browser
+   to select: every word is glyphs blitted onto a canvas.  But the
+   drawing knows what it drew and where, and that is all a selection
+   needs.  Drag across a dialog and the run of text under the hand is
+   worked out from those records, drawn back highlighted, and copied by
+   the usual key.
+
+   It only happens over a dialog.  Over the dungeon the same drag is how
+   you push the map about, and that stays what it is. */
+var SEL_BG = '#4a5a8c', SEL_FG = 'w';
+/* The modes that put a box of words on the screen.  A pack with the
+   inspect box open counts; a pack on its own does not, since nothing
+   there is a sentence. */
+function dialogUp() {
+  var m = G.mode;
+  return m === 'hint' || m === 'help' || m === 'story' || m === 'room' ||
+         m === 'pause' || m === 'slots' || m === 'perk' || m === 'ask' ||
+         m === 'ctx' || m === 'dead' || m === 'dying' || m === 'win' ||
+         m === 'title' || m === 'choose' || !!G.inspect;
+}
+/* which character of a run the pointer is over, counting from the left
+   edge of the run; the far side of the last letter is one past the end */
+function selCharAt(run, mx) {
+  var pen = run.x, i;
+  for (i = 0; i < run.s.length; i++) {
+    var c = run.s.charCodeAt(i) - FNT.first;
+    var w = (c < 0 || c >= FNT.count) ? 0 : adv(c) * run.scale;
+    if (mx < pen + w / 2) return i;
+    pen += w;
+  }
+  return run.s.length;
+}
+/* where a character of a run starts, in buffer pixels */
+function selCharX(run, n) {
+  var pen = run.x, i;
+  for (i = 0; i < n && i < run.s.length; i++) {
+    var c = run.s.charCodeAt(i) - FNT.first;
+    if (c >= 0 && c < FNT.count) pen += adv(c) * run.scale;
+  }
+  return pen;
+}
+/* The runs of the selection's own box, in reading order.  Sorting by the
+   line first and the pen second is what makes a drag from one line to
+   the next take everything between, rather than a column. */
+function selRuns() {
+  if (!G.sel) return [];
+  var b = G.sel.box, out = [], i;
+  for (i = 0; i < TEXTS.length; i++) {
+    var t = TEXTS[i];
+    if (t.x < b.x || t.y < b.y || t.x + t.w > b.x + b.w + 1 || t.y + t.h > b.y + b.h + 2) continue;
+    out.push(t);
+  }
+  out.sort(function (p, q) { return p.y === q.y ? p.x - q.x : p.y - q.y; });
+  return out;
+}
+/* Which part of each run is inside the drag, as [run, from, to].  The
+   two ends are points on the screen; whichever came first in reading
+   order is the start, so dragging backwards selects the same words. */
+function selSegments() {
+  if (!G.sel) return [];
+  var runs = selRuns(), i, out = [];
+  if (!runs.length) return out;
+  var a = selPoint(runs, G.sel.ax, G.sel.ay), b = selPoint(runs, G.sel.bx, G.sel.by);
+  if (a.run > b.run || (a.run === b.run && a.ch > b.ch)) { var t = a; a = b; b = t; }
+  for (i = a.run; i <= b.run && i < runs.length; i++) {
+    var from = (i === a.run) ? a.ch : 0;
+    var to = (i === b.run) ? b.ch : runs[i].s.length;
+    if (to > from) out.push({ run: runs[i], from: from, to: to });
+  }
+  return out;
+}
+/* a point on the screen as a place in the text: which run, which letter */
+function selPoint(runs, mx, my) {
+  var i, best = 0;
+  for (i = 0; i < runs.length; i++) {
+    /* past the bottom of this line: the answer is further down */
+    if (my >= runs[i].y + runs[i].h) { best = i + 1; continue; }
+    if (my < runs[i].y) break;
+    /* on this line: the first run whose end is past the pointer */
+    if (mx < runs[i].x + runs[i].w || i + 1 >= runs.length ||
+        runs[i + 1].y >= runs[i].y + runs[i].h)
+      return { run: i, ch: selCharAt(runs[i], mx) };
+    best = i + 1;
+  }
+  if (best >= runs.length) return { run: runs.length - 1, ch: runs[runs.length - 1].s.length };
+  return { run: best, ch: 0 };
+}
+/* The selection as one string.  A line of a hint is drawn a letter at a
+   time - each one has to be able to come out red - so a run is as often
+   a single character as a whole sentence.  What separates two runs is
+   therefore not the run itself but the gap between them: none at all and
+   they are the same word, a step down the screen and they are two
+   lines, and anything else is a space. */
+function selText() {
+  var segs = selSegments(), out = '', i, prev = null;
+  for (i = 0; i < segs.length; i++) {
+    var r = segs[i].run, part = r.s.slice(segs[i].from, segs[i].to);
+    if (prev) {
+      if (r.y !== prev.y) out += '\n';
+      else if (r.x > prev.x + prev.w + 1) out += ' ';
+    }
+    out += part;
+    prev = r;
+  }
+  return out;
+}
+function drawSelection() {
+  var segs = selSegments(), i;
+  if (!segs.length) return;
+  /* the highlight is painted over the words and they are drawn again on
+     top of it - and not written down again while that happens, or the
+     next frame would find two of everything */
+  TEXT_REC = 0;
+  for (i = 0; i < segs.length; i++) {
+    var g = segs[i], r = g.run;
+    var x0 = selCharX(r, g.from), x1 = selCharX(r, g.to);
+    if (x1 <= x0) continue;
+    rect(x0, r.y, x1 - x0, r.h, SEL_BG);
+    text(r.s.slice(g.from, g.to), x0, r.y, SEL_FG, r.scale);
+  }
+  TEXT_REC = 1;
+}
+/* the selection goes when the box it was made in does */
+function selClear() { G.sel = null; }
+/* Ctrl+C, or the Mac's own.  A canvas has nothing the browser can copy
+   by itself, so the string is handed to the clipboard directly. */
+function selCopy() {
+  var s = selText();
+  if (!s) return 0;
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(s);
+  } catch (e) { }
+  G.copied = Date.now();
+  return s.length;
+}
 function drawFrame() {
   rect(0, 0, SW, SH, '#0b0d1c');
+  /* A notice stands in front of whatever it interrupted, so what it
+     interrupted is drawn first and the notice over the top of it.  It
+     remembers which that was, which is why this can simply ask. */
+  if (G.mode === 'note' && G.note) {
+    var back = G.note.back && G.note.back !== 'note' ? G.note.back : 'play';
+    G.mode = back;
+    drawFrame();
+    G.mode = 'note';
+    drawNote();
+    return;
+  }
   if (G.mode === 'title') { drawTitle(); return; }
   if (G.mode === 'win') { drawWin(); return; }
   if (G.mode === 'help') { drawHelp(); return; }
@@ -2510,6 +3165,10 @@ function drawFrame() {
   drawMap();
   drawKeyBelt();
   drawSidePanel();
+  /* The story of the run takes the whole screen, panel and all, so it
+     goes on after the panel rather than inside the map's own drawing -
+     which is where every other box over the dungeon belongs. */
+  if (G.mode === 'story') drawStory();
   if (G.mode === 'dead') drawDeath();
   panSettle();
 }
@@ -2672,6 +3331,95 @@ function drawBolt(name, cell, camx, camy) {
   if (bx < 0 || by < 0 || bx >= VIEW_W || by >= VIEW_H) return;
   spr(name, VIEW_PX + bx * TS, VIEW_PY + by * TS, 1);
 }
+
+/* ---------------------------------------------------- a bolt of lightning
+   A row of little sprites is a row of little sprites; lightning is one
+   crooked line of current that arrives all at once.  So the wand of
+   lightning draws itself: a jagged path from your hand to the far end of
+   its reach, wandering a few pixels to each side of the straight line
+   and re-drawn every few frames so it crawls the way real current does.
+
+   Four passes, dark to bright, each one narrower than the last - the
+   outer ones read as the glow around it and the last as the current
+   itself.  Blue throughout, which is what it is for. */
+function boltJitter(seed) {
+  var v = Math.sin(seed * 12.9898) * 43758.5453;
+  return (v - Math.floor(v)) * 2 - 1;              /* -1 .. 1 */
+}
+function beamStyle(kind) { return BEAMS[kind] || BEAMS.lightning; }
+function boltPoints(b, camx, camy, phase) {
+  var p = b.path, i, st = beamStyle(b.kind);
+  if (!p.length) return null;
+  var dx = b.dir ? b.dir[0] : 1, dy = b.dir ? b.dir[1] : 0;
+  var half = TS >> 1;
+  var x0 = VIEW_PX + (P.x - camx) * TS + half, y0 = VIEW_PY + (P.y - camy) * TS + half;
+  var end = p[p.length - 1];
+  var x1 = VIEW_PX + (end[0] - camx) * TS + half, y1 = VIEW_PY + (end[1] - camy) * TS + half;
+  var n = p.length * st.segs;
+  if (n < 2) n = 2;
+  /* across the beam, never along it */
+  var ax = -dy, ay = dx;
+  var pts = [];
+  for (i = 0; i <= n; i++) {
+    var t = i / n;
+    /* pinned at both ends: it leaves your hand and it arrives */
+    /* Side to side, every point: a beam that wanders at random comes
+       out a wavy tube, and lightning is a zigzag.  The size of each
+       kink varies, the side it goes does not.  A sheet of flame uses
+       the same machinery with a much smaller swing, so it runs nearly
+       straight down the row and ripples rather than forking. */
+    var swing = 0.2 + 0.8 * Math.abs(boltJitter(i * 7.31 + phase * 31.7));
+    var w = (i === 0 || i === n) ? 0
+          : (i & 1 ? 1 : -1) * swing * st.wobble;
+    /* and the kinks are not evenly spaced either: a beam with a fixed
+       period is a sawtooth, which is a different thing to look at */
+    var slip = (i === 0 || i === n) ? 0
+             : boltJitter(i * 2.13 + phase * 5.71) * st.slip;
+    pts.push([x0 + (x1 - x0) * t + ax * w + dx * slip,
+              y0 + (y1 - y0) * t + ay * w + dy * slip]);
+  }
+  return { pts: pts, ax: ax, ay: ay, n: n };
+}
+/* One beam, drawn as one thing running down the row: dark and wide
+   first, bright and thin last, with a lick or a fork off the side of it
+   here and there.  Which colours and how crooked is the style's
+   business, so the wand of lightning and the wand of fire are the same
+   drawing with different dice. */
+function drawBeam(b, camx, camy, age) {
+  var st = beamStyle(b.kind);
+  var phase = (age / st.flicker) | 0;
+  var made = boltPoints(b, camx, camy, phase);
+  if (!made) return 0;
+  var pts = made.pts, ax = made.ax, ay = made.ay, i, k, drawn = 0;
+  var passes = st.passes;
+  for (k = 0; k < passes.length; k++) {
+    var off = passes[k][0], col = passes[k][1];
+    for (i = 0; i + 1 < pts.length; i++) {
+      line(pts[i][0] + ax * off, pts[i][1] + ay * off,
+           pts[i + 1][0] + ax * off, pts[i + 1][1] + ay * off, col);
+      if (off) line(pts[i][0] - ax * off, pts[i][1] - ay * off,
+                    pts[i + 1][0] - ax * off, pts[i + 1][1] - ay * off, col);
+      drawn++;
+    }
+  }
+  /* and the forks: what makes lightning read as lightning rather than as
+     a wavy line, and what makes flame read as flame rather than as a
+     rope - short licks off the side of it, close together */
+  for (i = 2; i + 2 < pts.length; i += st.forkEvery) {
+    var f = boltJitter(i * 3.77 + phase * 13.1);
+    if (f < st.forkOdds) continue;
+    var side = boltJitter(i * 5.11 + phase * 3.3) < 0 ? -1 : 1;
+    var len = st.forkMin + ((f * (st.forkMax - st.forkMin)) | 0);
+    var fx = pts[i][0] + ax * side * len + (pts[i + 1][0] - pts[i][0]) * 0.8;
+    var fy = pts[i][1] + ay * side * len + (pts[i + 1][1] - pts[i][1]) * 0.8;
+    line(pts[i][0], pts[i][1], fx, fy, st.passes[1][1]);
+    line(pts[i][0], pts[i][1], fx, fy, st.fork);
+    drawn++;
+  }
+  return drawn;
+}
+/* the old name, kept for the one thing it always meant */
+function drawLightning(b, camx, camy, age) { return drawBeam(b, camx, camy, age); }
 
 /* ------------------------------------------------------- edging
    Water and holes have hard square borders, which read as blocks rather
@@ -2925,6 +3673,17 @@ function drawDecor(name, mx, my, px, py, a) {
      face it: a cracked flagstone faces its hole, an edge of moss faces
      the moss or the wall it grows from.  sprTurn goes clockwise, and the
      unturned case is the thing being above. */
+  /* A square of rug carries in its name which of the nine tiles it is
+     and which way round it was laid: 'h' mirrored left to right, 'v' top
+     to bottom, both at the far corner of the rug, and 'r' for a rug
+     lying across the room, which is the whole of it turned a quarter. */
+  if (isRugName(name)) {
+    var tail = name.slice(6);
+    sprMirror(name.slice(0, 6), px, py, a,
+      tail.indexOf('h') >= 0 ? 1 : 0, tail.indexOf('v') >= 0 ? 1 : 0,
+      tail.indexOf('r') >= 0 ? 1 : 0);
+    return;
+  }
   var faces = isCrack(name) ? holeAt : isMossEdge(name) ? mossAnchorAt : null;
   if (!faces) { spr(name, px, py, a); return; }
   var turn = -1;
@@ -3138,6 +3897,30 @@ function drawMap() {
   }
   drawMapAt(0, 0);
 }
+
+/* The light thrown about the place is worked out in the rules layer -
+   see lightMap - because it decides what you can see as well as how
+   brightly it is drawn.  What is left here is laying it on. */
+/* what the light does to how brightly a square is drawn: full light
+   brings it all the way up, half light halfway there */
+function glowLift(g, a, idx) {
+  var e = g[idx];
+  return e ? a + (1 - a) * e.v : a;
+}
+/* and the colour it leaves on the square, laid over everything standing
+   on it - the floor, the furniture, and whoever is standing there */
+function drawGlowWash(g, mx, my, px, py) {
+  var j = my * MAP_W + mx;
+  var e = g[j];
+  if (!e) return 0;
+  cx.globalAlpha = ALPHA * GLOW_WASH * e.v;
+  cx.globalCompositeOperation = 'lighter';
+  cx.fillStyle = e.col;
+  cx.fillRect(px, py, TS, TS);
+  cx.globalCompositeOperation = 'source-over';
+  cx.globalAlpha = ALPHA;
+  return 1;
+}
 function drawMapAt(overX, overY) {
   /* Never clamped: you sit in the middle of the screen wherever you are,
      so the edge of the map never gives away which way is out. */
@@ -3149,6 +3932,9 @@ function drawMapAt(overX, overY) {
   var camx = P.x - (VIEW_W >> 1) + pdx;
   var camy = P.y - (VIEW_H >> 1) + pdy;
   var vx, vy, i;
+  /* what is burning or crackling this instant, worked out once and read
+     twice: to brighten each square, and to wash it with its colour */
+  var glow = lightMap();
 
   for (vy = -overY; vy < VIEW_H + overY; vy++) {
     for (vx = -pcols - overX; vx < VIEW_W + overX; vx++) {
@@ -3156,7 +3942,11 @@ function drawMapAt(overX, overY) {
       if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
       var idx = my * MAP_W + mx;
       var f = L.flags[idx];
-      if (!(f & F_SEEN)) continue;
+      /* Lit by a flash: a bolt of lightning down a hall you have never
+         walked shows you the hall for as long as it lasts.  It is drawn
+         because it is lit, not because it is remembered - and when the
+         flash goes it is gone again, with nothing left on your map. */
+      if (!(f & F_SEEN) && !glow[idx]) continue;
       /* Seen with night eyes, everything in a dark room is there to be
          read - but it is still a dark room, and it is drawn like one.
          Without the shade there is no way to tell you are standing in
@@ -3164,9 +3954,16 @@ function drawMapAt(overX, overY) {
       /* Three stages: bright near you, dimmer at the edge of what you
          can see, and dimmer still for what you only remember. */
       var a;
-      if (!(f & F_VIS)) a = DIM_A;
-      else if (L.darkMap && L.darkMap[idx]) a = NIGHT_SHADE;
-      else a = tileLight(mx, my);
+      if (!(f & F_VIS)) {
+        /* Remembered, not seen - unless something is lighting it this
+           instant, in which case you are looking straight at it. */
+        a = glow[idx] ? glowLift(glow, NIGHT_SHADE, idx) : DIM_A;
+      } else {
+        if (L.darkMap && L.darkMap[idx]) a = NIGHT_SHADE;
+        else a = tileLight(mx, my);
+        /* and anything alight nearby brings it up */
+        a = glowLift(glow, a, idx);
+      }
       var px = VIEW_PX + vx * TS, py = VIEW_PY + vy * TS;
       switch (L.tiles[idx]) {
         case WALL: case SDOOR:
@@ -3209,6 +4006,21 @@ function drawMapAt(overX, overY) {
           spr('keyhole', px, py, a); break;
         case STAIR: spr('floor', px, py, a); spr('stairs_down', px, py, a); break;
         case STAIR_UP: spr('floor', px, py, a); spr('stairs_up', px, py, a); break;
+        /* A door in the floor is flagstones until it has been found -
+           that is the whole of what "hidden" means here.  Found, it is
+           drawn on top of the floor the way a staircase is. */
+        case TRAPDOOR:
+          spr(floorSprite(mx, my), px, py, a);
+          if (!trapdoorHidden(mx, my) && !isRugName(L.decor[idx]))
+            spr('trapdoor', px, py, a);
+          /* And whatever is lying over it.  Only the FLOOR case drew
+             decor, so a rug with a door in the floor under it had a bare
+             flagstone in the middle of the pattern - which is the one
+             thing a rug over a trapdoor must not look like, since hiding
+             it is the whole point of laying it there. */
+          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && Date.now() < L.showAt[idx]))
+            drawDecor(L.decor[idx], mx, my, px, py, a);
+          break;
       }
       var tr = trapAt(mx, my);
       if (tr && tr.found) spr(tr.k.spr || 'trap', px, py, a);
@@ -3360,8 +4172,9 @@ function drawMapAt(overX, overY) {
     /* thrown fire is worked out at once and arrives a beat later */
     if (cl.at && Date.now() < cl.at) continue;
     if (cl.kind === 'fire') {
-      /* flames flicker, so no two squares look stamped from the same die */
-      var ff = ((Date.now() / 120 + cl.x * 3 + cl.y * 5) | 0) % 2;
+      /* flames flicker, so no two squares look stamped from the same die.
+         The same count decides the light it throws - see flameFrame. */
+      var ff = flameFrame(cl.x, cl.y) % 2;
       spr(ff ? 'flame' : 'fire_wall', VIEW_PX + clx * TS, VIEW_PY + cly * TS, 0.9);
     } else {
       /* Fumes roll: each square drifts on its own phase and breathes in
@@ -3374,8 +4187,11 @@ function drawMapAt(overX, overY) {
       if (cl.turns <= 1) puff *= 0.6;
       /* the same rolling fumes, tinted red when they mend rather than
          poison - one sheet, already made for the flash of a wound */
-      if (cl.kind === 'mend' && hurtSheet)
-        sprFrom(hurtSheet, 'gas', VIEW_PX + clx * TS + sway,
+      /* the same rolling fumes in three colours: green for poison, red
+         where they mend, and grey for the smoke off a barrel */
+      var sheet = cl.kind === 'mend' ? hurtSheet : cl.kind === 'smoke' ? smokeSheet : null;
+      if (sheet)
+        sprFrom(sheet, 'gas', VIEW_PX + clx * TS + sway,
           VIEW_PY + cly * TS + bob, puff);
       else
         spr('gas', VIEW_PX + clx * TS + sway, VIEW_PY + cly * TS + bob, puff);
@@ -3384,22 +4200,43 @@ function drawMapAt(overX, overY) {
 
   /* water that has just been frozen or electrified */
   if (G.splash) {
-    if (Date.now() - G.splash.t > 320) G.splash = null;
+    if (Date.now() - G.splash.t > BLAST_FLASH_MS) G.splash = null;
     else {
       var sn = G.splash.kind === 'cold' ? 'frost' :
         G.splash.kind === 'blast' ? 'flame' : 'bolt';
       for (i = 0; i < G.splash.cells.length; i++) {
-        var sx2 = G.splash.cells[i][0] - camx, sy2 = G.splash.cells[i][1] - camy;
+        var scx = G.splash.cells[i][0], scy = G.splash.cells[i][1];
+        var sx2 = scx - camx, sy2 = scy - camy;
         if (sx2 < 0 || sy2 < 0 || sx2 >= VIEW_W || sy2 >= VIEW_H) continue;
-        if (!(L.flags[G.splash.cells[i][1] * MAP_W + G.splash.cells[i][0]] & F_VIS)) continue;
-        spr(sn, VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1);
+        if (!(L.flags[scy * MAP_W + scx] & F_VIS)) continue;
+        /* A barrel is not a flask: the same picture stamped over twenty
+           squares reads as a pattern, not as an explosion.  Two sprites
+           dealt by the square's own hash, so it is a different mix every
+           time and the same one every frame while it lasts. */
+        var use = sn;
+        if (G.splash.big) {
+          var mix = (scx * 7 + scy * 13 + ((Date.now() - G.splash.t) / 110 | 0) * 5) % 3;
+          use = mix === 0 ? 'flame' : mix === 1 ? 'fire_wall' : 'flash2';
+        }
+        /* A current running through a pool covers a great many squares at
+           once, and the same little fork stamped on every one of them
+           reads as wallpaper.  Each square turns its own spark by an
+           eighth of a circle or two - dealt by the square's own hash, so
+           it is the same every frame while it lasts and different from
+           its neighbour's. */
+        if (use === 'bolt')
+          sprSpin(use, VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1,
+            ((scx * 5 + scy * 11) & 3) * (Math.PI / 4));
+        else spr(use, VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1);
       }
     }
   }
   /* one projectile, flying, facing the way it was sent */
   if (G.bolt) {
     var age = Date.now() - G.bolt.t;
-    var life = G.bolt.mode === 'beam' ? 220 : 40 * G.bolt.path.length + 90;
+    var life = G.bolt.mode === 'beam'
+      ? (beamDrawn(G.bolt.kind) ? beamLife(G.bolt.kind) : 220)
+      : 40 * G.bolt.path.length + 90;
     if (age > life || !G.bolt.path.length) G.bolt = null;
     /* Set to start later than now - a creature waits a beat before it
        breathes - so there is nothing to draw yet.  Keep it and wait. */
@@ -3412,7 +4249,10 @@ function drawMapAt(overX, overY) {
          went with it. */
       var name = kk === 'fire' ? 'flame' : kk === 'cold' ? 'frost' :
         kk === 'lightning' ? 'bolt' : 'magic';
-      if (G.bolt.mode === 'beam') {
+      if (beamDrawn(kk) && G.bolt.mode === 'beam') {
+        /* not a row of sprites: one line of current or of flame, drawn */
+        drawBeam(G.bolt, camx, camy, age);
+      } else if (G.bolt.mode === 'beam') {
         for (i = 0; i < G.bolt.path.length; i++) drawBolt(name, G.bolt.path[i], camx, camy);
       } else {
         var step = Math.min(G.bolt.path.length - 1, (age / 40) | 0);
@@ -3423,12 +4263,19 @@ function drawMapAt(overX, overY) {
   /* The walk cycle belongs to walking.  Standing still, you stand still. */
   var stepping = P.walkT && Date.now() - P.walkT < WALK_ANIM_MS;
   var frame = stepping ? (((Date.now() - P.walkT) / 90 | 0) % 2) : 0;
-  var hpx = VIEW_PX + (P.x - camx) * TS, hpy = VIEW_PY + (P.y - camy) * TS;
+  /* Off centre the map is held still and the glide is his, so he is
+     drawn where the walk has got to rather than on the square the rules
+     have already put him on. */
+  var mlag = manLag();
+  var hpx = VIEW_PX + (P.x - camx) * TS - Math.round(mlag.x * TS);
+  var hpy = VIEW_PY + (P.y - camy) * TS - Math.round(mlag.y * TS);
   /* Pushed far enough about, your own square leaves the screen.  Draw
      nothing rather than something off the edge of the buffer. */
   var onScreen = hpx > -TS - shift && hpx < SW && hpy > -TS && hpy < SH;
   /* Dying, you flicker out.  It is the one thing that needs no caption. */
-  var goneNow = (G.mode === 'dying' && ((Date.now() / DEATH_BLINK_MS) | 0) % 2) || !onScreen;
+  /* and not before the blow that did it has been seen to land */
+  var dyingNow = G.mode === 'dying' && Date.now() >= (G.deadFrom || 0);
+  var goneNow = (dyingNow && ((Date.now() / DEATH_BLINK_MS) | 0) % 2) || !onScreen;
   /* Unseen: you are still there, and you still need to see where you
      are, so you go translucent rather than away. */
   /* Shaded with everything else when you are standing in the dark: a
@@ -3531,6 +4378,18 @@ function drawMapAt(overX, overY) {
     }
   }
 
+  /* The light itself, laid over the square and everything standing on
+     it - the floor, the furniture and whoever is caught in it.  It goes
+     on after the dungeon and before anything you are being asked to
+     read, so a menu or a cursor is never washed orange. */
+  for (vy = -overY; vy < VIEW_H + overY; vy++) {
+    for (vx = -pcols - overX; vx < VIEW_W + overX; vx++) {
+      var gmx = camx + vx, gmy = camy + vy;
+      if (gmx < 0 || gmy < 0 || gmx >= MAP_W || gmy >= MAP_H) continue;
+      drawGlowWash(glow, gmx, gmy, VIEW_PX + vx * TS, VIEW_PY + vy * TS);
+    }
+  }
+
   if (G.mode === 'choose' && G.choice) drawChoice();
   if (G.mode === 'look') drawLook(camx, camy);
   if (G.mode === 'pause') drawPause();
@@ -3612,6 +4471,8 @@ function drawPanel() {
   var pr = panelPrompt();
   var room = Math.max(1, ((bTop - 3 - LOG_Y) / LOG_LINE) | 0);
   drawLog(Math.max(1, room - pr.length), pr);
+  /* the talk is a thing you can press: it opens the whole of it */
+  hit(0, LOG_Y - 2, PANEL_W - 1, bTop - 3 - (LOG_Y - 2), 'log', 0);
   if (foes.length) {
     rect(PX0, bTop - 3, PANEL_W - PX0 - 2, 1, '#2b3352');
     drawBattle(foes, bTop);
@@ -3721,6 +4582,8 @@ function drawStats() {
   if (P.blind) fl.push('Blind');
   if (P.hallu) fl.push('Halu');
   if (P.haste) fl.push('Fast');
+  if (P.rage) fl.push('Rage');
+  if (P.fireproof) fl.push('Fireproof');
   if (P.frozen) fl.push('Stuck');
   if (P.scare) fl.push('Scare');
   /* A curse costs you hit points in circumstances you have to work out
@@ -3877,8 +4740,8 @@ function drawInv() {
     x = GX + c * PITCH;
     hit(x, GY_EQ, SL, SL, 'cell', { r: 0, c: c });
     var key = EQ_ORDER[c];
-    var isCur = G.pouch ? (G.pcur.r < 0 && G.pcur.c === c)
-                        : (G.cur.r === 0 && G.cur.c === c);
+    var isCur = panelOn() < 0 && (G.pouch ? (G.pcur.r < 0 && G.pcur.c === c)
+                                          : (G.cur.r === 0 && G.cur.c === c));
     var isSel = G.sel && G.sel.ref.kind === 'eq' && G.sel.ref.key === key;
     var barred = (key === 'lh' && twoHanded(P.eq.rh));
     text(EQ_LABEL[key], x + 3, LABEL_Y, barred ? '3' : isCur ? 'y' : '4');
@@ -3894,7 +4757,7 @@ function drawInv() {
     withAlpha(1 - ph, function () {
       for (var rr = 0; rr < 4; rr++) for (var cc = 0; cc < 5; cc++) {
         var bi = rr * 5 + cc;
-        var cu = !G.pouch && G.cur.r === rr + 1 && G.cur.c === cc;
+        var cu = panelOn() < 0 && !G.pouch && G.cur.r === rr + 1 && G.cur.c === cc;
         var se = G.sel && G.sel.ref.kind === 'slot' && G.sel.ref.i === bi;
         /* the squares are only clickable while the pack is the thing on
            screen - mid-slide they are on their way out */
@@ -3922,6 +4785,13 @@ function drawInv() {
      above it, and it is underlined so the two do not read as one block
      of text. */
   ly = 20;
+  /* The three panels down the right, each one a thing you can press -
+     with a finger, with the mouse, or by walking the frame onto it.
+     Only the hit areas here: the frame itself is drawn at the end, or
+     the rules between the panels paint over its top line. */
+  var prs = panelRects(), pi;
+  for (pi = 0; pi < prs.length; pi++)
+    hit(prs[pi].x, prs[pi].y, prs[pi].w, prs[pi].h, 'panel', prs[pi].kind);
   if (hov) {
     var lines = wrap(itemName(hov), colW);
     var nameRows = Math.min(lines.length, 2);
@@ -4007,9 +4877,18 @@ function drawInv() {
      open a bag you do not own is worse than not offering. */
   drawInvButtons();
 
+  /* the frame round whichever panel it is on, over the top of the rules
+     that divide them - drawn before them, its top line disappeared */
+  if (panelOn() >= 0) {
+    var fr = panelRects()[panelOn()];
+    if (fr) frame(fr.x, fr.y, fr.w, fr.h, '#fad039');
+  }
+
   if (ph > 0) drawPouch(ph);
   drawArc();
   if (G.menu) drawItemMenu();
+  /* and over the whole of it, if something is being looked at properly */
+  if (G.inspect) drawInspect();
 }
 
 /* The row of wide, short buttons under the grid.  They are squares like
@@ -4202,7 +5081,9 @@ var HELP = [
   ['ENTER', 'stairs, chest, wear it, or shoot'],
   ['TAB', 'open and close your pack'],
   ['SPACE', 'wait a turn'],
-  ['?', 'look at any square and read it'],
+  /* Two keys for reading rather than doing, on one line: the help screen
+     is exactly as tall as the screen and has no spare row. */
+  ['?  T', 'read a square  /  read the log'],
   ['SHIFT', 'hide the panel; arrows move the view'],
   ['ESC', 'restart, help, or leave'],
   ['', ''],
