@@ -37,6 +37,19 @@
     -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
+  /* the retro monitor - see build.py, which has the reasoning */
+  #crt{
+    position:fixed; display:none; pointer-events:none; z-index:5;
+    background:
+      repeating-linear-gradient(to bottom,
+        rgba(0,0,0,0.34) 0px, rgba(0,0,0,0.34) 1px,
+        rgba(0,0,0,0.00) 1px, rgba(0,0,0,0.00) 3px),
+      repeating-linear-gradient(to right,
+        rgba(255,64,64,0.045) 0px, rgba(64,255,64,0.045) 1px,
+        rgba(64,64,255,0.045) 2px, rgba(0,0,0,0.00) 3px);
+    box-shadow:inset 0 0 34px 6px rgba(0,0,0,0.42);
+  }
+  #crt.on{ display:block; }
   /* The picker is ordinary HTML over the canvas.  It is scaffolding for
      testing, not part of the game, so it does not pretend to be pixels. */
   #pick{
@@ -68,6 +81,7 @@
 </head>
 <body>
 <canvas id="scr" width="320" height="200"></canvas>
+<div id="crt"></div>
 <div id="nosheet" style="position:fixed;inset:0;display:none;align-items:center;
   justify-content:center;color:#c3ccd9;background:#05060d;text-align:center;
   font:14px/1.6 ui-monospace,Menlo,Consolas,monospace">
@@ -75,8 +89,8 @@ spritesheet.png is not beside this file.<br>The graphics live in that PNG.</div>
 <button id="again">pick again</button>
 <div id="pick"><div id="pickhead"></div><div id="picklist"></div></div>
 <script>
-var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 13, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "trapdoor": 20, "keyhole": 21, "ice_wall": 22, "fire_wall": 23, "door_wood": 24, "door_bronze": 25, "door_iron": 26, "door_silver": 27, "door_gold": 28, "door_crystal": 29, "moss": 30, "moss_b": 31, "moss2": 32, "moss3": 33, "moss4": 34, "crack": 35, "crack2": 36, "crack3": 37, "crack4": 38, "bones": 39, "skull": 40, "web": 41, "rubble": 42, "table": 43, "chair": 44, "barrel": 45, "trap": 46, "trap_dart": 47, "trap_gas": 48, "trap_pit": 49, "rug_00": 50, "rug_01": 51, "rug_0c": 52, "rug_10": 53, "rug_11": 54, "rug_1c": 55, "rug_20": 56, "rug_21": 57, "rug_2c": 58, "rug_c1": 59, "chest": 60, "chest_open": 61, "pouch": 62, "chest_wood": 63, "chest_bronze": 64, "chest_iron": 65, "chest_silver": 66, "chest_gold": 67, "chest_crystal": 68, "key_wood": 69, "key_bronze": 70, "key_iron": 71, "key_silver": 72, "key_gold": 73, "key_crystal": 74, "gold": 75, "gold2": 76, "amulet": 77, "crystal": 78, "pin": 79, "dynamite": 80, "food": 81, "fruit": 82, "mushroom": 83, "mush_b": 84, "mush_y": 85, "mush_p": 86, "mush_g": 87, "berries": 88, "scroll": 89, "wand": 90, "wand2": 91, "wand3": 92, "staff": 93, "staff2": 94, "ring_b": 95, "ring_g": 96, "ring_r": 97, "ring_c": 98, "ring_y": 99, "ring_p": 100, "ring_m": 101, "ring_o": 102, "ring_n": 103, "pot_r": 104, "pot_b": 105, "pot_g": 106, "pot_y": 107, "pot_p": 108, "pot_c": 109, "pot_w": 110, "pot_o": 111, "sword": 112, "dagger": 113, "dagger_throw": 114, "mace": 115, "axe": 116, "spear": 117, "bow": 118, "bow_long": 119, "crossbow": 120, "arrow": 121, "bolt": 122, "bolt2": 123, "stone": 124, "stone_blast": 125, "stone_slow": 126, "stone_return": 127, "stone_fire": 128, "stone_ice": 129, "stone_shock": 130, "armor_l": 131, "armor_c": 132, "armor_p": 133, "armor_glass": 134, "shield": 135, "shield2": 136, "shield3": 137, "cap": 138, "helm": 139, "crown": 140, "boots": 141, "sandals": 142, "ironboots": 143, "hero": 144, "hero2": 145, "grave": 146, "mon_A": 147, "mon_B": 148, "mon_C": 149, "mon_D": 150, "mon_E": 151, "mon_F": 152, "mon_G": 153, "mon_H": 154, "mon_I": 155, "mon_J": 156, "mon_K": 157, "mon_L": 158, "mon_M": 159, "mon_N": 160, "mon_O": 161, "mon_P": 162, "mon_Q": 163, "mon_R": 164, "mon_S": 165, "mon_T": 166, "mon_U": 167, "mon_V": 168, "mon_W": 169, "mon_X": 170, "mon_Y": 171, "mon_Z": 172, "mon_h": 173, "mon_w": 174, "mon_k": 175, "flame": 176, "flame2": 177, "frost": 178, "magic": 179, "gas": 180, "icecube": 181, "flash1": 182, "flash2": 183, "flash3": 184, "mouse": 185, "mouse_get": 186, "cursor": 187, "point": 188, "heart": 189, "pan_cross": 190, "mk_z": 191, "mk_q": 192, "mk_x": 193, "mk_ally": 194}, "font": {"x": 0, "y": 104, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 146, "moved": {}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen", "rug_c", "rug_c2", "rug_e", "rug_n", "rug_ne", "rug_nw", "rug_s", "rug_se", "rug_sw", "rug_w"]};
-var ATLAS_PNG = "spritesheet.png";
+var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 13, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "trapdoor": 20, "keyhole": 21, "ice_wall": 22, "fire_wall": 23, "door_wood": 24, "door_bronze": 25, "door_iron": 26, "door_silver": 27, "door_gold": 28, "door_crystal": 29, "moss": 30, "moss_b": 31, "moss2": 32, "moss3": 33, "moss4": 34, "crack": 35, "crack2": 36, "crack3": 37, "crack4": 38, "bones": 39, "skull": 40, "web": 41, "rubble": 42, "table": 43, "chair": 44, "barrel": 45, "trap": 46, "trap_dart": 47, "trap_gas": 48, "trap_pit": 49, "rug_00": 50, "rug_01": 51, "rug_0c": 52, "rug_10": 53, "rug_11": 54, "rug_1c": 55, "rug_20": 56, "rug_21": 57, "rug_2c": 58, "rug_c1": 59, "chest": 60, "chest_open": 61, "pouch": 62, "chest_wood": 63, "chest_bronze": 64, "chest_iron": 65, "chest_silver": 66, "chest_gold": 67, "chest_crystal": 68, "key_wood": 69, "key_bronze": 70, "key_iron": 71, "key_silver": 72, "key_gold": 73, "key_crystal": 74, "gold": 75, "gold2": 76, "amulet": 77, "crystal": 78, "pin": 79, "dynamite": 80, "food": 81, "fruit": 82, "mushroom": 83, "mush_b": 84, "mush_y": 85, "mush_p": 86, "mush_g": 87, "berries": 88, "scroll": 89, "wand": 90, "wand2": 91, "wand3": 92, "staff": 93, "staff2": 94, "ring_b": 95, "ring_g": 96, "ring_r": 97, "ring_c": 98, "ring_y": 99, "ring_p": 100, "ring_m": 101, "ring_o": 102, "ring_n": 103, "pot_r": 104, "pot_b": 105, "pot_g": 106, "pot_y": 107, "pot_p": 108, "pot_c": 109, "pot_w": 110, "pot_o": 111, "sword": 112, "dagger": 113, "dagger_throw": 114, "mace": 115, "axe": 116, "spear": 117, "bow": 118, "bow_long": 119, "crossbow": 120, "arrow": 121, "bolt": 122, "bolt2": 123, "stone": 124, "stone_blast": 125, "stone_slow": 126, "stone_return": 127, "stone_fire": 128, "stone_ice": 129, "stone_shock": 130, "armor_l": 131, "armor_c": 132, "armor_p": 133, "armor_glass": 134, "shield": 135, "shield2": 136, "shield3": 137, "cap": 138, "helm": 139, "crown": 140, "boots": 141, "sandals": 142, "ironboots": 143, "hero": 144, "hero2": 145, "grave": 146, "mon_A": 147, "mon_B": 148, "mon_C": 149, "mon_D": 150, "mon_E": 151, "mon_F": 152, "mon_G": 153, "mon_H": 154, "mon_I": 155, "mon_J": 156, "mon_K": 157, "mon_L": 158, "mon_M": 159, "mon_N": 160, "mon_O": 161, "mon_P": 162, "mon_Q": 163, "mon_R": 164, "mon_S": 165, "mon_T": 166, "mon_U": 167, "mon_V": 168, "mon_W": 169, "mon_X": 170, "mon_Y": 171, "mon_Z": 172, "mon_h": 173, "mon_w": 174, "mon_k": 175, "flame": 176, "flame2": 177, "frost": 178, "magic": 179, "gas": 180, "icecube": 181, "flash1": 182, "flash2": 183, "flash3": 184, "mouse": 185, "mouse_get": 186, "cursor": 187, "point": 188, "heart": 189, "pan_cross": 190, "mk_z": 191, "mk_q": 192, "mk_x": 193, "mk_ally": 194, "vial_g": 195, "vial_k": 196, "vial_p": 197, "vial_w": 198, "vial_r": 199, "vial_y": 200, "vial_b": 201, "ice": 202, "slime": 203, "rubble2": 204}, "font": {"x": 0, "y": 104, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 146, "moved": {}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen", "rug_c", "rug_c2", "rug_e", "rug_n", "rug_ne", "rug_nw", "rug_s", "rug_se", "rug_sw", "rug_w"]};
+var ATLAS_PNG = "spritesheet.png?v=d572c1553a";
 /* ============================================================ ROGUE-8
    Part 1 : constants, RNG, data tables, dungeon generation.
    The whole game renders into a 230x128 pixel buffer, nothing else.
@@ -238,14 +252,24 @@ function addDam(s) {
    after 16 would be 22 - past the cap - so a maximal run makes five of
    these choices and an ordinary one makes three or four.  That is a
    tight budget, so every perk has to be worth a whole level. */
-/* The one pouch in the game turns up on one of these floors - late
-   enough that the pack has been tight, early enough to be worth having. */
-var POUCH_FLOOR_MIN = 3, POUCH_FLOOR_MAX = 5;
+/* The one potion pouch in the game turns up on one of these floors -
+   late enough that the pack has been tight, early enough to be worth
+   having.  It holds potions and nothing else, and everything it holds
+   goes into it by itself: a bag that sorts one kind of thing out of your
+   pack is worth more than a bag that is simply bigger, because the pack
+   is where the decisions are and potions were crowding it. */
+/* Not before the fourth: the pack has to have been tight for a while
+   before a bag that fixes it is worth finding. */
+var POUCH_FLOOR_MIN = 4, POUCH_FLOOR_MAX = 6;
 
 var PERK_LEVELS = [2, 4, 7, 11, 16];
 /* how long he will keep making for a room before settling for where he
    has got to */
 var BOLT_PATIENCE = 120;
+/* How long he stands about at the top of the stairs before taking them.
+   Long enough that a player who saw where he went has a real chance of
+   catching him up; short enough that dawdling costs you the purse. */
+var LEP_LINGER = 10;
 var PERK_OFFER = 3;          /* how many you are shown to choose between */
 /* How long after the last blow the screen waits before it appears.  The
    creature you just killed is still on the tombstone list, the log has
@@ -367,7 +391,19 @@ var ARROW_RECOVER_PCT = 20;   /* chance a hit arrow survives to be reused */
    does not always wear off in one throw.  Now and then it is lying there
    afterwards with its carving intact, to be picked up and thrown again.
    (A returning stone has its own arrangement and does not use this.) */
-var RUNE_RECOVER_PCT = 25;
+/* A stone is a stone, carved or plain: what it takes to survive being
+   thrown at a wall is the same either way, so both ask this.  An arrow
+   has its own number above - it is a different object with a different
+   way of failing, and a shaft in a wall is not a pebble on the floor. */
+/* The top of the dungeon is where you learn what the dungeon is, and
+   two things do not belong there.  A ring is the run's one shot at that
+   ring and finding it on the first floor spends it before you know what
+   any of them do.  A two handed weapon takes your shield hand away,
+   which is a real decision to make and a poor one to be handed on the
+   floor you start with a plain dagger on. */
+var DEEP_ONLY_DEPTH = 3;      /* rings and great weapons from here down */
+var STONE_RECOVER_PCT = 18;
+var RUNE_RECOVER_PCT = STONE_RECOVER_PCT;
 /* How much of the run's talk is kept for reading back.  The panel holds
    the last few lines; this is the whole story of the run, and it is what
    the T key opens.  Long enough to reach the start of any ordinary run
@@ -413,6 +449,12 @@ var TOUCH_HOLD_MS = 450;
    it before the picture settles onto the grid.  A wheel notch that
    reports lines rather than pixels is worth about this many. */
 var WHEEL_HOLD_MS = 140, WHEEL_LINE_PX = 16;
+/* How much wheel is one line in a box of words.  A notch on a mouse is
+   about a hundred CSS pixels, so this is roughly three lines a notch -
+   and the leftovers are kept between events, or a trackpad's dozens of
+   tiny nudges would each round to nothing and the box would never
+   move. */
+var WHEEL_TEXT_PX = 34;
 /* how long a pressed inventory button stays lit */
 var BTN_FLASH_MS = 110;
 /* how much of the way home the sliding map travels each frame, and how
@@ -510,14 +552,24 @@ var BATTLE_MAX = 4;
    back for every turn you stand in it */
 var HOLY_MIN = 2, HOLY_MAX = 3, HOLY_HEAL = 2;
 /* holes in the floor: how likely, how big, and how far you drop */
+/* How few barrels stop being a pile.  A powder store is a stack where
+   every barrel touches another, so that one going up takes the lot; below
+   this it is not a store, it is some barrels. */
+var POWDER_MIN = 4;
 var HOLE_CHANCE = 15, HOLE_MIN = 1, HOLE_MAX = 4;
 var FALL_MIN = 1, FALL_MAX = 5;
+/* A floor you blew a hole in comes down with you.  How far the heap
+   reaches, how readily it covers a square next to the one you landed on,
+   and how much less readily for every square further out - so the middle
+   of it is solid and the edge of it is scattered. */
+var RUBBLE_REACH = 2, RUBBLE_SPREAD = 96, RUBBLE_FALLOFF = 34;
 /* What breaks a fall, and by how much.  Landing on something soft is the
    difference between a bad landing and a very bad one. */
 var SOFT_LANDING = {
   moss:   [0.20, 'You land in soft moss. It breaks your fall.'],
   moss2:  [0.20, 'You land in soft moss. It breaks your fall.'],
-  rubble: [0.10, 'You land in loose rubble. It gives a little.']
+  rubble: [0.10, 'You land in loose rubble. It gives a little.'],
+  rubble2: [0.10, 'You land in loose rubble. It gives a little.']
   /* the rug's own squares are added further down, where the tiles it is
      laid from are named */
 };
@@ -558,6 +610,10 @@ var LEP_RING_PCT = 12;
    or two going nowhere; a blind passage is only interesting if it is
    long enough to be somewhere. */
 var DEAD_END_MIN = 8;
+/* How often the blank wall at the end of one is worth searching.  Not
+   always: a dead end that really is a dead end is what makes searching
+   the others a gamble rather than a chore. */
+var DEAD_END_SECRET_PCT = 70;
 /* how often a room is cut in two by a stream, and how often by a gap in
    the floor.  Either way a bridge is laid across it. */
 /* How often a room is offered a stream or a chasm across it.  These are
@@ -1129,7 +1185,12 @@ var POTIONS = [
   /* Water is water.  It is worth carrying because of what it does when
      you throw it, not when you drink it. */
   { n: 'water', p: 9, w: 3, hurl: 'water' },
-  { n: 'holy water', p: 4, w: 70, hurl: 'holy' }
+  { n: 'holy water', p: 4, w: 70, hurl: 'holy' },
+  /* The one flask in the game that is no use at all until you throw it -
+     it will not go down your throat and it does nothing to what it hits.
+     What it does is to the floor, which makes it the only potion that is
+     really a piece of ground you can put where you like. */
+  { n: 'slime', p: 7, w: 55, hurl: 'slime' }
 ];
 /* What a piece of kit looks like before you know anything about it.
    Assigned per kind at the start of a run, the way a potion's colour is,
@@ -1160,6 +1221,80 @@ var P_COLOUR = {
   pot_y: '#fad039', pot_c: '#74d6e8', pot_p: '#b26ce0', pot_b: '#1f8fd8',
   pot_o: '#f59e0b', pot_w: '#e6edf5', pot_r: '#d82b2b', pot_g: '#93bd27'
 };
+
+/* -------------------------------------------------------------- vials
+   A potion's dangerous cousin: too strong to drink, stoppered in heavy
+   glass, and meant to be thrown.  Which colour is which is a fact about
+   the run rather than about the game, the same as potions and mushrooms
+   - you find out by throwing one, and finding out is both the fun and
+   the risk of them.
+
+   Every one of them changes the room rather than the creature it lands
+   on, which is what makes them different from a flask: you throw a vial
+   at the floor because of what the floor will be afterwards. */
+var VIALS = [
+  { n: 'smoke',  p: 30, w: 45 },
+  { n: 'poison', p: 26, w: 65 },
+  { n: 'ice',    p: 24, w: 80 },
+  { n: 'nitro',  p: 14, w: 120 }
+];
+var V_COLORS = ['bottle green', 'ink black', 'oily', 'pearl', 'rust red',
+  'smoked', 'sulphur', 'thundercloud'];
+var V_SPRITE = {
+  'bottle green': 'vial_g', 'ink black': 'vial_k', 'oily': 'vial_p',
+  'pearl': 'vial_w', 'rust red': 'vial_r', 'smoked': 'vial_k',
+  'sulphur': 'vial_y', 'thundercloud': 'vial_b'
+};
+var V_COLOUR = {
+  vial_g: '#93bd27', vial_k: '#6b2f9c', vial_p: '#b26ce0', vial_w: '#e6edf5',
+  vial_r: '#d82b2b', vial_y: '#fad039', vial_b: '#1f8fd8'
+};
+/* Smoke and fumes both fill the room they are let loose in rather than
+   drifting a few squares: five out from where the glass breaks, round
+   corners and through doorways, and stopped dead by a wall. */
+var VIAL_FUME_REACH = 5;
+var VIAL_SMOKE_TURNS = [6, 9];      /* how long it hangs about, low to high */
+var VIAL_POISON_DAMAGE = [2, 4];    /* against the roll(1,3) of ordinary gas */
+/* Ice covers whatever it lands on - flagstone, water, a trap, the lid of
+   a chest - and holds it for a good while.  It is not a wall: you can
+   walk on it, and about half the time you wish you had not. */
+var VIAL_ICE_REACH = 3;
+var VIAL_ICE_TURNS = [18, 23];
+var ICE_SLIP_PCT = 50;              /* stumbling, for you and for them */
+var ICE_CLUMSY = 4;                 /* how much worse a blow struck on it is */
+var ICE_ALPHA = 0.62;               /* you can read the floor through it */
+/* A room five squares across is a room, and a fume vial fills it.  The
+   cap is only there so that a vial thrown into a cave the size of the
+   floor does not put a thousand clouds on the map at once. */
+var VIAL_FUME_MAX = 140;
+/* Nitro goes off like a barrel and takes the floor with it.  The hole is
+   smaller than the blast: the blow reaches two squares and the floor
+   gives way for one, so what is left is a hole with a scorched ring
+   round it rather than a crater the size of the room. */
+/* Not a stamped disc.  A hole blown in a floor is a ragged thing, and
+   the ones the dungeon digs for itself are grown a square at a time -
+   so this one is too, out from where the glass broke, over the same
+   handful of squares a natural chasm covers. */
+var NITRO_HOLE_MIN = 3, NITRO_HOLE_MAX = 6;
+var NITRO_HOLE_SPREAD = 62;   /* how readily it runs to the next square */
+
+/* ------------------------------------------------------------- slime
+   A flask of it breaks over a handful of squares and sits there.  What
+   makes it worth throwing is not the holding - one turn is one turn -
+   but that it FOLLOWS: more often than not it comes away on the feet of
+   whatever walked into it and holds them again on the next square, and
+   the square after that, until the luck runs out.  A patch of slime is
+   a thing that turns a corridor into a long argument. */
+/* A quarter longer than it was, both ends multiplied and the half
+   rounded up: 8-10 turns became 10-13. */
+var SLIME_TURNS = [10, 13];       /* how long the patch lasts */
+var SLIME_SPLASH = [2, 3];        /* squares beside the one it broke on */
+/* Three times in four rather than three in five.  It is the following
+   that makes slime worth throwing, and at 60 the chain ran out after two
+   and a half squares; at 75 it runs four, which is long enough to walk
+   something into a corner with. */
+var SLIME_STICK_PCT = 75;         /* how often it comes with you */
+var SLIME_ALPHA = 0.78;           /* you can still read the floor under it */
 
 var SCROLLS = [
   { n: 'monster confusion', p: 7, w: 140 },
@@ -1396,7 +1531,10 @@ var THINGS = [
   { t: 'head', p: 4 }, { t: 'feet', p: 4 }, { t: 'shield', p: 4 },
   /* One of each in a whole run, so the chance of turning one up has to
      be low or you would have the set by the sixth floor. */
-  { t: 'ring', p: 4 }
+  { t: 'ring', p: 4 },
+  /* rarer than a potion and worth more than one: a vial is a thing you
+     carry for a floor and a half waiting for the right room */
+  { t: 'vial', p: 7 }
 ];
 
 /* ------------------------------------------------------------ runes
@@ -1581,6 +1719,7 @@ var DECOR_INFO = {
   bones:   ['Somebody died here.'],
   skull:   ['A skull, picked clean.'],
   rubble:  ['Loose rubble and broken stone.'],
+  rubble2: ['A heap of broken stone.'],
   table:   ['A table. You can walk round it,', 'not over it.'],
   chair:   ['A chair, long since abandoned.'],
   kerb:    ['Dressed stone round the spring.'],
@@ -1703,7 +1842,7 @@ var MON_INFO = {
   I: ['An ice monster. Its touch', 'freezes you where you stand.'],
   J: ['A jabberwock. Enormous teeth,', 'no wit at all behind them.'],
   K: ['A rat. Small, quick, and there', 'are always more of them.'],
-  L: ['A leprechaun. He steals gold and', 'runs. Kill him to get it back.'],
+  L: ['A leprechaun. He robs you and runs', 'for the stairs. Catch him first.'],
   M: ['A medusa. Her gaze leaves you', 'confused and stumbling.'],
   N: ['A nymph. She takes something', 'from your pack and vanishes.'],
   O: ['An orc. It goes out of its way', 'for gold lying on the floor.'],
@@ -1764,7 +1903,7 @@ var HINTS = [
   'Bows and crossbows both take arrows. There is no need to carry two kinds.',
   'A locked door always has its key somewhere on the same floor, never in a room the door itself shuts off.',
   'Keys you never used go back where you found them when you leave the floor. Spend them before you take the stairs.',
-  'A leprechaun robs you and runs for the far side of the floor. Kill it quickly or lose the gold.',
+  'A leprechaun robs you and runs for the stairs down. He waits by them a little while, and then he is gone with your gold for good.',
   'Throwing a rock at a trap sets it off from a safe distance.',
   'Potions can be thrown. A potion of blindness will blind what it hits, and a healing potion will heal it, so aim with care.',
   "It's much safer to identify objects with a scroll than to try them on yourself.",
@@ -1820,6 +1959,13 @@ var HINTS = [
    falls back to LORE_KIND, and anything you have not identified is
    described by what you can actually see of it - see itemLore. */
 var LORE = {
+  /* the four vials, once you know which is which */
+  vial: {
+    'smoke': 'Heavy glass, and something the colour of a bonfire behind it. It fills a room and nothing sees through it.',
+    'poison': 'The same weight of glass, and the green behind it moves when the vial does not.',
+    'ice': 'Cold enough to stick to the fingers. It glazes a floor, and the floor stays glazed a long while.',
+    'nitro': 'Do not drop it. Do not drop it near a wall you are standing against.'
+  },
   potion: {
     'confusion': 'A flask that will not sit still in the hand. Whatever is in it seems to be arguing with itself.',
     'hallucination': 'The liquid runs through every colour there is, and one or two there are not.',
@@ -1841,7 +1987,8 @@ var LORE = {
     'thirst quenching': 'Water, as far as anyone can tell. Somebody bottled it and stoppered it with care.',
     'nourishment': 'Thick, brown and slow. It is a meal that somebody has gone to the trouble of pouring.',
     'water': 'Ordinary water in an ordinary flask. Useful for what it puts out.',
-    'holy water': 'Clear water with a blessing said over it. There are things down here that cannot bear it.'
+    'holy water': 'Clear water with a blessing said over it. There are things down here that cannot bear it.',
+    'slime': 'It moves when the flask does not, and it is still moving a moment after. Nothing on earth would drink it.'
   },
   scroll: {
     'monster confusion': 'The letters wander off their lines and have to be chased back.',
@@ -1971,7 +2118,7 @@ var LORE = {
     'pin': 'A small bright pin. Pinned to a piece of clothing it changes it, though not always kindly.',
     'key': 'A heavy key, cut for one lock and no other.',
     'chest': 'A stout wooden chest. Whatever is in it, somebody wanted it kept.',
-    'pouch': 'A leather pouch on a drawstring. It holds more than the size of it suggests.',
+    'pouch': 'A leather pouch on a drawstring, lined and padded for glass. Potions and vials go into it by themselves, and nothing else will fit.',
     'amulet': 'The Amulet of Yendor. It is warm, and it is heavier than gold, and it is what you came down here for.',
     'gold': 'Coins of the realm, none of them minted lately.'
   }
@@ -1980,6 +2127,7 @@ var LORE = {
    general, said in a sentence. */
 var LORE_KIND = {
   potion: 'A stoppered flask of something.',
+  vial: 'Thick dark glass, corked and sealed with wax. Too strong to drink.',
   scroll: 'A rolled sheet of paper with writing on it.',
   wand: 'A slender rod with something worked into it.',
   ring: 'A ring, made to be worn and pressed.',
@@ -2567,6 +2715,26 @@ function tidyStores(L) {
       delete L.decor[mine[k]];
       removed++;
     }
+    /* And if what is left is no longer a pile, it is no longer a store.
+       The generator will not BUILD one below POWDER_MIN, but tidying can
+       cut one down afterwards - a barrel walling off a corner of the
+       floor has to go whatever room it is standing in - and a room still
+       calling itself a powder store with three barrels in it is a room
+       that lost an argument, not a room somebody laid out.  Measured over
+       336 floors it happened; the barrels go with the title. */
+    if (best.length < POWDER_MIN) {
+      for (k = 0; k < best.length; k++) {
+        delete L.barrels[best[k]];
+        delete L.decor[best[k]];
+        removed++;
+      }
+      r.special = null;
+      /* and the floor stops saying it has one.  The level keeps its own
+         note of which special room it was dealt, and a note with no room
+         behind it is worse than no note - the game looks the room up and
+         finds nothing. */
+      if (L.special === 'powder') L.special = null;
+    }
   }
   return removed;
 }
@@ -2585,7 +2753,7 @@ function makePowderStore(L, r, depth) {
      and stops being a pile, and a barrel that is refused must never have
      been part of it, or the next one grows off a square that is not
      there and the pile comes apart in two halves. */
-  var want = 5 + rnd(5), i, d;
+  var want = POWDER_MIN + 1 + rnd(5), i, d;
   var free = {};
   for (i = 0; i < spots.length; i++) free[spots[i][1] * MAP_W + spots[i][0]] = 1;
   L.barrels = L.barrels || {};
@@ -2619,7 +2787,7 @@ function makePowderStore(L, r, depth) {
     if (!put(nx, ny)) continue;
     pile.push([nx, ny]);
   }
-  if (pile.length < 4) { takeItAllBack(); return false; }
+  if (pile.length < POWDER_MIN) { takeItAllBack(); return false; }
   r.special = 'powder';
   return true;
 }
@@ -3437,22 +3605,34 @@ function digHole(L, r) {
     return false;
   }
 
-  /* Cracked flagstones run along the edges of a hole, not off its
-     corners: a crack sprite is drawn turned to face the hole it belongs
-     to, and a square that only touches one corner-on has no side facing
-     it to point at. */
+  crackAround(L, cells);
+  L.holes = (L.holes || 0) + cells.length;
+  return true;
+}
+
+/* Cracked flagstones run along the edges of a hole, not off its corners:
+   a crack sprite is drawn turned to face the hole it belongs to, and a
+   square that only touches one corner-on has no side facing it to point
+   at.
+
+   Every hole in the floor gets them, however it came to be there.  A
+   nitro vial takes the floor out the same way a chasm does, and a hole
+   with clean square edges and no warning round it reads as a tile
+   somebody forgot to finish rather than as a drop. */
+function crackAround(L, cells) {
+  var n = 0, i, d;
   for (i = 0; i < cells.length; i++) {
-    for (var dd = 0; dd < DIR4.length; dd++) {
-      var nx = cells[i][0] + DIR4[dd][0], ny = cells[i][1] + DIR4[dd][1];
+    for (d = 0; d < DIR4.length; d++) {
+      var nx = cells[i][0] + DIR4[d][0], ny = cells[i][1] + DIR4[d][1];
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
       var k2 = ny * MAP_W + nx;
       if (L.tiles[k2] !== FLOOR) continue;
       if (L.decor[k2] === 'kerb') continue;      /* dressed stone stays put */
       L.decor[k2] = pick(CRACKS);
+      n++;
     }
   }
-  L.holes = (L.holes || 0) + cells.length;
-  return true;
+  return n;
 }
 
 function genLevelOnce(depth) {
@@ -3602,7 +3782,7 @@ function genLevelOnce(depth) {
     if (L.tiles[dj] !== FLOOR) continue;
     if (L.decor[dj]) continue;
     if (itemAt(L, dp.x, dp.y)) continue;
-    L.decor[dj] = pick(MOSS_FIELD.concat(['bones', 'skull', 'rubble']));
+    L.decor[dj] = pick(MOSS_FIELD.concat(['bones', 'skull', 'rubble', 'rubble2']));
   }
   buildLitMap(L);
   pickDarkness(L, depth);
@@ -4163,55 +4343,70 @@ function carveSecretRoom(L) {
     if (carveSecretShape(L, shapes[si][0], shapes[si][1])) return true;
   return false;
 }
+/* One chamber, cut into raw rock behind a panel.  (wx,wy) is the square
+   that becomes the hidden door and (dx,dy) is the way through it, so the
+   caller decides what the door opens off - the wall of a room, or the
+   blank end of a corridor that arrives nowhere.
+
+   Returns the new room, or null if there was not the rock for it. */
+function carveBehindWall(L, wx, wy, dx, dy, sw, sh) {
+  var T = L.tiles, xx, yy, i;
+  /* Dressed wall or raw rock - both are stone, and a panel cut into
+     either is a panel.  A room's neighbours are always walls, so this
+     only ever matters at the end of a corridor, where the stone the
+     tunnel stopped against may never have been faced. */
+  if (T[wy * MAP_W + wx] !== WALL && T[wy * MAP_W + wx] !== ROCK) return null;
+
+  /* a chamber beyond it, across the way in and along it */
+  var w = sw, h = sh;
+  if (dx) { var s = w; w = h; h = s; }           /* deeper than it is wide */
+  var x0 = wx + dx, y0 = wy + dy;
+  if (dx < 0) x0 -= w - 1;
+  if (dy < 0) y0 -= h - 1;
+  if (dx) y0 -= (h >> 1); else x0 -= (w >> 1);
+
+  if (x0 < 2 || y0 < 2 || x0 + w >= MAP_W - 2 || y0 + h >= MAP_H - 2) return null;
+
+  /* every square of it, and everything touching it, must still be raw
+     rock or existing stone - the room may not breach anything */
+  var ok = 1;
+  for (yy = y0 - 1; yy <= y0 + h && ok; yy++)
+    for (xx = x0 - 1; xx <= x0 + w; xx++) {
+      if (xx === wx && yy === wy) continue;      /* the panel itself */
+      var nt = T[yy * MAP_W + xx];
+      if (nt !== ROCK && nt !== WALL) { ok = 0; break; }
+    }
+  if (!ok) return null;
+
+  T[wy * MAP_W + wx] = SDOOR;
+  var floors = [];
+  for (yy = y0; yy < y0 + h; yy++) for (xx = x0; xx < x0 + w; xx++) {
+    T[yy * MAP_W + xx] = FLOOR;
+    floors.push([xx, yy]);
+  }
+  for (yy = y0 - 1; yy <= y0 + h; yy++) for (xx = x0 - 1; xx <= x0 + w; xx++) {
+    if (xx === wx && yy === wy) continue;
+    if (T[yy * MAP_W + xx] === ROCK) T[yy * MAP_W + xx] = WALL;
+  }
+
+  var idx = L.rooms.length;
+  var room = { gone: 0, lit: 1, idx: idx, id: idx, sealed: 1, secret: 1,
+               x: x0, y: y0, w: w, h: h,
+               cx: x0 + (w >> 1), cy: y0 + (h >> 1), floors: floors };
+  L.rooms.push(room);
+  for (i = 0; i < floors.length; i++)
+    L.roomAt[floors[i][1] * MAP_W + floors[i][0]] = idx;
+  return room;
+}
 function carveSecretShape(L, sw, sh) {
-  var T = L.tiles, tries, xx, yy, i;
+  var T = L.tiles, tries;
   for (tries = 0; tries < 260; tries++) {
     var r = L.rooms[rnd(L.rooms.length)];
     if (!r || r.gone || !r.floors.length) continue;
     var f = r.floors[rnd(r.floors.length)], d = rnd(4);
     var dx = DIR4[d][0], dy = DIR4[d][1];
-    var wx = f[0] + dx, wy = f[1] + dy;          /* the panel */
-    if (T[wy * MAP_W + wx] !== WALL) continue;
-
-    /* a chamber beyond it, across the way in and along it */
-    var w = sw, h = sh;
-    if (dx) { var s = w; w = h; h = s; }         /* deeper than it is wide */
-    var x0 = wx + dx, y0 = wy + dy;
-    if (dx < 0) x0 -= w - 1;
-    if (dy < 0) y0 -= h - 1;
-    if (dx) y0 -= (h >> 1); else x0 -= (w >> 1);
-
-    if (x0 < 2 || y0 < 2 || x0 + w >= MAP_W - 2 || y0 + h >= MAP_H - 2) continue;
-
-    /* every square of it, and everything touching it, must still be raw
-       rock or existing stone - the room may not breach anything */
-    var ok = 1;
-    for (yy = y0 - 1; yy <= y0 + h && ok; yy++)
-      for (xx = x0 - 1; xx <= x0 + w; xx++) {
-        if (xx === wx && yy === wy) continue;    /* the panel itself */
-        var nt = T[yy * MAP_W + xx];
-        if (nt !== ROCK && nt !== WALL) { ok = 0; break; }
-      }
-    if (!ok) continue;
-
-    T[wy * MAP_W + wx] = SDOOR;
-    var floors = [];
-    for (yy = y0; yy < y0 + h; yy++) for (xx = x0; xx < x0 + w; xx++) {
-      T[yy * MAP_W + xx] = FLOOR;
-      floors.push([xx, yy]);
-    }
-    for (yy = y0 - 1; yy <= y0 + h; yy++) for (xx = x0 - 1; xx <= x0 + w; xx++) {
-      if (xx === wx && yy === wy) continue;
-      if (T[yy * MAP_W + xx] === ROCK) T[yy * MAP_W + xx] = WALL;
-    }
-
-    var idx = L.rooms.length;
-    var room = { gone: 0, lit: 1, idx: idx, id: idx, sealed: 1, secret: 1,
-                 x: x0, y: y0, w: w, h: h,
-                 cx: x0 + (w >> 1), cy: y0 + (h >> 1), floors: floors };
-    L.rooms.push(room);
-    for (i = 0; i < floors.length; i++)
-      L.roomAt[floors[i][1] * MAP_W + floors[i][0]] = idx;
+    var room = carveBehindWall(L, f[0] + dx, f[1] + dy, dx, dy, sw, sh);
+    if (!room) continue;
 
     /* something worth the search, in the middle where it will be seen */
     var cache = newGoodItem(L.depth);
@@ -4221,6 +4416,124 @@ function carveSecretShape(L, sw, sh) {
     return true;
   }
   return false;
+}
+
+/* --------------------------------------------- the end of a dead end
+   A hint says a dead end in a corridor is worth searching.  It was not
+   true: the one hidden door a floor is guaranteed is cut into the wall
+   of a ROOM on purpose, because a panel in the middle of a tunnel is not
+   something anyone thinks to search - and the measurement bore it out,
+   nineteen dead ends over thirty floors with a door behind exactly none
+   of them.
+
+   But the END of a dead end is not the middle of a tunnel.  It is a
+   corridor somebody went to the trouble of cutting that arrives
+   nowhere, which is the one place in a dungeon where a blank wall is
+   itself a question.  So some of them have an answer behind them.
+
+   Not all: a dead end that really is just a dead end is what makes
+   searching the others a gamble rather than a chore. */
+function deadEndTip(L, i) {
+  if (L.tiles[i] !== CORR) return null;
+  var x = i % MAP_W, y = (i / MAP_W) | 0, ways = 0, back = null, d;
+  for (d = 0; d < DIR4.length; d++) {
+    var nx = x + DIR4[d][0], ny = y + DIR4[d][1];
+    /* Anything you can put a foot on, and a locked door - which is a way
+       out with the right key rather than a wall.
+
+       This used to list the tiles by hand and the list left out water,
+       so a corridor that runs on into a pool read as a corridor that
+       stops: ten of twenty-eight "dead ends" were nothing of the kind,
+       you could simply wade on.  A hidden door is not the interesting
+       thing at the end of one of those; there is no end. */
+    if (walkable(nx, ny) || L.tiles[ny * MAP_W + nx] === LOCKED) { ways++; back = d; }
+  }
+  if (ways !== 1) return null;
+  /* the way on is the way it was heading: straight past the one way back */
+  return { x: x, y: y, dx: -DIR4[back][0], dy: -DIR4[back][1] };
+}
+/* Whether a wall square would make a sensible door: solid stone on both
+   sides of the way through it, so it reads as a doorway rather than as a
+   gap somebody forgot to fill. */
+function doorwayShaped(L, wx, wy, dx, dy) {
+  var T = L.tiles;
+  var ax = dy, ay = dx;                          /* across the way through */
+  var a = T[(wy + ay) * MAP_W + (wx + ax)];
+  var b = T[(wy - ay) * MAP_W + (wx - ax)];
+  var solid = function (t) { return t === WALL || t === ROCK; };
+  return solid(a) && solid(b);
+}
+function secretsAtDeadEnds(L) {
+  var shapes = [[2, 2], [2, 1], [1, 2], [1, 1]], made = 0, i, si;
+  for (i = 0; i < L.tiles.length; i++) {
+    var tip = deadEndTip(L, i);
+    if (!tip) continue;
+    /* The odds are rolled AFTER the square is known to be a candidate,
+       not before.  Rolled first, a tip that could never have had a door
+       anyway - a corridor that stops at the edge of a stream, which is
+       ten of the twenty-eight measured - still ate its chance, and the
+       share that actually came out was half of what the number said. */
+    var wx = tip.x + tip.dx, wy = tip.y + tip.dy;
+    var pt = L.tiles[wy * MAP_W + wx];
+    if (pt !== WALL && pt !== ROCK) continue;
+    var bx0 = wx + tip.dx, by0 = wy + tip.dy;
+    var bt0 = L.tiles[by0 * MAP_W + bx0];
+    var couldOpen = walkable(bx0, by0) &&
+                    doorwayShaped(L, wx, wy, tip.dx, tip.dy) &&
+                    !!reachSet(L, tip.x, tip.y, false)[by0 * MAP_W + bx0];
+    var couldCarve = (bt0 === ROCK || bt0 === WALL);
+    if (!couldOpen && !couldCarve) continue;
+    if (rnd(100) >= DEAD_END_SECRET_PCT) continue;
+
+    /* Best case: raw rock behind it, so there is room for a cupboard
+       with something in it. */
+    var room = null;
+    for (si = 0; si < shapes.length && !room; si++)
+      room = carveBehindWall(L, wx, wy, tip.dx, tip.dy,
+                             shapes[si][0], shapes[si][1]);
+    if (room) {
+      /* Worth the walk down and the searching: the same class of thing
+         the floor's guaranteed secret room holds. */
+      var cache = newGoodItem(L.depth);
+      cache.x = room.cx; cache.y = room.cy;
+      delete L.decor[room.cy * MAP_W + room.cx];
+      L.items.push(cache);
+      made++;
+      continue;
+    }
+
+    /* Far commoner: there is no rock behind it at all.  A dead end
+       usually stops one square short of a room it never joined - which
+       was measured rather than guessed, fifty of the sixty squares
+       behind them being somebody's floor - and that is a better answer
+       than a cupboard anyway.  The wall is blank because the corridor
+       was going somewhere and stopped, and what is behind it is the
+       place it was going: a hidden shortcut into a room you could
+       already reach the long way round. */
+    /* Anywhere you could stand, which includes water: a panel that opens
+       straight onto the edge of a pool is a perfectly good hidden door,
+       and wading out of one is a better find than another flagstone. */
+    var bx = wx + tip.dx, by = wy + tip.dy;
+    if (!walkable(bx, by)) continue;
+    if (!doorwayShaped(L, wx, wy, tip.dx, tip.dy)) continue;
+    /* A SHORTCUT and nothing else.  What is behind it has to be
+       somewhere you could already get to from this very corridor with
+       every other door exactly as it is - no key used, no panel opened.
+
+       Without that rule this quietly became a way IN to things it had no
+       business opening: a second entrance to a locked vault, so the lock
+       stopped being worth a key; a walled-in room joined to the floor
+       that was walled off from it on purpose; a hidden room reachable
+       without searching for its own panel.  Measured over 120 floors it
+       broke all three. */
+    var seen = reachSet(L, tip.x, tip.y, false);
+    if (!seen[by * MAP_W + bx]) continue;
+    L.tiles[wy * MAP_W + wx] = SDOOR;
+    if (L.locks) delete L.locks[wy * MAP_W + wx];
+    if (L.decor) delete L.decor[wy * MAP_W + wx];
+    made++;
+  }
+  return made;
 }
 
 /* Where does each of a room's doors actually lead?
@@ -4880,8 +5193,9 @@ var CHEST_CAP = 5;
 /* ---------------------------------------------------------- appearances */
 function makeAppearances() {
   var i, j;
-  APPEAR = { pot: [], scr: [], wand: [], wandType: [], wandSpr: [], stone: {}, mush: {} };
-  KNOWN = { pot: [], scr: [], wand: [], weap: [] };
+  APPEAR = { pot: [], scr: [], wand: [], wandType: [], wandSpr: [], stone: {},
+             mush: {}, vial: [] };
+  KNOWN = { pot: [], scr: [], wand: [], weap: [], vial: [] };
   /* Two different things are hidden about a piece of kit, and they are
      learned separately.  KNOWN.gear says you recognise the kind on
      sight - a long sword, not "a notched blade".  it.known says you
@@ -4907,6 +5221,12 @@ function makeAppearances() {
 
   var cols = shuffle(P_COLORS.slice());
   for (i = 0; i < POTIONS.length; i++) { APPEAR.pot.push(cols[i]); KNOWN.pot.push(0); }
+
+  /* The same trick for vials, out of their own list of colours: they are
+     heavy dark glass rather than a flask of something clear, so they do
+     not share a word with the potions and cannot be mistaken for one. */
+  var vcols = shuffle(V_COLORS.slice());
+  for (i = 0; i < VIALS.length; i++) { APPEAR.vial.push(vcols[i]); KNOWN.vial.push(0); }
 
   var usedTitles = {};
   for (i = 0; i < SCROLLS.length; i++) {
@@ -5038,6 +5358,7 @@ function itemDef(it) {
     case 'feet': return FEET[it.k];
     case 'shield': return SHIELDS[it.k];
     case 'potion': return POTIONS[it.k];
+    case 'vial': return VIALS[it.k];
     case 'scroll': return SCROLLS[it.k];
     case 'wand': return WANDS[it.k];
     case 'ring': return RINGS[it.k];
@@ -5277,11 +5598,17 @@ function weaponRune() {
 
 /* Some weapons do not belong near the surface.  Roll again rather than
    handing a throwing dagger to somebody on the first floor. */
+function tooShallow(k, depth) {
+  var W = WEAPONS[k];
+  if (W.minDepth && depth < W.minDepth) return true;
+  /* and nothing that takes your shield hand until the third floor */
+  if (W.two && depth < DEEP_ONLY_DEPTH) return true;
+  return false;
+}
 function pickWeaponFor(depth) {
   for (var t = 0; t < 24; t++) {
     var k = weightedPick(WEAPONS);
-    var W = WEAPONS[k];
-    if (!W.minDepth || depth >= W.minDepth) return k;
+    if (!tooShallow(k, depth)) return k;
   }
   return weaponIndex('dagger');
 }
@@ -5293,6 +5620,7 @@ function newItem(depth) {
     case 'potion': it = mkItem('potion', weightedPick(POTIONS)); break;
     case 'scroll': it = mkItem('scroll', weightedPick(SCROLLS)); break;
     case 'wand': k = weightedPick(WANDS); it = mkItem('wand', k); it.ch = 3 + rnd(8); break;
+    case 'vial': it = mkItem('vial', weightedPick(VIALS)); break;
     case 'weapon': {
       k = pickWeaponFor(depth); it = mkItem('weapon', k);
       if (WEAPONS[k].grp) it.cnt = pileSize(k);
@@ -5313,8 +5641,10 @@ function newItem(depth) {
     case 'ring': {
       /* One of each in a run.  If the set is complete the dungeon has
          nothing left to give here, so it gives a wand instead rather
-         than a second ring nobody can tell from the first. */
-      var rk = pickUnfoundRing();
+         than a second ring nobody can tell from the first - and the same
+         goes for the top two floors, which are too early to spend one
+         of the run's rings on. */
+      var rk = depth < DEEP_ONLY_DEPTH ? -1 : pickUnfoundRing();
       if (rk < 0) { k = weightedPick(WANDS); it = mkItem('wand', k); it.ch = 3 + rnd(8); }
       else it = mkItem('ring', rk);
       break;
@@ -5334,7 +5664,7 @@ function itemName(it) {
   switch (it.t) {
     case 'gold': s = it.cnt + ' gold pieces'; break;
     case 'amulet': s = 'the Amulet of Yendor'; break;
-    case 'pouch': s = 'a pouch (' + pouchCount(it) + '/' + POUCH_CAP + ')'; break;
+    case 'pouch': s = 'a potion pouch (' + pouchCount(it) + '/' + POUCH_CAP + ')'; break;
     case 'key': s = artic(MATS[it.k] + ' key'); break;
     case 'crystal': s = (n > 1) ? (n + ' healing crystals') : 'a healing crystal'; break;
     case 'pin': s = (n > 1) ? (n + ' magical pins') : 'a magical pin'; break;
@@ -5354,6 +5684,12 @@ function itemName(it) {
     case 'potion': {
       var d = KNOWN.pot[it.k] ? 'potion of ' + POTIONS[it.k].n : APPEAR.pot[it.k] + ' potion';
       s = (n > 1) ? (n + ' ' + d + 's') : artic(d);
+      break;
+    }
+    case 'vial': {
+      var dv = KNOWN.vial[it.k] ? 'vial of ' + VIALS[it.k].n
+                                : APPEAR.vial[it.k] + ' vial';
+      s = (n > 1) ? (n + ' ' + dv + 's') : artic(dv);
       break;
     }
     case 'scroll': {
@@ -5453,6 +5789,7 @@ function itemSprite(it) {
     case 'crystal': return 'crystal';
     case 'food': return (APPEAR.mush && APPEAR.mush[it.k]) || FOODS[it.k].s;
     case 'potion': return P_SPRITE[APPEAR.pot[it.k]] || 'pot_b';
+    case 'vial': return V_SPRITE[APPEAR.vial[it.k]] || 'vial_g';
     case 'scroll': return 'scroll';
     case 'wand': return APPEAR.wandSpr[it.k] ||
       (APPEAR.wandType[it.k] === 'staff' ? 'staff' : 'wand');
@@ -5486,20 +5823,54 @@ function packCount() {
   return c;
 }
 /* try to add: stack, then free slot, then any open pouch */
+/* The pouch is for potions and for nothing else.  It used to be a
+   general overflow bag, which made it a second pack - and a second pack
+   is not a decision, it is just more room. */
+/* Both kinds of glass.  A vial is the same shape of problem as a potion
+   - fragile, heavy for its size, and there are always more of them than
+   there is room for - so the padded bag takes both.  Anything else still
+   belongs in the pack, where the decisions are. */
+function pouchTakes(it) { return !!(it && (it.t === 'potion' || it.t === 'vial')); }
+/* Straight into the pouch if there is room in it: a potion or a vial
+   picked up goes where the glass lives without being told to.  If it is
+   full they stay in the pack like anything else - the bag is a place for
+   them, not a promise that there will always be one. */
+function intoPouch(it) {
+  var i, j;
+  for (i = 0; i < N_SLOTS; i++) {
+    var s = P.slots[i];
+    if (!s || s.t !== 'pouch') continue;
+    for (j = 0; j < POUCH_CAP; j++)
+      if (stackable(s.items[j], it)) { s.items[j].cnt += it.cnt; return s.items[j]; }
+    for (j = 0; j < POUCH_CAP; j++)
+      if (!s.items[j]) { s.items[j] = it; return it; }
+  }
+  return null;
+}
+/* Everything already in the pack that belongs in the pouch, put away.
+   Called when the pouch itself arrives: the glass you were carrying
+   before you found it is exactly what it was worth finding for. */
+function stowGlass() {
+  var moved = 0, i;
+  for (i = 0; i < N_SLOTS; i++) {
+    var it = P.slots[i];
+    if (!pouchTakes(it)) continue;
+    if (intoPouch(it)) { P.slots[i] = null; moved++; }
+  }
+  return moved;
+}
 function addItem(it) {
   var i;
+  /* a potion goes to the pouch first, if there is one and it has room */
+  if (pouchTakes(it)) { var got = intoPouch(it); if (got) return got; }
   for (i = 0; i < N_SLOTS; i++)
     if (stackable(P.slots[i], it)) { P.slots[i].cnt += it.cnt; return P.slots[i]; }
   var f = freeSlot();
-  if (f >= 0) { P.slots[f] = it; return it; }
-  for (i = 0; i < N_SLOTS; i++) {
-    var s = P.slots[i];
-    if (s && s.t === 'pouch' && it.t !== 'pouch') {
-      for (var j = 0; j < POUCH_CAP; j++)
-        if (stackable(s.items[j], it)) { s.items[j].cnt += it.cnt; return s.items[j]; }
-      for (j = 0; j < POUCH_CAP; j++)
-        if (!s.items[j]) { s.items[j] = it; return it; }
-    }
+  if (f >= 0) {
+    P.slots[f] = it;
+    /* and the bag itself sorts the pack out the moment it is in it */
+    if (it.t === 'pouch') stowGlass();
+    return it;
   }
   return null;
 }
@@ -5550,6 +5921,12 @@ function isRuneStone(it) {
 }
 function isPlainAmmo(it) {
   return it && it.t === 'weapon' && WEAPONS[it.k].grp && !WEAPONS[it.k].rune;
+}
+/* Anything you throw by hand off the stone family, carved or plain.  It
+   is 'thrown' in the table that marks them - a spear is 'hurl' and an
+   arrow is neither, because an arrow wants a bow. */
+function isStoneAmmo(it) {
+  return !!(it && it.t === 'weapon' && WEAPONS[it.k].thrown);
 }
 function chargeable(it) {
   if (!it) return false;
@@ -5717,7 +6094,8 @@ function newPlayer() {
     slots: new Array(N_SLOTS).fill(null),
     eq: { rh: null, body: null, lh: null, head: null, feet: null },
     amulet: 0,
-    blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
+    blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, gummed: 0,
+    slimeOn: 0, held: 0, heldBy: null,
     seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
     unseen: 0, rage: 0, fireproof: 0,
     perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
@@ -5890,6 +6268,10 @@ function playerDamBonus() {
 }
 function playerHitBonus() {
   var b = strPlus(effStr()) + (((effDex() - 10) / 3) | 0);
+  /* footing is part of a blow: on ice you are half swinging and half
+     staying upright.  It is here rather than in the melee alone so that
+     a shot loosed off ice is as awkward as a swing struck on it. */
+  b -= iceClumsy(P.x, P.y);
   if (P.eq.rh) b += P.eq.rh.hp;
   var r = weaponRune();
   if (r && r.n === 'slaying') b += 2;
@@ -5939,7 +6321,7 @@ function thrownAmmo() {
 function isThrowable(it) {
   if (!it) return false;
   if (it.t === 'weapon' && (WEAPONS[it.k].thrown || WEAPONS[it.k].hurl)) return true;
-  return it.t === 'potion' || it.t === 'dynamite';
+  return it.t === 'potion' || it.t === 'dynamite' || it.t === 'vial';
 }
 /* a weapon that fights in the hand and flies from it */
 function isHurlWeapon(it) { return !!(it && it.t === 'weapon' && WEAPONS[it.k].hurl); }
@@ -5989,6 +6371,17 @@ function setReturning(it) {
   if (it) it.homing = 1;
 }
 function isFlask(it) { return !!(it && it.t === 'potion'); }
+/* A vial is thrown and never drunk: what is in one is too strong to
+   swallow, which is exactly why it is worth throwing. */
+function isVial(it) { return !!(it && it.t === 'vial'); }
+function vialKind(it) { return isVial(it) ? VIALS[it.k].n : null; }
+/* You have seen one work.  Every vial of that colour you are carrying
+   names itself from now on, and so does every one you pick up. */
+function learnVial(k) {
+  if (!KNOWN.vial || KNOWN.vial[k]) return 0;
+  KNOWN.vial[k] = 1;
+  return 1;
+}
 function flaskEffect(it) {
   return (it && it.t === 'potion') ? (POTIONS[it.k].hurl || null) : null;
 }
@@ -6265,7 +6658,7 @@ function watchedByFoe(known) {
 }
 /* You cannot walk while something is holding you. */
 function heldFast() {
-  return P.frozen > 0 || P.held || P.webbed > 0 || P.iced > 0;
+  return P.frozen > 0 || P.held || P.webbed > 0 || P.iced > 0 || P.gummed > 0;
 }
 
 /* ------------------------------------------------- asking you first
@@ -6356,7 +6749,8 @@ function playerEffects() {
   if (P.blind) out.push(['blind (' + P.blind + ')', 'P']);
   if (P.hallu) out.push(['hallucinating', 'P']);
   if (P.haste) out.push(['hasted (' + P.haste + ')', 'c']);
-  if (P.frozen) out.push([(P.iced ? 'frozen solid (' : P.webbed ? 'stuck in web (' : 'held fast (') + P.frozen + ')', 'R']);
+  if (P.frozen) out.push([(P.iced ? 'frozen solid (' : P.webbed ? 'stuck in web ('
+    : P.gummed ? 'stuck in slime (' : 'held fast (') + P.frozen + ')', 'R']);
   if (P.held) out.push(['gripped by a monster', 'R']);
   if (P.scare) out.push(['monsters flee you (' + P.scare + ')', 'G']);
   if (P.seeinv) out.push(['seeing invisible (' + P.seeinv + ')', 'c']);
@@ -6452,6 +6846,19 @@ function lookAt(x, y) {
     out.push(cap(tr.k.n) + (tr.spent ? ' (sprung)' : ''));
     var ti = TRAP_INFO[tr.k.k];
     if (ti) for (i = 0; i < ti.length; i++) out.push(ti[i]);
+    if (iceAt(x, y)) out.push('It is frozen under the ice.');
+  }
+
+  /* Ice is over the top of everything else on the square rather than
+     instead of it, so it is said before the square is described and it
+     does not stop the square describing itself. */
+  if (iceAt(x, y)) {
+    out.push('Glazed with ice.');
+    out.push('Slippery, and it seals what is under it.');
+  }
+  if (slimeAt(x, y)) {
+    out.push('A slick of slime.');
+    out.push('It holds what walks into it, and often comes away with it.');
   }
 
   /* The ground is only worth describing when nothing is standing on it.
@@ -7093,7 +7500,7 @@ function mkMonster(c, depth, x, y) {
     stones: D.sp === 'witch' ? WITCH_STONES : 0, blinkIn: 0, spiderIn: 0,
     flaskIn: 0, petOf: 0, warp: null, showAt: 0, face: 1,
     invis: D.invis ? 1 : 0, item: null, gold: 0, home: -1,
-    bolted: 0, holed: 0, spent: 0, goal: null, ran: 0,
+    bolted: 0, holed: 0, spent: 0, goal: null, ran: 0, wait: 0,
     disguise: D.sp === 'mimic' ? 1 : 0, flee: 0
   };
   m.hp = m.mhp;
@@ -7238,9 +7645,9 @@ function contCount(c) {
    three quarters of every hoard into gear, which is where most of the
    clutter came from; treasure still leans that way, but not that far. */
 var GOOD_THINGS = [
-  { t: 'potion', p: 22 }, { t: 'scroll', p: 22 }, { t: 'wand', p: 12 },
+  { t: 'potion', p: 20 }, { t: 'scroll', p: 20 }, { t: 'wand', p: 12 },
   { t: 'weapon', p: 12 }, { t: 'armor', p: 10 }, { t: 'shield', p: 8 },
-  { t: 'head', p: 7 }, { t: 'feet', p: 7 }
+  { t: 'head', p: 6 }, { t: 'feet', p: 6 }, { t: 'vial', p: 6 }
 ];
 function newGoodItem(depth) {
   /* A ring of the huntress turns up a quiver in a hoard now and then -
@@ -7257,8 +7664,11 @@ function newGoodItem(depth) {
     case 'wand': k = weightedPick(WANDS); it = mkItem('wand', k); it.ch = 6 + rnd(8); break;
     case 'scroll': it = mkItem('scroll', weightedPick(SCROLLS)); break;
     case 'potion': it = mkItem('potion', weightedPick(POTIONS)); break;
+    case 'vial': it = mkItem('vial', weightedPick(VIALS)); break;
     case 'weapon':
-      do { k = weightedPick(WEAPONS); } while (WEAPONS[k].grp);
+      /* a good one, and one that belongs on this floor: a hoard is
+         still on the floor it is buried in */
+      do { k = weightedPick(WEAPONS); } while (WEAPONS[k].grp || tooShallow(k, depth));
       it = mkItem('weapon', k); it.hp = 1 + rnd(3); it.dp = rnd(3);
       rollMake(it);
       break;
@@ -7832,6 +8242,36 @@ function blocksShot(x, y) {
            t === WATER || t === HOLY || t === HOLE || t === FIREWALL ||
            t === BRIDGE || t === TRAPDOOR);
 }
+/* ------------------------------------------------ filling a room up
+   Everything a vial lets loose spreads the same way: out from where the
+   glass broke, as far as it reaches, round corners and through doorways
+   and stopped dead by a wall.  Counted in steps rather than as the crow
+   flies, so a room five squares across fills and the corridor beside it
+   does not unless the door is open.
+
+   The square it lands on is always in it, walkable or not - the glass
+   broke there, and something has to have happened where it broke. */
+function reachWithin(cx, cy, r, dirs) {
+  var out = [[cx, cy]], seen = {}, q = [[cx, cy, 0]], head = 0;
+  dirs = dirs || DIR8;
+  seen[cy * MAP_W + cx] = 1;
+  while (head < q.length) {
+    var c = q[head++];
+    if (c[2] >= r) continue;
+    for (var d = 0; d < dirs.length; d++) {
+      var nx = c[0] + dirs[d][0], ny = c[1] + dirs[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var k = ny * MAP_W + nx;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      if (!walkable(nx, ny)) continue;
+      out.push([nx, ny]);
+      q.push([nx, ny, c[2] + 1]);
+    }
+  }
+  return out;
+}
+
 /* Bresenham again, this time for a clear shot rather than clear sight. */
 function shotClear(x0, y0, x1, y1) {
   var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
@@ -8976,6 +9416,11 @@ function enterLevel(depth, how) {
      Only at squares with nothing on them: a hallway with the stairs at
      the end of it is not a mistake. */
   trimDeadEnds(L, 1);
+  /* Now that no more corridors will be filled in or cut, the dead ends
+     that survived are the real ones - and some of them get something
+     behind the blank wall at the end.  See secretsAtDeadEnds for why
+     this is a different thing from the floor's guaranteed secret room. */
+  secretsAtDeadEnds(L);
   retireEmptyLocks(L);
   tidyRugs(L);
   /* A chest is placed on a square that is clear of doorways at the time
@@ -9612,7 +10057,9 @@ function monAttack(m) {
     return;
   }
   for (i = 0; i < dice.length; i++) {
-    if (swing(m.lv + (m.hasted ? 2 : 0), playerAC(), 0)) {
+    /* the same footing rule as your own: a creature swinging on ice is
+       swinging and staying upright at the same time */
+    if (swing(m.lv + (m.hasted ? 2 : 0), playerAC(), -iceClumsy(m.x, m.y))) {
       markHurt(P, m.x, m.y);
       var dm = damRoll([dice[i]]) + (m.dmgBonus || 0) - (dazzled(m) ? DAZZLE_DAMAGE : 0);
       if (dm < 1) dm = 1;
@@ -9915,7 +10362,12 @@ function monstersMove() {
        counting, or ducking out of sight of something standing in a
        stream never adds up to the two rounds that catch it out. */
     if ((m.slowed || dazzled(m)) && (G.turn & 1)) { noteSight(m); continue; }
-    if (m.stuck > 0) { m.stuck--; if (m.webbed > 0) m.webbed--; noteSight(m); continue; }
+    if (m.stuck > 0) {
+      m.stuck--;
+      if (m.webbed > 0) m.webbed--;
+      if (m.gummed > 0) m.gummed--;
+      noteSight(m); continue;
+    }
     /* thigh deep in water: this step goes on getting through it */
     if (monWades(m)) { noteSight(m); continue; }
 
@@ -10277,6 +10729,109 @@ function stickPlayer(turns) {
   return turns;
 }
 /* the webs on the floor grow old and rot away */
+/* --------------------------------------------------------------- ice
+   A vial of ice does not build a wall of it.  It glazes the floor, and
+   whatever was there is still there underneath: the flagstones, the
+   water, the trap, the lid of the chest.  Three things change.  The
+   floor is now something you go over on, about half the time.  A blow
+   struck while you are trying not to fall over is a worse blow.  And
+   nothing under the ice works or opens until it thaws - a plate cannot
+   be trodden on hard enough through an inch of it, and a lid frozen
+   into its frame is a lid that stays shut.
+
+   Kept the way webs are: the square, and how many turns it has left. */
+function iceAt(x, y) {
+  if (!L || !L.ice) return 0;
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 0;
+  return L.ice[y * MAP_W + x] || 0;
+}
+function freezeSquare(x, y, turns) {
+  if (!walkable(x, y)) return 0;
+  L.ice = L.ice || {};
+  var j = y * MAP_W + x;
+  /* a second vial over the same square tops it up rather than cutting
+     it short, which is what taking the larger of the two does */
+  if ((L.ice[j] || 0) >= turns) return 0;
+  var fresh = L.ice[j] ? 0 : 1;
+  L.ice[j] = turns;
+  return fresh;
+}
+function ageIce() {
+  if (!L.ice) return;
+  var wasUnderfoot = !!iceAt(P.x, P.y), k;
+  for (k in L.ice) {
+    if (--L.ice[k] > 0) continue;
+    delete L.ice[k];
+  }
+  /* The one square whose thawing you would actually notice is the one
+     you are standing on, and you would notice it: the floor stops being
+     something you might go over on. */
+  if (wasUnderfoot && !iceAt(P.x, P.y))
+    msg('The ice under you creaks and lets go.', 'c');
+}
+/* Anything on ice goes over about half the time.  Sure footed boots are
+   sure footed on ice as much as anywhere else - that is the whole of
+   what they are for. */
+function slipsOn(x, y, sure) {
+  if (!iceAt(x, y)) return false;
+  if (sure) return false;
+  return rnd(100) < ICE_SLIP_PCT;
+}
+/* and a blow struck while you are trying not to fall over is a worse
+   blow, whoever is striking it */
+function iceClumsy(x, y) { return iceAt(x, y) ? ICE_CLUMSY : 0; }
+
+/* ------------------------------------------------------------- slime
+   A flask of it breaks over a handful of squares and sits there, kept
+   the way ice and webs are: the square, and how many turns it has left.
+
+   The holding is the small half of it.  What makes slime worth throwing
+   is that it FOLLOWS - more often than not it comes away on the feet of
+   whatever walked into it and holds them again on the next square, and
+   the one after that, until the luck runs out.  So there are two things
+   to keep: what is on the floor, and what is on the boots. */
+function slimeAt(x, y) {
+  if (!L || !L.slime) return 0;
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 0;
+  return L.slime[y * MAP_W + x] || 0;
+}
+function slimeSquare(x, y, turns) {
+  if (!walkable(x, y)) return 0;
+  L.slime = L.slime || {};
+  var j = y * MAP_W + x;
+  var fresh = L.slime[j] ? 0 : 1;
+  if ((L.slime[j] || 0) < turns) L.slime[j] = turns;
+  return fresh;
+}
+function ageSlime() {
+  if (!L.slime) return;
+  var wasUnderfoot = !!slimeAt(P.x, P.y), k;
+  for (k in L.slime) {
+    if (--L.slime[k] > 0) continue;
+    delete L.slime[k];
+  }
+  if (wasUnderfoot && !slimeAt(P.x, P.y))
+    msg('The slime under you dries to nothing.', 'G');
+}
+/* Arriving somewhere with slime on it, or with slime already on you.
+   Either way the next turn is spent getting your feet back, and either
+   way it may or may not still be with you afterwards. */
+function slimeCatches(who, x, y) {
+  var wet = slimeAt(x, y) || (who && who.slimeOn);
+  if (!wet) { if (who) who.slimeOn = 0; return 0; }
+  /* whether it comes away with you when you finally move on */
+  who.slimeOn = rnd(100) < SLIME_STICK_PCT ? 1 : 0;
+  return 1;
+}
+/* Stuck fast in it.  The shape of this is the web's - see stickPlayer
+   for why the count is one higher than the turns it costs. */
+function gumPlayer() {
+  if (P.gummed > 0) return 0;
+  P.frozen += 2;
+  P.gummed = 2;
+  return 1;
+}
+
 function ageWebs() {
   if (!L.webs) return;
   for (var k in L.webs) {
@@ -10597,16 +11152,41 @@ function monRanged(m) {
 
    He does not wander the floor for ever and he cannot vanish twice: run
    him down and the purse is yours again, with whatever else is on him. */
+/* Away with your purse.  He does not hide in the dark at the far end of
+   the floor any more - he makes for the way DOWN, which is what anybody
+   would do with somebody else's money, and it gives you something to do
+   about it: get there first, or run him down on the way.
+
+   He waits at the top of the stairs a little while, because a thief who
+   vanished the instant he reached them would be a purse you could never
+   get back.  Then he takes them, and he and the gold are out of the run
+   for good - there is no following him down. */
 function startBolt(m) {
   m.invis = 1;
   m.bolted = 1;
   m.state = 2;
   m.disguise = 0;
   m.holed = 0;
-  m.goal = farthestRoom(P.x, P.y, m);
+  m.wait = 0;
+  /* the stairs if this floor has any; the far dark if it has not - a
+     cellar has no way down out of it */
+  m.goal = L.stair ? { x: L.stair.x, y: L.stair.y, room: roomIndexAt(L.stair.x, L.stair.y),
+                       stair: 1 }
+                   : farthestRoom(P.x, P.y, m);
   m.ran = 0;
-  if (canSeeMon(m)) msg(cap(monShort(m)) + ' bolts for the dark!', 'y');
+  if (canSeeMon(m)) msg(cap(monShort(m)) + ' bolts for the stairs!', 'y');
   else msg('He is gone before you can look at him.', 'y');
+}
+/* Down the stairs with it, and out of the game.  Not killed - there is
+   nothing to kill and nothing to drop; he simply is not on this floor
+   any more, and neither is what he took. */
+function leaveWithLoot(m) {
+  var i = L.mons.indexOf(m);
+  if (i >= 0) L.mons.splice(i, 1);
+  if (P.heldBy === m) { P.held = 0; P.heldBy = null; }
+  if (canSeeMon(m) || (L.flags[m.y * MAP_W + m.x] & F_VIS))
+    msg(cap(monShort(m)) + ' takes the stairs down, and your gold with him.', 'y');
+  else msg('Somewhere below, a door closes. Your gold is gone.', 'y');
 }
 
 /* the room centre furthest from here, by walking distance rather than as
@@ -10681,15 +11261,34 @@ function boltHoleUp(m, arrived) {
 function boltMove(m) {
   if (m.holed) return;
   if (!m.goal) { boltHoleUp(m, false); return; }
-  /* He is running, not migrating.  If the far room will not come to him
+  /* He is running, not migrating.  If the stairs will not come to him
      he settles for wherever he has got to. */
   m.ran = (m.ran || 0) + 1;
   if (m.ran > BOLT_PATIENCE) { boltHoleUp(m, false); return; }
+  /* Making for the stairs: he stands about at the top of them for a
+     while, and then he takes them. */
+  if (m.goal.stair) {
+    if (mdist2(m, m.goal.x, m.goal.y) <= 1) {
+      m.wait = (m.wait || 0) + 1;
+      /* he shows himself once he has stopped running */
+      if (m.invis) { m.invis = 0; if (canSeeMon(m)) msg(cap(monShort(m)) + ' waits by the stairs.', 'y'); }
+      if (m.wait > LEP_LINGER) leaveWithLoot(m);
+      return;
+    }
+    var st = boltStep(m, m.goal.x, m.goal.y);
+    if (!st) { boltHoleUp(m, false); return; }
+    if (!tryMonStep(m, st[0], st[1])) boltHoleUp(m, false);
+    return;
+  }
   /* home: this room is where he makes his stand */
   if (roomIndexAt(m.x, m.y) === m.goal.room) { boltHoleUp(m, true); return; }
   var step = boltStep(m, m.goal.x, m.goal.y);
   if (!step) { boltHoleUp(m, false); return; }
   if (!tryMonStep(m, step[0], step[1])) boltHoleUp(m, false);
+}
+/* how far a creature is from a given square, in king's moves */
+function mdist2(m, x, y) {
+  return Math.max(Math.abs(m.x - x), Math.abs(m.y - y));
 }
 
 /* Working the trail.  First to the square where you were last seen; then
@@ -10964,6 +11563,14 @@ function tryMonStep(m, dx, dy) {
      for, so a creature within reach of you could go over in the middle
      of a swing - and a swing is not a step. */
   if (monStumbles(m)) return true;
+  /* and ice, which trips whatever walks on it whether it was running or
+     strolling.  The turn is spent going over rather than going forward. */
+  if (slipsOn(nx, ny)) {
+    m.runSteps = 0;
+    if (canSeeMon(m))
+      msgFight(fightLine('', cap(monShort(m)), ' slips on the ice.'), 'c', 'slipped', 'c', m);
+    return true;
+  }
   /* Remember where it came from, and when this particular step happens.
      A quick creature takes two steps in a turn, and both used to share
      one start time - so the first was thrown away and the pair replayed
@@ -10982,6 +11589,16 @@ function tryMonStep(m, dx, dy) {
      That fire does not care who walks into it afterwards. */
   if (m.burn > 0) dropEmber(m.x, m.y);
   m.x = nx; m.y = ny;
+  /* Slime on the square, or slime already on its feet: either way the
+     next turn goes on getting them back.  m.stuck is read at the top of
+     its turn, so one is exactly one turn. */
+  if (slimeCatches(m, nx, ny)) {
+    m.stuck = (m.stuck || 0) + 1;
+    m.gummed = (m.gummed || 0) + 1;
+    if (canSeeMon(m))
+      msgFight(fightLine('', cap(monShort(m)), ' is stuck in the slime.'),
+        'G', 'stuck', 'G', m);
+  }
   if (webCatches(nx, ny, m)) {
     /* Held, not frozen.  They are the same lost turn to the game and
        nothing like the same thing to look at: web is not ice. */
@@ -11111,6 +11728,8 @@ function upkeep() {
   /* Standing in it is touching it, every turn you stand there. */
   if (inWater(P.x, P.y)) soakPlayer('The water burns where it touches you.');
   ageWebs();
+  ageIce();
+  ageSlime();
   /* powder first: a lit barrel has had its turn */
   if (typeof tickFuses === 'function') tickFuses();
   /* the ring burns whatever has come close, wherever you are now */
@@ -11255,7 +11874,7 @@ function upkeep() {
     }
   }
 
-  ['blind', 'conf', 'hallu', 'haste', 'frozen', 'iced', 'webbed', 'seeinv',
+  ['blind', 'conf', 'hallu', 'haste', 'frozen', 'iced', 'webbed', 'gummed', 'seeinv',
    'monsight', 'scare', 'fireShield', 'seer'].forEach(function (k) {
     if (P[k] > 0) {
       P[k]--;
@@ -11266,6 +11885,7 @@ function upkeep() {
         if (k === 'haste') msg('You feel yourself slowing down.', 'c');
         if (k === 'seer') msg('The ring goes quiet. The floor keeps its secrets again.', 'p');
         if (k === 'webbed') msg('You tear free of the web.', 'c');
+        if (k === 'gummed') msg('You pull your feet out of the slime.', 'G');
         if (k === 'monsight') msg('You stop feeling what moves nearby.', 'c');
       }
     }
@@ -11456,7 +12076,7 @@ function saySceneryBurnt(gone) {
    out of it - which reads as taking damage from a square you have left.
    It is the same fumes and the same dice; only the moment changed. */
 function cloudsOnYou() {
-  var i, hurt = 0, burn = 0, mend = 0, smoke = 0;
+  var i, hurt = 0, burn = 0, mend = 0, smoke = 0, venom = 0;
   for (i = 0; i < L.clouds.length; i++) {
     var c = L.clouds[i];
     if (c.x !== P.x || c.y !== P.y) continue;
@@ -11464,12 +12084,22 @@ function cloudsOnYou() {
     if (c.kind === 'mend') mend++;
     else if (c.kind === 'fire') burn++;
     else if (c.kind === 'smoke') smoke++;
+    else if (c.strong) venom++;              /* out of a vial, not a flask */
     else hurt++;
   }
   if (mend && P.hp < P.mhp) {
     var mv = roll(MEND_CLOUD[0], MEND_CLOUD[1]);
     msgTrap('The red mist closes your wounds.', 'G', '+' + mv + ' hp', 'G');
     healPlayer(mv);
+  }
+  /* What is in a vial is what is in a flask, boiled down until it is
+     worth throwing.  Same green, same cough, several times the bite. */
+  if (venom) {
+    msg('The fumes scald your lungs.', 'g');
+    if (!hasProp('sustain strength') && !hasPerk('ironblood') && rnd(100) < 40)
+      P.str = Math.max(3, P.str - 1);
+    markHurt(P, P.x, P.y - 1);
+    hurtPlayer(roll(VIAL_POISON_DAMAGE[0], VIAL_POISON_DAMAGE[1]), 'poison fumes', 'poison');
   }
   if (hurt) {
     msg('The poison burns your lungs.', 'g');
@@ -11495,7 +12125,7 @@ function cloudsOnYou() {
     markHurt(P, P.x, P.y - 1);
     hurtPlayer(sd, 'smoke');
   }
-  return hurt + burn + mend + smoke;
+  return hurt + burn + mend + smoke + venom;
 }
 function ageClouds() {
   var i, gone = [];
@@ -11514,6 +12144,7 @@ function ageClouds() {
     } else if (m && !m.ally) {
       var d = fire ? perkElemental(roll(FIRE_DAMAGE[0], FIRE_DAMAGE[1]), 'fire')
                    : kind === 'smoke' ? roll(SMOKE_DAMAGE[0], SMOKE_DAMAGE[1])
+                   : c.strong ? roll(VIAL_POISON_DAMAGE[0], VIAL_POISON_DAMAGE[1])
                    : roll(1, 3);
       m.hp -= d; m.state = 2;
       markHurt(m, c.x, c.y + 1);
@@ -11981,13 +12612,15 @@ function stockCellar(Lv, rooms, depth) {
   /* the pick of it */
   var prize = null;
   if (rnd(100) < CELLAR_RING_PCT) {
-    var rk = pickUnfoundRing();
+    /* a cellar under one of the top two floors is still one of the top
+       two floors: no ring there either */
+    var rk = depth < DEEP_ONLY_DEPTH ? -1 : pickUnfoundRing();
     if (rk >= 0) prize = mkItem('ring', rk);
   }
   if (!prize) {
     /* a blade somebody put work into, and a rune as often as not */
     var wk;
-    do { wk = weightedPick(WEAPONS); } while (WEAPONS[wk].grp);
+    do { wk = weightedPick(WEAPONS); } while (WEAPONS[wk].grp || tooShallow(wk, depth));
     prize = mkItem('weapon', wk);
     prize.hp = 1 + rnd(3); prize.dp = 1 + rnd(2);
     addRune(prize, WEAPONS[wk].launch ? 'wb' : 'w', 60);
@@ -12128,8 +12761,10 @@ function playerMove(dx, dy) {
   if (P.frozen) {
     msg(P.iced ? 'You are frozen solid.'
       : P.webbed ? 'You are stuck in the web.'
+      : P.gummed ? 'Your feet are glued in the slime.'
       : P.held ? 'You are held fast.'
-      : 'You cannot move yet.', 'c');
+      : 'You cannot move yet.',
+      P.gummed ? 'G' : 'c');
     return true;
   }
   if (P.conf && rnd(100) < 55) { var d = pick(DIR4); dx = d[0]; dy = d[1]; }
@@ -12173,9 +12808,23 @@ function playerMove(dx, dy) {
      empty floor is just walking - and neither does a step that carries
      you towards something, which is advancing, not fleeing. */
   if (playerStumbles(dx, dy)) return true;
+  /* Ice trips you whether you were running or not.  Sure footed boots
+     are sure footed on it, which is the one thing they are for. */
+  if (slipsOn(nx, ny, hasGearRune('sure footed'))) {
+    P.runSteps = 0;
+    msgTrap('Your feet go from under you on the ice.', 'c', 'slipped', 'c');
+    sound('miss');
+    return true;
+  }
   P.runSteps = battleNear() ? (P.runSteps || 0) + 1 : 0;
   P.x = nx; P.y = ny;
   P.walkT = nowMs();
+  /* Slime on the square, or slime still on your boots from the last
+     one: either way the next turn goes on getting your feet back. */
+  if (slimeCatches(P, nx, ny)) {
+    gumPlayer();
+    msgTrap('You step into the slime.', 'G', 'stuck', 'G');
+  }
   /* web on the floor holds the first thing into it, and comes away */
   if (webCatches(nx, ny)) {
     var whold = stickPlayer(webHold());
@@ -12198,13 +12847,42 @@ function softLanding(x, y) {
   return null;
 }
 
+/* Half a ceiling, on the floor below.  Laid where you land and over the
+   squares round it, thickest in the middle, and only on bare ground -
+   a rug or a kerb is not something a heap of stone tidily avoids, but
+   it is not something worth losing to one either. */
+function spillRubble(x, y) {
+  var cells = reachWithin(x, y, RUBBLE_REACH), n = 0, i;
+  for (i = 0; i < cells.length; i++) {
+    var cx = cells[i][0], cy = cells[i][1], j = cy * MAP_W + cx;
+    var t = L.tiles[j];
+    if (t !== FLOOR && t !== CORR) continue;
+    if (L.decor[j] && (isRugName(L.decor[j]) || L.decor[j] === 'kerb')) continue;
+    /* it thins out as it goes: the middle of it is where the floor was */
+    var away = Math.max(Math.abs(cx - x), Math.abs(cy - y));
+    if (away && rnd(100) >= RUBBLE_SPREAD - away * RUBBLE_FALLOFF) continue;
+    L.decor[j] = rnd(2) ? 'rubble' : 'rubble2';
+    n++;
+  }
+  return n;
+}
 function fallDown() {
+  /* A hole you blew in the floor brings the floor down with you, and it
+     gets there first.  Noted before the level changes, because L is
+     about to be a different floor entirely. */
+  var blown = !!(L.blown && L.blown[P.y * MAP_W + P.x]);
   var floors = FALL_MIN + rnd(FALL_MAX - FALL_MIN + 1);
   if (G.depth + floors > 26) floors = Math.max(1, 26 - G.depth);
   var dm = roll(floors, 5) + floors;
   msg('The floor gives way!', 'R');
   msg('You fall ' + floors + ' floor' + (floors > 1 ? 's' : '') + '.', 'O');
   enterLevel(G.depth + floors, 'fall');
+  /* The ceiling arrives with you.  Laid before the landing is worked
+     out, because landing in it is the whole of what it does. */
+  if (blown) {
+    var heap = spillRubble(P.x, P.y);
+    if (heap) msg('The broken floor comes down around you.', '6');
+  }
   /* Whatever you landed on has a say in how much of that you feel. */
   var soft = softLanding(P.x, P.y);
   if (soft) {
@@ -12494,6 +13172,10 @@ function equipFromFloor(it) {
    for the rest, and leave behind whatever you have finished with.
    Returns the chest if it is now open for you to look in. */
 function openChest(ch) {
+  if (iceAt(ch.x, ch.y)) {
+    msg('The lid is frozen into its frame. It will not lift.', 'c');
+    return null;
+  }
   if (ch.lock && !ch.unlocked) {
     var name = MATS[ch.lock];
     if (!hasKey(ch.lock)) {
@@ -12705,6 +13387,7 @@ function trapCatches(src, tr) {
 function springFromAfar(tr) {
   if (!tr) return 0;
   tr.found = 1;
+  if (iceAt(tr.x, tr.y)) { msg('The ' + tr.k.n + ' is frozen under the ice.', 'c'); return 0; }
   if (tr.spent) { msg('A sprung ' + tr.k.n + '. Nothing happens.', '4'); return 0; }
   if (!tr.k.reusable) tr.spent = 1;
   var here = { x: tr.x, y: tr.y };
@@ -12793,6 +13476,14 @@ function shotCatches(m, tr, src) {
 
 function springTrap(tr) {
   tr.found = 1;
+  /* An inch of ice over a plate is an inch of ice over a plate: you can
+     see the thing perfectly well and you cannot tread on it hard enough
+     to matter.  It is not spent, only sealed, and it works again the
+     moment the floor thaws. */
+  if (iceAt(tr.x, tr.y)) {
+    msgTrap('A ' + tr.k.n + ', frozen under the ice.', 'c', 'sealed', 'c');
+    return;
+  }
   if (tr.spent) { msgTrap('A sprung ' + tr.k.n + '.', '4', 'spent', '4'); return; }
   if (trapPinned(tr)) return;                 /* something is holding it down */
   if (!tr.k.reusable) tr.spent = 1;
@@ -12973,6 +13664,10 @@ function useStairs() {
   if (t === TRAPDOOR) {
     if (trapdoorHidden(P.x, P.y)) return false;
     if (inCellar()) return false;
+    if (iceAt(P.x, P.y)) {
+      msg('The trapdoor is frozen shut.', 'c');
+      return true;
+    }
     enterCellar();
     msg('You lift the trapdoor and climb down.', 'c');
     return true;
@@ -13138,6 +13833,15 @@ function eatMushroom(kind) {
 /* ---------------------------------------------------------- potions */
 function quaff(it) {
   var k = it.k, n = POTIONS[k].n, id = 1;
+  /* One flask will not go down at all.  It is refused BEFORE it is
+     spent: a potion you could not drink that vanished out of your pack
+     anyway would be the worst of both.  You have still learnt what it
+     is - you had it at your lips. */
+  if (n === 'slime') {
+    KNOWN.pot[k] = 1;
+    msg("This liquid is thick and slimey. You can't drink it.", 'G');
+    return false;
+  }
   removeItem(it, 1);
   switch (n) {
     case 'confusion': msg("Wait, what's going on? Huh? What? Who?", 'P'); P.conf += rnd(8) + 12; break;
@@ -13896,11 +14600,212 @@ function splashDrops(x, y, col) {
   }
   G.drops = { x: x, y: y, t: beatNow(), dur: SPLASH_MS, col: col, parts: parts };
 }
+/* --------------------------------------------------------- vials
+   Four of them, and every one changes the room rather than the creature
+   it lands on.  That is what makes a vial different from a flask: you
+   throw one at the floor because of what the floor will be afterwards.
+
+   Which colour is which is a fact about the run, so the first one you
+   throw is always a gamble - and the moment it goes off you know that
+   colour for the rest of the run. */
+function vialColour(it) {
+  if (!isVial(it)) return '#c3ccd9';
+  var k = VIALS[it.k].n;
+  if (k === 'nitro') return '#f59e0b';
+  if (k === 'poison') return '#93bd27';
+  if (k === 'ice') return '#74d6e8';
+  return V_COLOUR[V_SPRITE[APPEAR.vial[it.k]]] || '#8690a4';
+}
+
+/* Smoke and fumes both fill the room they are let loose in: five squares
+   out from where the glass broke, round corners and through open doors,
+   and stopped dead by a wall.  `strong` is the difference between the
+   two - the same cloud, biting harder. */
+function fumeVial(tx, ty, strong) {
+  var cells = reachWithin(tx, ty, VIAL_FUME_REACH);
+  var at = beatNow(), i, made = 0;
+  for (i = 0; i < cells.length && made < VIAL_FUME_MAX; i++) {
+    var x = cells[i][0], y = cells[i][1];
+    if (!walkable(x, y)) continue;
+    var life = VIAL_SMOKE_TURNS[0] +
+      rnd(VIAL_SMOKE_TURNS[1] - VIAL_SMOKE_TURNS[0] + 1);
+    L.clouds.push({ x: x, y: y, kind: strong ? 'poison' : 'smoke', turns: life,
+                    seed: rnd(1000), at: at, strong: strong ? 1 : 0 });
+    made++;
+  }
+  return made;
+}
+
+/* Ice glazes whatever it lands on out to three squares.  It is not a
+   wall - you can walk on it, and about half the time you wish you had
+   not - and everything under it is sealed until it thaws. */
+function iceVial(tx, ty) {
+  var cells = reachWithin(tx, ty, VIAL_ICE_REACH);
+  var i, made = 0;
+  for (i = 0; i < cells.length; i++) {
+    var life = VIAL_ICE_TURNS[0] + rnd(VIAL_ICE_TURNS[1] - VIAL_ICE_TURNS[0] + 1);
+    made += freezeSquare(cells[i][0], cells[i][1], life);
+  }
+  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'cold' };
+  sound('cast');
+  return made;
+}
+
+/* Nitro goes off the way a barrel does, and then the floor gives way
+   under the middle of it.  Anything standing on the part that crumbles
+   goes down with it, and so does whatever was sitting on that floor - a
+   chest, a trap, a door in the floor.  They do not fall to the level
+   below in any sense the game models; they are simply gone, which is
+   what a hole in the floor means here. */
+/* Whether this square has a floor to lose.  Rock and wall are not floor
+   and have nothing to give way; iron bars are set into the stone and
+   stay where they are; and a hole is already a hole. */
+function canCrumble(x, y) {
+  if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) return false;
+  var t = L.tiles[y * MAP_W + x];
+  return !(t === WALL || t === ROCK || t === BARS || t === HOLE);
+}
+function crumbleSquare(x, y) {
+  if (!canCrumble(x, y)) return 0;
+  var j = y * MAP_W + x;
+  /* whatever was standing on it */
+  var m = monAt(L, x, y);
+  if (m) {
+    markHurt(m, x, y);
+    killMonster(m, true, 'fell');
+    if (canSeeMonAt(m, x, y)) msg(cap(monShort(m)) + ' goes down with the floor.', 'O');
+  }
+  /* and whatever was lying or built on it */
+  for (var i = L.items.length - 1; i >= 0; i--)
+    if (L.items[i].x === x && L.items[i].y === y) L.items.splice(i, 1);
+  if (L.traps) for (i = L.traps.length - 1; i >= 0; i--)
+    if (L.traps[i].x === x && L.traps[i].y === y) L.traps.splice(i, 1);
+  if (L.tdoor) delete L.tdoor[j];
+  delete L.decor[j];
+  delete L.locks[j];
+  delete L.sealed[j];
+  if (L.webs) delete L.webs[j];
+  if (L.ice) delete L.ice[j];
+  if (L.slime) delete L.slime[j];
+  /* Remembered as a hole somebody MADE.  A chasm that has been there
+     since the dungeon was cut has had a long time to settle; a floor
+     that came down this afternoon is still coming down, and what is
+     under it is wearing most of it. */
+  L.blown = L.blown || {};
+  L.blown[j] = 1;
+  if (L.barrels) delete L.barrels[j];
+  if (L.fuses) delete L.fuses[j];
+  L.tiles[j] = HOLE;
+  return 1;
+}
+function nitroVial(bx, by) {
+  var cells = [], x, y, i;
+  for (y = by - BARREL_BLAST; y <= by + BARREL_BLAST; y++)
+    for (x = bx - BARREL_BLAST; x <= bx + BARREL_BLAST; x++) {
+      if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+      var ox = x - bx, oy = y - by;
+      if (ox * ox + oy * oy > BARREL_BLAST_SQ) continue;
+      cells.push([x, y]);
+    }
+  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
+  shakeScreen(SHAKE_MS, SHAKE_AMP, bx * 73856093 + by * 19349663);
+  sound('boom');
+  msgTrap('The vial goes off like a powder keg!', 'R', 'blast', 'R');
+  /* powder in the blast catches, the same as a barrel's */
+  for (i = 0; i < cells.length; i++)
+    if (barrelAt(cells[i][0], cells[i][1])) lightBarrel(cells[i][0], cells[i][1]);
+  for (i = 0; i < cells.length; i++) blastSquare(cells[i][0], cells[i][1], BARREL_DAMAGE);
+  /* And then the floor gives way.  Grown a square at a time out from
+     where the glass broke rather than stamped as a disc: a hole blown in
+     a floor is a ragged thing, and the ones the dungeon digs for itself
+     are grown the same way - see digHole. */
+  var want = NITRO_HOLE_MIN + rnd(NITRO_HOLE_MAX - NITRO_HOLE_MIN + 1);
+  var open = [[bx, by]], seen = {}, hole = [], fell = 0;
+  seen[by * MAP_W + bx] = 1;
+  while (open.length && hole.length < want) {
+    var c = open.shift();
+    if (!canCrumble(c[0], c[1])) continue;
+    hole.push(c);
+    shuffle(DIR4);
+    for (i = 0; i < DIR4.length; i++) {
+      var nx = c[0] + DIR4[i][0], ny = c[1] + DIR4[i][1];
+      var nk = ny * MAP_W + nx;
+      if (seen[nk]) continue;
+      seen[nk] = 1;
+      /* not every neighbour: that is what makes the edge ragged rather
+         than a tidy blob spreading evenly in all four directions */
+      if (rnd(100) >= NITRO_HOLE_SPREAD) continue;
+      open.push([nx, ny]);
+    }
+  }
+  var gone = 0;
+  for (i = 0; i < hole.length; i++) {
+    if (P.x === hole[i][0] && P.y === hole[i][1]) { fell = 1; continue; }
+    gone += crumbleSquare(hole[i][0], hole[i][1]);
+  }
+  if (gone) msg('The floor gives way and falls into the dark.', 'O');
+  faceTheRock(cells);
+  adoptOpened(L, cells);
+  /* the cracked flagstones that warn you about any other hole in the
+     floor, laid last so the tiles round it have settled */
+  crackAround(L, hole);
+  buildLitMap(L); buildDarkMap(L, G.depth); spillLight(L);
+  computeVis();
+  /* You were standing on it.  There is nothing under you now. */
+  if (fell) { msg('The floor goes out from under you.', 'R'); fallDown(); }
+  return gone;
+}
+
+/* One vial, breaking where it landed. */
+function breakVial(it, tx, ty, victim) {
+  var kind = VIALS[it.k].n;
+  splashDrops(tx, ty, vialColour(it));
+  msg('The vial shatters' + (victim ? ' on ' + monShort(victim) : '') + '.', 'O');
+  /* You have watched it work, so you know that colour from now on -
+     the same lesson a potion teaches by being drunk. */
+  learnVial(it.k);
+  if (victim) hurtByPlayer(victim);
+  if (kind === 'smoke') {
+    var n1 = fumeVial(tx, ty, 0);
+    msg('Thick smoke rolls out across ' + n1 + ' square' + (n1 > 1 ? 's' : '') + '.', '6');
+  } else if (kind === 'poison') {
+    var n2 = fumeVial(tx, ty, 1);
+    msg('Green fumes boil out across ' + n2 + ' square' + (n2 > 1 ? 's' : '') + '.', 'g');
+  } else if (kind === 'ice') {
+    var n3 = iceVial(tx, ty);
+    msg('The floor glazes over with ice across ' + n3 +
+      ' square' + (n3 > 1 ? 's' : '') + '.', 'c');
+  } else if (kind === 'nitro') {
+    nitroVial(tx, ty);
+  }
+  return true;
+}
+
+/* A slick of it: the square it broke on, always, and two or three of
+   the eight round that - not a shape, a splash.  It goes where it
+   lands, so a square it cannot reach is simply one it does not cover. */
+function slimeSplash(tx, ty) {
+  var life = function () {
+    return SLIME_TURNS[0] + rnd(SLIME_TURNS[1] - SLIME_TURNS[0] + 1);
+  };
+  var made = slimeSquare(tx, ty, life());
+  var want = SLIME_SPLASH[0] + rnd(SLIME_SPLASH[1] - SLIME_SPLASH[0] + 1);
+  var round = DIR8.slice();
+  shuffle(round);
+  for (var i = 0; i < round.length && made <= want; i++) {
+    var nx = tx + round[i][0], ny = ty + round[i][1];
+    if (!walkable(nx, ny)) continue;
+    made += slimeSquare(nx, ny, life());
+  }
+  return made;
+}
+
 function potionColour(it) {
   if (!it || it.t !== 'potion') return '#c3ccd9';
   var w = flaskEffect(it);
   if (w === 'fire') return '#f59e0b';
   if (w === 'gas') return '#93bd27';
+  if (w === 'slime') return '#446b1c';
   return P_COLOUR[P_SPRITE[APPEAR.pot[it.k]]] || '#74d6e8';
 }
 
@@ -13936,10 +14841,13 @@ function throwAtSquare(it, tx, ty) {
   if (!it) return false;
   var victim = monAt(L, tx, ty);
   var boom = it.t === 'dynamite';
+  var vial = isVial(it);
   /* A flask is thrown at a square, not at a target, so it can be lobbed
      to an ally as easily as at a foe - which is the only way to get a
-     healing mist onto somebody fighting for you. */
-  if (victim && !isFlask(it) && !boom) {
+     healing mist onto somebody fighting for you.  A vial is the same
+     kind of throw: what matters is the square it breaks on, not what
+     happens to be standing there. */
+  if (victim && !isFlask(it) && !vial && !boom) {
     if (victim.ally) { msg('You will not shoot your own.', '6'); return false; }
     return fireAt(victim);                    /* a stone finds its mark */
   }
@@ -13953,7 +14861,8 @@ function throwAtSquare(it, tx, ty) {
                 stone wears whichever carving this run dealt it, and it
                 must wear the same one in the air */
              spr: (it.t === 'weapon') ? itemSprite(it) : null,
-             col: boom ? '#d82b2b' : isFlask(it) ? '#f59e0b' : null };
+             col: boom ? '#d82b2b' : vial ? vialColour(it)
+                  : isFlask(it) ? '#f59e0b' : null };
   beatWait(flight);
   removeItem(it, 1);
 
@@ -13963,6 +14872,10 @@ function throwAtSquare(it, tx, ty) {
      on a trap sets it off, from wherever you are standing. */
   var hitTrap = trapAtLevel(L, tx, ty);
   if (hitTrap && !hitTrap.spent) springFromAfar(hitTrap);
+
+  /* a vial breaks wherever it lands, and what it does it does to the
+     room rather than to whatever it hit */
+  if (vial) return breakVial(it, tx, ty, victim);
 
   if (!isFlask(it)) {
     /* thrown at open floor, it simply lands there - unless it is charmed
@@ -13995,6 +14908,10 @@ function throwAtSquare(it, tx, ty) {
     var n = spawnFire(tx, ty);
     msg('Fire spreads across ' + n + ' square' + (n > 1 ? 's' : '') + '.', 'R');
     burnEverything();
+  } else if (what === 'slime') {
+    var sn = slimeSplash(tx, ty);
+    msg('The flask bursts into a slick of slime across ' + sn +
+      ' square' + (sn > 1 ? 's' : '') + '.', 'G');
   } else if (what === 'gas') {
     spawnCloud(tx, ty, 'poison', GAS_TURNS_MIN + rnd(GAS_TURNS_MAX - GAS_TURNS_MIN + 1),
       beatNow());
@@ -14233,7 +15150,7 @@ function fireAt(best) {
     var fx = dmg + (extra ? ' sneak' : ' damage');
     /* Now and then the shaft comes through intact - and a stone that has
        been charged is half as likely to be lost as one that has not. */
-    var keepPct = ARROW_RECOVER_PCT;
+    var keepPct = isStoneAmmo(am) ? STONE_RECOVER_PCT : ARROW_RECOVER_PCT;
     /* a ring of battle luck: what you loose, you mostly get back */
     if (carryingRing('battle luck')) keepPct = Math.max(keepPct, LUCK_RECOVER_PCT);
     if (wasCharged && isPlainAmmo(am)) keepPct = 100 - (100 - keepPct) / 2;
@@ -14901,6 +15818,24 @@ function itemNotes(it) {
       out.push([KNOWN.pot[it.k] ? 'you know this brew' : 'unknown - drink to learn',
         KNOWN.pot[it.k] ? '6' : '4']);
       break;
+    case 'vial': {
+      out.push(['too strong to drink - throw it', 'c']);
+      if (!KNOWN.vial[it.k]) { out.push(['unknown - throw one to learn', '4']); break; }
+      var vk = VIALS[it.k].n;
+      if (vk === 'smoke')
+        out.push(['fills ' + VIAL_FUME_REACH + ' squares with smoke', '6'],
+          ['and hangs there ' + VIAL_SMOKE_TURNS[0] + '-' + VIAL_SMOKE_TURNS[1] + ' turns', '6']);
+      else if (vk === 'poison')
+        out.push(['fills ' + VIAL_FUME_REACH + ' squares with fumes', 'g'],
+          ['they bite far harder than gas', 'g']);
+      else if (vk === 'ice')
+        out.push(['glazes ' + VIAL_ICE_REACH + ' squares with ice', 'c'],
+          ['slippery, and it seals what is under it', 'c']);
+      else if (vk === 'nitro')
+        out.push(['goes off like a barrel of powder', 'R'],
+          ['and takes the floor with it', 'R']);
+      break;
+    }
     case 'scroll':
       out.push([KNOWN.scr[it.k] ? 'you know this scroll' : 'unknown - read to learn',
         KNOWN.scr[it.k] ? '6' : '4']);
@@ -14963,6 +15898,9 @@ function worthKnown(it) {
   if (!it) return false;
   switch (it.t) {
     case 'potion': return !!KNOWN.pot[it.k];
+    /* An unknown vial is worth a great deal or worth nothing, and which
+       is exactly the thing the price would tell you. */
+    case 'vial': return !!KNOWN.vial[it.k];
     case 'scroll': return !!KNOWN.scr[it.k];
     case 'wand': return !!KNOWN.wand[it.k];
     case 'ring': return !!it.known;
@@ -15233,12 +16171,32 @@ function boot() {
     if (box) box.style.display = 'flex';
   };
   atlasImg.onload = function () {
+    /* The sheet and the layout have to agree.  They are two files, and a
+       browser - or a CDN in front of one - will happily serve yesterday's
+       sheet beside today's HTML: the game then runs perfectly and cuts
+       every sprite out of the wrong cell, which looks like a bug in the
+       drawing rather than like a stale file.  The URL carries a stamp of
+       the sheet's own contents to stop that happening; this is the net
+       under it, so that if it ever does happen it SAYS so. */
+    if (atlasImg.naturalWidth && (atlasImg.naturalWidth !== ATLAS.atlasW ||
+                                  atlasImg.naturalHeight !== ATLAS.atlasH)) {
+      var box2 = document.getElementById('nosheet');
+      if (box2) {
+        box2.innerHTML = 'spritesheet.png is ' + atlasImg.naturalWidth + 'x' +
+          atlasImg.naturalHeight + ', and this build wants ' + ATLAS.atlasW + 'x' +
+          ATLAS.atlasH + '.<br>The two files have come apart - the page is ' +
+          'probably running from a stale cache.<br>Reload with SHIFT held down.';
+        box2.style.display = 'flex';
+      }
+      return;
+    }
     var keys = Object.keys(COLS);
     for (var i = 0; i < keys.length; i++) fonts[keys[i]] = makeFont(COLS[keys[i]]);
     hurtSheet = makeTint('#d82b2b');
     smokeSheet = makeTint(SMOKE_COL);
     dimSheet = makeDim();
     soundStart();
+    loadCrt();
     fitBars();
     ready = true;
     newGame(true);
@@ -15351,6 +16309,56 @@ function fit() {
   if (s < 1) s = 1;
   cv.style.width = (SW * s / dpr) + 'px';
   cv.style.height = (SH * s / dpr) + 'px';
+  fitCrt();
+}
+
+/* ------------------------------------------------------ retro monitor
+   Scanlines, laid over the picture rather than drawn into it.  The
+   backing store is exactly 230x128 and must stay that way, so a line
+   drawn in it would be a whole game pixel thick - four screen pixels at
+   the usual scale, straight through the middle of every sprite.  Over
+   the top they are as fine as whatever screen is showing them, which is
+   what a scanline is; and the browser composites it, so it costs the
+   game nothing per frame.
+
+   The switch is remembered on the machine rather than in the save,
+   because it is a fact about the screen you are sitting at and not about
+   the run - it should still be on when you start a new one. */
+var CRT_KEY = 'rogue8.crt';
+var CRT_ON = 0;
+function crtEl() {
+  return (typeof document !== 'undefined' && document.getElementById)
+    ? document.getElementById('crt') : null;
+}
+/* Lay the glass exactly over the picture.  It is fixed rather than
+   flowed, so it is put where the canvas actually ended up. */
+function fitCrt() {
+  var el = crtEl();
+  if (!el || !cv || !cv.getBoundingClientRect) return;
+  var r = cv.getBoundingClientRect();
+  el.style.left = r.left + 'px';
+  el.style.top = r.top + 'px';
+  el.style.width = r.width + 'px';
+  el.style.height = r.height + 'px';
+}
+function crtOn() { return !!CRT_ON; }
+function setCrt(on) {
+  CRT_ON = on ? 1 : 0;
+  var el = crtEl();
+  if (el) {
+    el.className = CRT_ON ? 'on' : '';
+    if (CRT_ON) fitCrt();
+  }
+  try { window.localStorage.setItem(CRT_KEY, CRT_ON ? '1' : '0'); } catch (e) { }
+  return CRT_ON;
+}
+function loadCrt() {
+  var v = null;
+  try { v = window.localStorage.getItem(CRT_KEY); } catch (e) { v = null; }
+  /* On unless it has been turned off.  Nothing said is a first visit,
+     and the game should look the way it is meant to look before anybody
+     has been into a menu - the switch is there to turn it OFF. */
+  setCrt(v !== '0');
 }
 /* Take the whole screen if the browser will give it.
 
@@ -15571,9 +16579,28 @@ function onTouchCancel() { TOUCH = null; MOUSE.held = null; MOUSE.on = 0; }
    other gesture people already use for moving a picture around.  A
    wheel does the same, which is no loss: it had nothing else to do. */
 var WHEEL_T = 0;
+/* Leftover wheel, kept between events.  A trackpad sends dozens of tiny
+   nudges where a mouse sends one shove; rounding each of them to a whole
+   line on its own would round every one of them to nothing. */
+var WHEEL_ACC = 0;
 function onWheel(e) {
   if (e.preventDefault) e.preventDefault();
   if (!ready) return;
+  /* A box of words scrolls.  The story is the long one - two hundred
+     lines of it - and walking that with the arrow keys is a poor way to
+     spend an evening. */
+  if (G.mode === 'story' && G.story) {
+    var room = storyRoom();
+    var end = Math.max(0, storyLines().length - room);
+    var by = e.deltaMode === 1 ? (e.deltaY || 0)
+           : e.deltaMode === 2 ? (e.deltaY || 0) * room
+           : (e.deltaY || 0) / WHEEL_TEXT_PX;
+    WHEEL_ACC += by;
+    var n = WHEEL_ACC > 0 ? Math.floor(WHEEL_ACC) : Math.ceil(WHEEL_ACC);
+    WHEEL_ACC -= n;
+    if (n) G.story.at = clamp(G.story.at + n, 0, end);
+    return;
+  }
   if (!MAP_MODES[G.mode]) return;         /* no dungeon behind it to move */
   /* pixels, lines or pages - only the first is any use as it stands */
   var k = e.deltaMode === 1 ? WHEEL_LINE_PX
@@ -16271,7 +17298,12 @@ function newGame(first, slot) {
   /* one scroll of identify: enough to learn one thing you find */
   var idScroll = mkItem('scroll', scrollIndex('identify'));
   addItem(idScroll);
-  var sandals = mkItem('feet', 0); sandals.known = 1; addItem(sandals);
+  /* On your feet, not in the pack.  They were in the pack because they
+     are the first thing you find rather than a thing you were given -
+     but nobody walks into a dungeon carrying their shoes, and a new
+     player putting them on by hand learns nothing from doing it. */
+  var sandals = mkItem('feet', 0); sandals.known = 1;
+  P.eq.feet = sandals;
 
   enterLevel(1);
   if (first) { G.msgq = []; G.mode = 'title'; return; }
@@ -17036,7 +18068,15 @@ function chooseKey(k) {
    this menu must not offer: it would leave two runs sharing a slot and
    the autosave writing over whichever it had last been told about. */
 var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['hints', 'HINTS'],
-                  ['restart', 'RESTART'], ['help', 'HELP'], ['exit', 'EXIT']];
+                  ['restart', 'RESTART'], ['help', 'HELP'],
+                  ['crt', 'RETRO MONITOR'], ['exit', 'EXIT']];
+/* Most lines say the same thing every time they are drawn.  The switch
+   does not: it has to say which way it is set, or it is not a switch. */
+function pauseText(i) {
+  var o = PAUSE_OPTS[i];
+  if (o[0] === 'crt') return o[1] + ': ' + (crtOn() ? 'ON' : 'OFF');
+  return o[1];
+}
 /* and the same menu on the title screen, where there is no run to save */
 var TITLE_OPTS = [['start', 'START'], ['load', 'LOAD'], ['scores', 'HIGHSCORE'],
                   ['hints', 'HINTS'], ['help', 'HELP'], ['exit', 'EXIT']];
@@ -17070,6 +18110,9 @@ function pauseKey(k) {
     return;
   }
   if (pick === 'hints') { openHints('pause'); return; }
+  /* A switch is thrown and you stay where you are: closing the menu on
+     you would mean opening it again to see what you had done. */
+  if (pick === 'crt') { setCrt(!crtOn()); return; }
   G.pause = null;
   if (pick === 'help') { G.mode = 'help'; return; }
   if (pick === 'restart') { newGame(false); return; }
@@ -17078,15 +18121,24 @@ function pauseKey(k) {
 function drawPause() {
   /* Wider than the title menu: SAVE AND QUIT is a longer line than
      anything on that one, and at 70 it ran into the frame. */
-  var i, w = 76, h = 12 + PAUSE_OPTS.length * 10 + 4;
-  var x = ((SW - w) >> 1), y = ((SH - h) >> 1);
+  /* Wide enough for the longest line it can show, which is the switch
+     with OFF on the end of it rather than SAVE AND QUIT.
+
+     Centred on the dungeon rather than on the whole screen.  This box is
+     drawn as part of the map, so the panel is painted over the top of
+     it afterwards - at the old width it cleared the panel by a single
+     pixel and nobody had to think about it, and the first line longer
+     than SAVE AND QUIT had its left hand end quietly eaten.  Centred on
+     the view it can be any width the view will take. */
+  var i, w = 100, h = 12 + PAUSE_OPTS.length * 10 + 4;
+  var x = VIEW_PX + ((VIEW_W * TS - w) >> 1), y = ((SH - h) >> 1);
   rect(x, y, w, h, '#0b0d1c');
   frame(x, y, w, h, '#636d85');
   text('PAUSED', x + 5, y + 4, 'y');
   for (i = 0; i < PAUSE_OPTS.length; i++) {
     var cur = G.pause && G.pause.i === i;
     if (cur) rect(x + 2, y + 13 + i * 10, w - 4, 10, '#2b3352');
-    text((cur ? '>' : ' ') + ' ' + PAUSE_OPTS[i][1], x + 5, y + 15 + i * 10, cur ? 'w' : '4');
+    text((cur ? '>' : ' ') + ' ' + pauseText(i), x + 5, y + 15 + i * 10, cur ? 'w' : '4');
     hit(x + 2, y + 13 + i * 10, w - 4, 10, 'pause', i);
   }
 }
@@ -17469,6 +18521,7 @@ function openStory() {
   var lines = storyLines();
   /* at the bottom: the last thing said, which is where you were */
   G.story = { at: Math.max(0, lines.length - storyRoom()) };
+  WHEEL_ACC = 0;                          /* a fresh box scrolls from rest */
   G.mode = 'story';
 }
 function closeStory() { G.story = null; resumeMode(); }
@@ -18015,13 +19068,15 @@ function invSpace() {
   var ib = titem;
   G.msgq = [];
 
-  /* drop into an open pouch that is sitting in a slot */
+  /* drop into an open pouch that is sitting in a slot - a potion, and
+     only a potion; the pouch is lined for glass and holds nothing else */
   if (ib && ib.t === 'pouch' && target.kind !== 'pouch' && ia.t !== 'pouch') {
+    if (!pouchTakes(ia)) { msg('The potion pouch holds nothing but glass.', 'R'); return; }
     for (var j = 0; j < contCap(ib); j++) {
       if (!ib.items[j]) {
         if (a.kind === 'eq' && ia.cursed) { msg('You cannot let go of it. It is cursed.', 'R'); return; }
         refSet(a, null); ib.items[j] = ia; G.sel = null;
-        msg('You stow ' + itemName(ia) + ' in the pouch.', 'w');
+        msg('You stow ' + itemName(ia) + ' in the potion pouch.', 'w');
         return;
       }
     }
@@ -18050,6 +19105,10 @@ function invSpace() {
     msg('A pouch will not fit inside a pouch.', 'R'); return;
   }
   if (target.kind === 'pouch' && ia.t === 'chest') { msg('The chest will not go in itself.', 'R'); return; }
+  /* and the same rule for a thing dragged into the open pouch's grid */
+  if (target.kind === 'pouch' && G.pouch && G.pouch.t === 'pouch' && !pouchTakes(ia)) {
+    msg('The potion pouch holds nothing but glass.', 'R'); return;
+  }
 
   refSet(a, ib); refSet(target, ia);
   G.sel = null;
@@ -18089,7 +19148,7 @@ function itemActions(it, ref) {
   }
   if (canAppraise(it) && !it.tried) out.push(['study', 'Study it']);
   if (isThrowable(it)) out.push(['throw',
-    it.t === 'dynamite' ? 'Light it' : isFlask(it) ? 'Hurl' : 'Throw']);
+    it.t === 'dynamite' ? 'Light it' : (isFlask(it) || isVial(it)) ? 'Hurl' : 'Throw']);
   switch (it.t) {
     case 'potion': out.push(['use', 'Drink']); break;
     case 'scroll': out.push(['use', 'Read']); break;
@@ -18119,9 +19178,9 @@ function itemActions(it, ref) {
      feet: somewhere to put a thing down without walking it across two
      screens.  A pouch cannot go in a pouch, and neither can anything
      that is on you and will not come off. */
-  if (ref.kind !== 'pouch' && it.t !== 'pouch' && carriedPouch() &&
+  if (ref.kind !== 'pouch' && pouchTakes(it) && carriedPouch() &&
       !(ref.kind === 'eq' && it.cursed))
-    out.push(['putbag', 'Put in pouch']);
+    out.push(['putbag', 'Put in the potion pouch']);
   out.push(['move', 'Move']);
   if (!(ref.kind === 'eq' && it.cursed)) out.push(['drop', 'Drop']);
   /* Every single thing can be looked at properly, whatever else it can
@@ -18277,14 +19336,15 @@ function putInPouch(it, ref) {
   G.msgq = [];
   var bag = carriedPouch();
   if (!bag) return false;
+  if (!pouchTakes(it)) { openNote('The potion pouch holds nothing but glass.'); return false; }
   var j, put = null;
   for (j = 0; j < POUCH_CAP; j++)
     if (stackable(bag.items[j], it)) { bag.items[j].cnt += it.cnt; put = bag.items[j]; break; }
   if (!put) for (j = 0; j < POUCH_CAP; j++) if (!bag.items[j]) { bag.items[j] = it; put = it; break; }
-  if (!put) { openNote('The pouch is full.'); return false; }
+  if (!put) { openNote('The potion pouch is full.'); return false; }
   if (ref.kind === 'eq') { P.eq[ref.key] = null; takeOffEffects(it); }
   else refSet(ref, null);
-  msg('You put ' + itemName(it) + ' in the pouch.', 'w');
+  msg('You put ' + itemName(it) + ' in the potion pouch.', 'w');
   G.sel = null; finishMsgs();
   return true;
 }
@@ -19396,6 +20456,15 @@ function drawMapAt(overX, overY) {
       }
       var tr = trapAt(mx, my);
       if (tr && tr.found) spr(tr.k.spr || 'trap', px, py, a);
+      /* Ice goes over the top of whatever the square is - flagstone,
+         water, a trap, the lid of a chest - because that is exactly what
+         it is: a glaze, not a tile of its own.  Half transparent, so you
+         can still read what is under it and still see at a glance that
+         you are about to walk on it. */
+      if (iceAt(mx, my)) spr('ice', px, py, a * ICE_ALPHA);
+      /* and a slick of slime, over the top of everything for the same
+         reason: it is on the floor, not instead of it */
+      if (slimeAt(mx, my)) spr('slime', px, py, a * SLIME_ALPHA);
     }
   }
   for (i = 0; i < L.items.length; i++) {
@@ -19479,6 +20548,8 @@ function drawMapAt(overX, overY) {
     /* alight, or frozen where it stands: both drawn over the creature
        so you can tell at a glance what is happening to it */
     if (see && m.burn > 0) spr(fireSprite(m.x, m.y), pos[0], pos[1], 0.85);
+    /* stuck in slime: the slick is on it, not under it */
+    else if (see && m.gummed > 0) spr('slime', pos[0], pos[1], 0.9);
     /* web looks like web and ice looks like ice: the block of ice used
        to be drawn over anything held for any reason at all */
     else if (see && m.webbed > 0) spr('web', pos[0], pos[1], 0.9);
@@ -20992,26 +22063,68 @@ function playtestKit() {
   var pins = mkItem('pin', 0); pins.cnt = 3; addItem(pins);
   var crystals = mkItem('crystal', 0); crystals.cnt = 5; addItem(crystals);
 
-  /* a wand of everything, charged */
-  for (i = 0; i < WANDS.length && freeSlot() >= 0; i++) {
-    it = mkItem('wand', i); it.ch = 9; KNOWN.wand[i] = 1; addItem(it);
-  }
-  /* and a ring of everything, so the aimed ones can be tried */
-  for (i = 0; i < RINGS.length && freeSlot() >= 0; i++) addItem(mkItem('ring', i));
+  /* --- and then a handful of whatever ------------------------------
+     What is left of the pack is dealt rather than laid out.  A kit with
+     one of everything in it is a fine way to test a thing you already
+     know about and a poor way to notice one you do not: it looks the
+     same every time, so nothing in it ever looks odd.
 
-  /* and the drinkables in the pouch */
-  var want = ['healing', 'extra healing', 'liquid fire', 'blindness',
-              'confusion', 'water', 'holy water', 'haste self', 'see invisible',
-              'nourishment'];
-  for (i = 0; i < want.length; i++) {
-    var pk = -1;
-    for (var j = 0; j < POTIONS.length; j++) if (POTIONS[j].n === want[i]) pk = j;
-    if (pk < 0) continue;
-    KNOWN.pot[pk] = 1;
-    it = mkItem('potion', pk); it.cnt = 2;
-    for (var s = 0; s < POUCH_CAP; s++)
-      if (!pouch.items[s]) { pouch.items[s] = it; break; }
+     It was never one of everything anyway - there are 19 wands and 20
+     slots, so the old loop simply filled the pack with wands in table
+     order and stopped, and half of what it meant to hand you never fit.
+
+     Unidentified, on purpose.  Half of what a vial or a mushroom or a
+     ring IS lives in not knowing which one you are holding, and a
+     playtest that hands you the answer cannot show you that half.
+     Wands are the exception: they are the tool you reach for while
+     testing something else, so the ones dealt come charged and named. */
+  function ofKind(kind) {
+    var out = [], q;
+    if (kind === 'vial') for (q = 0; q < VIALS.length; q++) out.push(q);
+    if (kind === 'food') for (q = 0; q < FOODS.length; q++) if (isMushroom(q)) out.push(q);
+    if (kind === 'ring') for (q = 0; q < RINGS.length; q++) if (RINGS[q].p) out.push(q);
+    if (kind === 'wand') for (q = 0; q < WANDS.length; q++) out.push(q);
+    if (kind === 'potion') for (q = 0; q < POTIONS.length; q++) out.push(q);
+    if (kind === 'scroll') for (q = 0; q < SCROLLS.length; q++) out.push(q);
+    return out;
   }
+  /* The KIND is drawn first and the thing second, so nineteen wands do
+     not crowd out four vials simply by being nineteen. */
+  var kinds = ['vial', 'food', 'ring', 'wand', 'potion', 'scroll'];
+  function deal(kind, k) {
+    var thing = mkItem(kind, k);
+    if (kind === 'wand') { thing.ch = 9; KNOWN.wand[k] = 1; }
+    if (kind === 'ring') thing.ch = RINGS[k].charges === undefined
+      ? RING_CHARGES : RINGS[k].charges;
+    if (kind === 'vial' || kind === 'food') thing.cnt = 1 + rnd(2);
+    return addItem(thing);
+  }
+  function dealOne(kind) {
+    var list = ofKind(kind);
+    if (!list.length) return null;
+    return deal(kind, list[rnd(list.length)]);
+  }
+  /* one of each of the three that are worth seeing and easy to miss */
+  dealOne('vial'); dealOne('food'); dealOne('ring');
+  var guard = 0;
+  while (freeSlot() >= 0 && guard++ < 60) dealOne(kinds[rnd(kinds.length)]);
+
+  /* and the pouch, likewise: a mix of glass rather than the same ten
+     flasks every time.  addItem puts potions and vials in it by itself,
+     so this is only about filling what is left of it. */
+  var glass = [];
+  for (i = 0; i < POTIONS.length; i++) glass.push(['potion', i]);
+  for (i = 0; i < VIALS.length; i++) glass.push(['vial', i]);
+  for (var s = 0; s < POUCH_CAP && glass.length; s++) {
+    if (pouch.items[s]) continue;
+    var g = glass[rnd(glass.length)];
+    var gi = mkItem(g[0], g[1]);
+    gi.cnt = 1 + rnd(2);
+    pouch.items[s] = gi;
+  }
+  /* Scrolls stay known: they are the one kind you read to make something
+     else happen, and hunting for the identify scroll in a list of made-up
+     titles is not what anybody opened this file to do. */
   for (i = 0; i < SCROLLS.length; i++) KNOWN.scr[i] = 1;
 
   P.food = FOOD_MAX;

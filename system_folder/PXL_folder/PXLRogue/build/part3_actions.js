@@ -27,8 +27,10 @@ function playerMove(dx, dy) {
   if (P.frozen) {
     msg(P.iced ? 'You are frozen solid.'
       : P.webbed ? 'You are stuck in the web.'
+      : P.gummed ? 'Your feet are glued in the slime.'
       : P.held ? 'You are held fast.'
-      : 'You cannot move yet.', 'c');
+      : 'You cannot move yet.',
+      P.gummed ? 'G' : 'c');
     return true;
   }
   if (P.conf && rnd(100) < 55) { var d = pick(DIR4); dx = d[0]; dy = d[1]; }
@@ -72,9 +74,23 @@ function playerMove(dx, dy) {
      empty floor is just walking - and neither does a step that carries
      you towards something, which is advancing, not fleeing. */
   if (playerStumbles(dx, dy)) return true;
+  /* Ice trips you whether you were running or not.  Sure footed boots
+     are sure footed on it, which is the one thing they are for. */
+  if (slipsOn(nx, ny, hasGearRune('sure footed'))) {
+    P.runSteps = 0;
+    msgTrap('Your feet go from under you on the ice.', 'c', 'slipped', 'c');
+    sound('miss');
+    return true;
+  }
   P.runSteps = battleNear() ? (P.runSteps || 0) + 1 : 0;
   P.x = nx; P.y = ny;
   P.walkT = nowMs();
+  /* Slime on the square, or slime still on your boots from the last
+     one: either way the next turn goes on getting your feet back. */
+  if (slimeCatches(P, nx, ny)) {
+    gumPlayer();
+    msgTrap('You step into the slime.', 'G', 'stuck', 'G');
+  }
   /* web on the floor holds the first thing into it, and comes away */
   if (webCatches(nx, ny)) {
     var whold = stickPlayer(webHold());
@@ -97,13 +113,42 @@ function softLanding(x, y) {
   return null;
 }
 
+/* Half a ceiling, on the floor below.  Laid where you land and over the
+   squares round it, thickest in the middle, and only on bare ground -
+   a rug or a kerb is not something a heap of stone tidily avoids, but
+   it is not something worth losing to one either. */
+function spillRubble(x, y) {
+  var cells = reachWithin(x, y, RUBBLE_REACH), n = 0, i;
+  for (i = 0; i < cells.length; i++) {
+    var cx = cells[i][0], cy = cells[i][1], j = cy * MAP_W + cx;
+    var t = L.tiles[j];
+    if (t !== FLOOR && t !== CORR) continue;
+    if (L.decor[j] && (isRugName(L.decor[j]) || L.decor[j] === 'kerb')) continue;
+    /* it thins out as it goes: the middle of it is where the floor was */
+    var away = Math.max(Math.abs(cx - x), Math.abs(cy - y));
+    if (away && rnd(100) >= RUBBLE_SPREAD - away * RUBBLE_FALLOFF) continue;
+    L.decor[j] = rnd(2) ? 'rubble' : 'rubble2';
+    n++;
+  }
+  return n;
+}
 function fallDown() {
+  /* A hole you blew in the floor brings the floor down with you, and it
+     gets there first.  Noted before the level changes, because L is
+     about to be a different floor entirely. */
+  var blown = !!(L.blown && L.blown[P.y * MAP_W + P.x]);
   var floors = FALL_MIN + rnd(FALL_MAX - FALL_MIN + 1);
   if (G.depth + floors > 26) floors = Math.max(1, 26 - G.depth);
   var dm = roll(floors, 5) + floors;
   msg('The floor gives way!', 'R');
   msg('You fall ' + floors + ' floor' + (floors > 1 ? 's' : '') + '.', 'O');
   enterLevel(G.depth + floors, 'fall');
+  /* The ceiling arrives with you.  Laid before the landing is worked
+     out, because landing in it is the whole of what it does. */
+  if (blown) {
+    var heap = spillRubble(P.x, P.y);
+    if (heap) msg('The broken floor comes down around you.', '6');
+  }
   /* Whatever you landed on has a say in how much of that you feel. */
   var soft = softLanding(P.x, P.y);
   if (soft) {
@@ -393,6 +438,10 @@ function equipFromFloor(it) {
    for the rest, and leave behind whatever you have finished with.
    Returns the chest if it is now open for you to look in. */
 function openChest(ch) {
+  if (iceAt(ch.x, ch.y)) {
+    msg('The lid is frozen into its frame. It will not lift.', 'c');
+    return null;
+  }
   if (ch.lock && !ch.unlocked) {
     var name = MATS[ch.lock];
     if (!hasKey(ch.lock)) {
@@ -604,6 +653,7 @@ function trapCatches(src, tr) {
 function springFromAfar(tr) {
   if (!tr) return 0;
   tr.found = 1;
+  if (iceAt(tr.x, tr.y)) { msg('The ' + tr.k.n + ' is frozen under the ice.', 'c'); return 0; }
   if (tr.spent) { msg('A sprung ' + tr.k.n + '. Nothing happens.', '4'); return 0; }
   if (!tr.k.reusable) tr.spent = 1;
   var here = { x: tr.x, y: tr.y };
@@ -692,6 +742,14 @@ function shotCatches(m, tr, src) {
 
 function springTrap(tr) {
   tr.found = 1;
+  /* An inch of ice over a plate is an inch of ice over a plate: you can
+     see the thing perfectly well and you cannot tread on it hard enough
+     to matter.  It is not spent, only sealed, and it works again the
+     moment the floor thaws. */
+  if (iceAt(tr.x, tr.y)) {
+    msgTrap('A ' + tr.k.n + ', frozen under the ice.', 'c', 'sealed', 'c');
+    return;
+  }
   if (tr.spent) { msgTrap('A sprung ' + tr.k.n + '.', '4', 'spent', '4'); return; }
   if (trapPinned(tr)) return;                 /* something is holding it down */
   if (!tr.k.reusable) tr.spent = 1;
@@ -872,6 +930,10 @@ function useStairs() {
   if (t === TRAPDOOR) {
     if (trapdoorHidden(P.x, P.y)) return false;
     if (inCellar()) return false;
+    if (iceAt(P.x, P.y)) {
+      msg('The trapdoor is frozen shut.', 'c');
+      return true;
+    }
     enterCellar();
     msg('You lift the trapdoor and climb down.', 'c');
     return true;
@@ -1037,6 +1099,15 @@ function eatMushroom(kind) {
 /* ---------------------------------------------------------- potions */
 function quaff(it) {
   var k = it.k, n = POTIONS[k].n, id = 1;
+  /* One flask will not go down at all.  It is refused BEFORE it is
+     spent: a potion you could not drink that vanished out of your pack
+     anyway would be the worst of both.  You have still learnt what it
+     is - you had it at your lips. */
+  if (n === 'slime') {
+    KNOWN.pot[k] = 1;
+    msg("This liquid is thick and slimey. You can't drink it.", 'G');
+    return false;
+  }
   removeItem(it, 1);
   switch (n) {
     case 'confusion': msg("Wait, what's going on? Huh? What? Who?", 'P'); P.conf += rnd(8) + 12; break;
@@ -1795,11 +1866,212 @@ function splashDrops(x, y, col) {
   }
   G.drops = { x: x, y: y, t: beatNow(), dur: SPLASH_MS, col: col, parts: parts };
 }
+/* --------------------------------------------------------- vials
+   Four of them, and every one changes the room rather than the creature
+   it lands on.  That is what makes a vial different from a flask: you
+   throw one at the floor because of what the floor will be afterwards.
+
+   Which colour is which is a fact about the run, so the first one you
+   throw is always a gamble - and the moment it goes off you know that
+   colour for the rest of the run. */
+function vialColour(it) {
+  if (!isVial(it)) return '#c3ccd9';
+  var k = VIALS[it.k].n;
+  if (k === 'nitro') return '#f59e0b';
+  if (k === 'poison') return '#93bd27';
+  if (k === 'ice') return '#74d6e8';
+  return V_COLOUR[V_SPRITE[APPEAR.vial[it.k]]] || '#8690a4';
+}
+
+/* Smoke and fumes both fill the room they are let loose in: five squares
+   out from where the glass broke, round corners and through open doors,
+   and stopped dead by a wall.  `strong` is the difference between the
+   two - the same cloud, biting harder. */
+function fumeVial(tx, ty, strong) {
+  var cells = reachWithin(tx, ty, VIAL_FUME_REACH);
+  var at = beatNow(), i, made = 0;
+  for (i = 0; i < cells.length && made < VIAL_FUME_MAX; i++) {
+    var x = cells[i][0], y = cells[i][1];
+    if (!walkable(x, y)) continue;
+    var life = VIAL_SMOKE_TURNS[0] +
+      rnd(VIAL_SMOKE_TURNS[1] - VIAL_SMOKE_TURNS[0] + 1);
+    L.clouds.push({ x: x, y: y, kind: strong ? 'poison' : 'smoke', turns: life,
+                    seed: rnd(1000), at: at, strong: strong ? 1 : 0 });
+    made++;
+  }
+  return made;
+}
+
+/* Ice glazes whatever it lands on out to three squares.  It is not a
+   wall - you can walk on it, and about half the time you wish you had
+   not - and everything under it is sealed until it thaws. */
+function iceVial(tx, ty) {
+  var cells = reachWithin(tx, ty, VIAL_ICE_REACH);
+  var i, made = 0;
+  for (i = 0; i < cells.length; i++) {
+    var life = VIAL_ICE_TURNS[0] + rnd(VIAL_ICE_TURNS[1] - VIAL_ICE_TURNS[0] + 1);
+    made += freezeSquare(cells[i][0], cells[i][1], life);
+  }
+  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'cold' };
+  sound('cast');
+  return made;
+}
+
+/* Nitro goes off the way a barrel does, and then the floor gives way
+   under the middle of it.  Anything standing on the part that crumbles
+   goes down with it, and so does whatever was sitting on that floor - a
+   chest, a trap, a door in the floor.  They do not fall to the level
+   below in any sense the game models; they are simply gone, which is
+   what a hole in the floor means here. */
+/* Whether this square has a floor to lose.  Rock and wall are not floor
+   and have nothing to give way; iron bars are set into the stone and
+   stay where they are; and a hole is already a hole. */
+function canCrumble(x, y) {
+  if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) return false;
+  var t = L.tiles[y * MAP_W + x];
+  return !(t === WALL || t === ROCK || t === BARS || t === HOLE);
+}
+function crumbleSquare(x, y) {
+  if (!canCrumble(x, y)) return 0;
+  var j = y * MAP_W + x;
+  /* whatever was standing on it */
+  var m = monAt(L, x, y);
+  if (m) {
+    markHurt(m, x, y);
+    killMonster(m, true, 'fell');
+    if (canSeeMonAt(m, x, y)) msg(cap(monShort(m)) + ' goes down with the floor.', 'O');
+  }
+  /* and whatever was lying or built on it */
+  for (var i = L.items.length - 1; i >= 0; i--)
+    if (L.items[i].x === x && L.items[i].y === y) L.items.splice(i, 1);
+  if (L.traps) for (i = L.traps.length - 1; i >= 0; i--)
+    if (L.traps[i].x === x && L.traps[i].y === y) L.traps.splice(i, 1);
+  if (L.tdoor) delete L.tdoor[j];
+  delete L.decor[j];
+  delete L.locks[j];
+  delete L.sealed[j];
+  if (L.webs) delete L.webs[j];
+  if (L.ice) delete L.ice[j];
+  if (L.slime) delete L.slime[j];
+  /* Remembered as a hole somebody MADE.  A chasm that has been there
+     since the dungeon was cut has had a long time to settle; a floor
+     that came down this afternoon is still coming down, and what is
+     under it is wearing most of it. */
+  L.blown = L.blown || {};
+  L.blown[j] = 1;
+  if (L.barrels) delete L.barrels[j];
+  if (L.fuses) delete L.fuses[j];
+  L.tiles[j] = HOLE;
+  return 1;
+}
+function nitroVial(bx, by) {
+  var cells = [], x, y, i;
+  for (y = by - BARREL_BLAST; y <= by + BARREL_BLAST; y++)
+    for (x = bx - BARREL_BLAST; x <= bx + BARREL_BLAST; x++) {
+      if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= MAP_H - 1) continue;
+      var ox = x - bx, oy = y - by;
+      if (ox * ox + oy * oy > BARREL_BLAST_SQ) continue;
+      cells.push([x, y]);
+    }
+  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
+  shakeScreen(SHAKE_MS, SHAKE_AMP, bx * 73856093 + by * 19349663);
+  sound('boom');
+  msgTrap('The vial goes off like a powder keg!', 'R', 'blast', 'R');
+  /* powder in the blast catches, the same as a barrel's */
+  for (i = 0; i < cells.length; i++)
+    if (barrelAt(cells[i][0], cells[i][1])) lightBarrel(cells[i][0], cells[i][1]);
+  for (i = 0; i < cells.length; i++) blastSquare(cells[i][0], cells[i][1], BARREL_DAMAGE);
+  /* And then the floor gives way.  Grown a square at a time out from
+     where the glass broke rather than stamped as a disc: a hole blown in
+     a floor is a ragged thing, and the ones the dungeon digs for itself
+     are grown the same way - see digHole. */
+  var want = NITRO_HOLE_MIN + rnd(NITRO_HOLE_MAX - NITRO_HOLE_MIN + 1);
+  var open = [[bx, by]], seen = {}, hole = [], fell = 0;
+  seen[by * MAP_W + bx] = 1;
+  while (open.length && hole.length < want) {
+    var c = open.shift();
+    if (!canCrumble(c[0], c[1])) continue;
+    hole.push(c);
+    shuffle(DIR4);
+    for (i = 0; i < DIR4.length; i++) {
+      var nx = c[0] + DIR4[i][0], ny = c[1] + DIR4[i][1];
+      var nk = ny * MAP_W + nx;
+      if (seen[nk]) continue;
+      seen[nk] = 1;
+      /* not every neighbour: that is what makes the edge ragged rather
+         than a tidy blob spreading evenly in all four directions */
+      if (rnd(100) >= NITRO_HOLE_SPREAD) continue;
+      open.push([nx, ny]);
+    }
+  }
+  var gone = 0;
+  for (i = 0; i < hole.length; i++) {
+    if (P.x === hole[i][0] && P.y === hole[i][1]) { fell = 1; continue; }
+    gone += crumbleSquare(hole[i][0], hole[i][1]);
+  }
+  if (gone) msg('The floor gives way and falls into the dark.', 'O');
+  faceTheRock(cells);
+  adoptOpened(L, cells);
+  /* the cracked flagstones that warn you about any other hole in the
+     floor, laid last so the tiles round it have settled */
+  crackAround(L, hole);
+  buildLitMap(L); buildDarkMap(L, G.depth); spillLight(L);
+  computeVis();
+  /* You were standing on it.  There is nothing under you now. */
+  if (fell) { msg('The floor goes out from under you.', 'R'); fallDown(); }
+  return gone;
+}
+
+/* One vial, breaking where it landed. */
+function breakVial(it, tx, ty, victim) {
+  var kind = VIALS[it.k].n;
+  splashDrops(tx, ty, vialColour(it));
+  msg('The vial shatters' + (victim ? ' on ' + monShort(victim) : '') + '.', 'O');
+  /* You have watched it work, so you know that colour from now on -
+     the same lesson a potion teaches by being drunk. */
+  learnVial(it.k);
+  if (victim) hurtByPlayer(victim);
+  if (kind === 'smoke') {
+    var n1 = fumeVial(tx, ty, 0);
+    msg('Thick smoke rolls out across ' + n1 + ' square' + (n1 > 1 ? 's' : '') + '.', '6');
+  } else if (kind === 'poison') {
+    var n2 = fumeVial(tx, ty, 1);
+    msg('Green fumes boil out across ' + n2 + ' square' + (n2 > 1 ? 's' : '') + '.', 'g');
+  } else if (kind === 'ice') {
+    var n3 = iceVial(tx, ty);
+    msg('The floor glazes over with ice across ' + n3 +
+      ' square' + (n3 > 1 ? 's' : '') + '.', 'c');
+  } else if (kind === 'nitro') {
+    nitroVial(tx, ty);
+  }
+  return true;
+}
+
+/* A slick of it: the square it broke on, always, and two or three of
+   the eight round that - not a shape, a splash.  It goes where it
+   lands, so a square it cannot reach is simply one it does not cover. */
+function slimeSplash(tx, ty) {
+  var life = function () {
+    return SLIME_TURNS[0] + rnd(SLIME_TURNS[1] - SLIME_TURNS[0] + 1);
+  };
+  var made = slimeSquare(tx, ty, life());
+  var want = SLIME_SPLASH[0] + rnd(SLIME_SPLASH[1] - SLIME_SPLASH[0] + 1);
+  var round = DIR8.slice();
+  shuffle(round);
+  for (var i = 0; i < round.length && made <= want; i++) {
+    var nx = tx + round[i][0], ny = ty + round[i][1];
+    if (!walkable(nx, ny)) continue;
+    made += slimeSquare(nx, ny, life());
+  }
+  return made;
+}
+
 function potionColour(it) {
   if (!it || it.t !== 'potion') return '#c3ccd9';
   var w = flaskEffect(it);
   if (w === 'fire') return '#f59e0b';
   if (w === 'gas') return '#93bd27';
+  if (w === 'slime') return '#446b1c';
   return P_COLOUR[P_SPRITE[APPEAR.pot[it.k]]] || '#74d6e8';
 }
 
@@ -1835,10 +2107,13 @@ function throwAtSquare(it, tx, ty) {
   if (!it) return false;
   var victim = monAt(L, tx, ty);
   var boom = it.t === 'dynamite';
+  var vial = isVial(it);
   /* A flask is thrown at a square, not at a target, so it can be lobbed
      to an ally as easily as at a foe - which is the only way to get a
-     healing mist onto somebody fighting for you. */
-  if (victim && !isFlask(it) && !boom) {
+     healing mist onto somebody fighting for you.  A vial is the same
+     kind of throw: what matters is the square it breaks on, not what
+     happens to be standing there. */
+  if (victim && !isFlask(it) && !vial && !boom) {
     if (victim.ally) { msg('You will not shoot your own.', '6'); return false; }
     return fireAt(victim);                    /* a stone finds its mark */
   }
@@ -1852,7 +2127,8 @@ function throwAtSquare(it, tx, ty) {
                 stone wears whichever carving this run dealt it, and it
                 must wear the same one in the air */
              spr: (it.t === 'weapon') ? itemSprite(it) : null,
-             col: boom ? '#d82b2b' : isFlask(it) ? '#f59e0b' : null };
+             col: boom ? '#d82b2b' : vial ? vialColour(it)
+                  : isFlask(it) ? '#f59e0b' : null };
   beatWait(flight);
   removeItem(it, 1);
 
@@ -1862,6 +2138,10 @@ function throwAtSquare(it, tx, ty) {
      on a trap sets it off, from wherever you are standing. */
   var hitTrap = trapAtLevel(L, tx, ty);
   if (hitTrap && !hitTrap.spent) springFromAfar(hitTrap);
+
+  /* a vial breaks wherever it lands, and what it does it does to the
+     room rather than to whatever it hit */
+  if (vial) return breakVial(it, tx, ty, victim);
 
   if (!isFlask(it)) {
     /* thrown at open floor, it simply lands there - unless it is charmed
@@ -1894,6 +2174,10 @@ function throwAtSquare(it, tx, ty) {
     var n = spawnFire(tx, ty);
     msg('Fire spreads across ' + n + ' square' + (n > 1 ? 's' : '') + '.', 'R');
     burnEverything();
+  } else if (what === 'slime') {
+    var sn = slimeSplash(tx, ty);
+    msg('The flask bursts into a slick of slime across ' + sn +
+      ' square' + (sn > 1 ? 's' : '') + '.', 'G');
   } else if (what === 'gas') {
     spawnCloud(tx, ty, 'poison', GAS_TURNS_MIN + rnd(GAS_TURNS_MAX - GAS_TURNS_MIN + 1),
       beatNow());
@@ -2132,7 +2416,7 @@ function fireAt(best) {
     var fx = dmg + (extra ? ' sneak' : ' damage');
     /* Now and then the shaft comes through intact - and a stone that has
        been charged is half as likely to be lost as one that has not. */
-    var keepPct = ARROW_RECOVER_PCT;
+    var keepPct = isStoneAmmo(am) ? STONE_RECOVER_PCT : ARROW_RECOVER_PCT;
     /* a ring of battle luck: what you loose, you mostly get back */
     if (carryingRing('battle luck')) keepPct = Math.max(keepPct, LUCK_RECOVER_PCT);
     if (wasCharged && isPlainAmmo(am)) keepPct = 100 - (100 - keepPct) / 2;
@@ -2800,6 +3084,24 @@ function itemNotes(it) {
       out.push([KNOWN.pot[it.k] ? 'you know this brew' : 'unknown - drink to learn',
         KNOWN.pot[it.k] ? '6' : '4']);
       break;
+    case 'vial': {
+      out.push(['too strong to drink - throw it', 'c']);
+      if (!KNOWN.vial[it.k]) { out.push(['unknown - throw one to learn', '4']); break; }
+      var vk = VIALS[it.k].n;
+      if (vk === 'smoke')
+        out.push(['fills ' + VIAL_FUME_REACH + ' squares with smoke', '6'],
+          ['and hangs there ' + VIAL_SMOKE_TURNS[0] + '-' + VIAL_SMOKE_TURNS[1] + ' turns', '6']);
+      else if (vk === 'poison')
+        out.push(['fills ' + VIAL_FUME_REACH + ' squares with fumes', 'g'],
+          ['they bite far harder than gas', 'g']);
+      else if (vk === 'ice')
+        out.push(['glazes ' + VIAL_ICE_REACH + ' squares with ice', 'c'],
+          ['slippery, and it seals what is under it', 'c']);
+      else if (vk === 'nitro')
+        out.push(['goes off like a barrel of powder', 'R'],
+          ['and takes the floor with it', 'R']);
+      break;
+    }
     case 'scroll':
       out.push([KNOWN.scr[it.k] ? 'you know this scroll' : 'unknown - read to learn',
         KNOWN.scr[it.k] ? '6' : '4']);
@@ -2862,6 +3164,9 @@ function worthKnown(it) {
   if (!it) return false;
   switch (it.t) {
     case 'potion': return !!KNOWN.pot[it.k];
+    /* An unknown vial is worth a great deal or worth nothing, and which
+       is exactly the thing the price would tell you. */
+    case 'vial': return !!KNOWN.vial[it.k];
     case 'scroll': return !!KNOWN.scr[it.k];
     case 'wand': return !!KNOWN.wand[it.k];
     case 'ring': return !!it.known;

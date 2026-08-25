@@ -26,6 +26,30 @@ FAVICON = 'favicon.ico'
 
 meta = json.load(open(os.path.join(D, 'atlas.json')))
 
+# ------------------------------------------------------------- caching
+# The sheet is a separate file, and a browser - or worse, a CDN in front
+# of one - will happily go on serving yesterday's copy of it next to
+# today's HTML.  The result is not a stale game, which would be fine; it
+# is a BROKEN one, because the layout in the HTML and the pixels in the
+# PNG no longer agree and every sprite is cut from the wrong cell.  On a
+# real site that meant a hard reload every single visit.
+#
+# So the sheet is asked for by a name that changes when its contents do.
+# A cache cannot serve the old bytes for a URL it has never seen, and an
+# old HTML still asks for its own old sheet - so a stale cache gives you
+# an old game that WORKS rather than a new one that does not.
+#
+# It does not bake anything in and it does not add a build step for art:
+# a query string does not change which file the server hands over, so
+# repainting spritesheet.png and reloading still shows the new paint.
+def _stamp(path):
+    try:
+        import hashlib
+        return hashlib.sha1(open(path, 'rb').read()).hexdigest()[:10]
+    except Exception:
+        return '0'
+
+
 # The sheet is never read or written here, only checked: the game needs it
 # beside the HTML, and it has to be the size the layout says.
 if not os.path.exists(SHEET):
@@ -91,6 +115,28 @@ HTML = """<!DOCTYPE html>
     -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
+  /* The retro monitor, switched on from the ESC menu.  It is a sheet of
+     glass laid over the picture rather than anything drawn into it, and
+     that is deliberate: the backing store stays exactly 230x128, and
+     scanlines drawn into it would be a whole game pixel thick - four
+     screen pixels at the usual scale, which cuts every sprite in half.
+     Laid over the top they are as fine as the screen showing them,
+     which is what a scanline actually is.  It also costs nothing per
+     frame; the browser composites it and the game never thinks about
+     it again. */
+  #crt{
+    position:fixed; display:none; pointer-events:none; z-index:5;
+    background:
+      repeating-linear-gradient(to bottom,
+        rgba(0,0,0,0.34) 0px, rgba(0,0,0,0.34) 1px,
+        rgba(0,0,0,0.00) 1px, rgba(0,0,0,0.00) 3px),
+      repeating-linear-gradient(to right,
+        rgba(255,64,64,0.045) 0px, rgba(64,255,64,0.045) 1px,
+        rgba(64,64,255,0.045) 2px, rgba(0,0,0,0.00) 3px);
+    /* the dark curve of the tube at its corners */
+    box-shadow:inset 0 0 34px 6px rgba(0,0,0,0.42);
+  }
+  #crt.on{ display:block; }
   #nosheet{
     position:fixed; inset:0; display:none;
     align-items:center; justify-content:center; text-align:center;
@@ -101,17 +147,18 @@ HTML = """<!DOCTYPE html>
 </head>
 <body>
 <canvas id="scr" width="320" height="200"></canvas>
+<div id="crt"></div>
 <div id="nosheet">spritesheet.png is not beside this file.<br>
 The graphics live in that PNG - keep the two together.</div>
 <script>
 var ATLAS = %(meta)s;
 /* The graphics are the file on disk, not a copy of it welded in here.
    Repaint spritesheet.png and reload - there is no build step for art. */
-var ATLAS_PNG = "spritesheet.png";
+var ATLAS_PNG = "spritesheet.png?v=%(sheetv)s";
 /* The title screen is a picture too, and the same rule applies: it is a
    file beside this one, not baked in.  If it is missing the title screen
    simply comes up black and the menu still works. */
-var SPLASH_PNG = "%(splash)s";
+var SPLASH_PNG = "%(splash)s?v=%(splashv)s";
 %(js)s
 </script>
 </body>
@@ -119,13 +166,17 @@ var SPLASH_PNG = "%(splash)s";
 """
 
 out = HTML % {'meta': json.dumps(meta), 'js': js,
-              'splash': SPLASH, 'favicon': FAVICON}
+              'splash': SPLASH, 'favicon': FAVICON,
+              'sheetv': _stamp(SHEET),
+              'splashv': _stamp(os.path.join(os.path.dirname(OUT), SPLASH))}
 
 # The rule this file exists to keep.  Cheap to check, and the one mistake
 # that quietly undoes it is easy to make.
 if 'data:image/png' in out:
     sys.exit('REFUSING TO WRITE: the spritesheet has been baked into the HTML')
-if 'ATLAS_PNG = "spritesheet.png"' not in out:
+# The name may carry a version stamp after it - see the note above - but
+# it must still be that file beside this one and nothing else.
+if 'ATLAS_PNG = "spritesheet.png' not in out:
     sys.exit('REFUSING TO WRITE: the game is not pointed at spritesheet.png')
 # The title screen was hand-written into the built file once and nearly
 # lost on the next build.  If it is not in the sources it is not real.
@@ -140,3 +191,5 @@ for extra in (SPLASH, FAVICON):
     if not os.path.exists(os.path.join(os.path.dirname(OUT), extra)):
         print('  note: %s is not beside it' % extra)
 print('index.html, spritesheet.png, %s and %s go together' % (SPLASH, FAVICON))
+print('sheet stamp: ?v=%s - a cache cannot serve old pixels under a new name'
+      % _stamp(SHEET))

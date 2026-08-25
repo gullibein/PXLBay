@@ -329,6 +329,19 @@ spr('rubble', [
     "..4..4..",
     "........"])
 
+# A second heap, so a floor that came down in a heap is not the same
+# stone stamped over and over.  Coarser than the first: bigger blocks,
+# fewer of them, and lying the other way about.
+spr('rubble2', [
+    "........",
+    "..3.44..",
+    ".444.3..",
+    "34.4444.",
+    ".44444.4",
+    "4.44.444",
+    ".4.44.4.",
+    "...4...."])
+
 spr('column', [
     ".655556.",
     ".656556.",
@@ -499,6 +512,51 @@ def potion(name, col):
 for nm, c in [('pot_r','R'), ('pot_b','B'), ('pot_g','e'), ('pot_y','y'),
               ('pot_p','P'), ('pot_c','c'), ('pot_w','6'), ('pot_o','O')]:
     potion(nm, c)
+
+# A vial is not a flask.  It is short, thick walled and stoppered with a
+# cork rather than a rag, and the glass is dark - what is in one is too
+# strong to drink and the shape has to say so at a glance, at eight
+# pixels, next to eight potions that are all neck and shoulder.
+def vial(name, col):
+    spr(name, [
+        "........",
+        "..nn....",
+        "..44....",
+        ".3%%3...".replace('%', col),
+        ".3%%3...".replace('%', col),
+        ".3%%3...".replace('%', col),
+        ".3%%3...".replace('%', col),
+        "..33...."])
+
+for nm, c in [('vial_g','G'), ('vial_k','p'), ('vial_p','P'), ('vial_w','6'),
+              ('vial_r','R'), ('vial_y','y'), ('vial_b','B')]:
+    vial(nm, c)
+
+# Slime is a slick, not a glaze: it pools rather than covering, so it is
+# a blotch with a couple of runs off it and clear stone showing round
+# the edges.  Drawn over the tile underneath at ALPHA, like the ice.
+spr('slime', [
+    "..gg....",
+    ".geeg.g.",
+    "geeGeeg.",
+    ".geeeeeg",
+    "..geeeeg",
+    ".geeeg..",
+    "..geg.g.",
+    "...g...."])
+
+# Ice is a glaze laid over whatever the square already was, so it is
+# mostly holes: a few pale cracks and a highlight, drawn half
+# transparent over the tile underneath.
+spr('ice', [
+    ".c....c.",
+    "c..cc...",
+    "...c..c.",
+    ".c...c..",
+    "..cc....",
+    "c...c..c",
+    "..c...c.",
+    ".c..c..."])
 
 spr('scroll', [
     "........",
@@ -2122,6 +2180,12 @@ LAYOUT = [
 
     ('interface', ['mouse', 'mouse_get', 'cursor', 'point', 'heart', 'pan_cross',
                    'mk_z', 'mk_q', 'mk_x', 'mk_ally']),
+
+    # Added last on purpose.  Every group above it keeps the cells it was
+    # painted in, so a sheet painted before the vials existed is still
+    # correct everywhere it has anything painted - see migrate_sheet.
+    ('vials',     ['vial_g', 'vial_k', 'vial_p', 'vial_w',
+                   'vial_r', 'vial_y', 'vial_b', 'ice', 'slime', 'rubble2']),
 ]
 
 # Sprites deliberately taken out of the game altogether - the definition

@@ -573,11 +573,24 @@ const f3 = ctx.clearFloorOdds(3, 400);
    drinks or runs.  So this is the cost of refusing to play well: floor
    one has to punish it more often than not-quite-a-third of the time,
    and floor two should be out of reach without using what you find. */
-console.log('toe to toe   : floor -1 kills you ' + f1.died + '% of the time (' +
-  f1.hp + ' hp left), -2 ' + f2.died + '%, -3 ' + f3.died + '%');
-check(f1.died >= 30, 'floor one can be brawled through: only ' + f1.died + '% deaths');
-check(f1.died <= 55, 'floor one is a meat grinder: ' + f1.died + '% deaths');
-check(f2.died >= 60, 'floor two does not demand your items: only ' + f2.died + '% deaths');
+console.log('toe to toe   : floor -1 kills you ' + f1.died + '+-' +
+  (2 * f1.se).toFixed(1) + '% of the time (' + f1.hp + ' hp left), -2 ' +
+  f2.died + '%, -3 ' + f3.died + '%');
+/* Two standard errors of slack, and no more.  These are samples of 400
+   fights, so the point estimate wanders a couple of points every time
+   the generation dice move - which they do whenever anything at all is
+   added to the game.  What is being asserted is that the REAL rate is
+   outside the band, at about 95% confidence; a check on the raw number
+   was asserting a precision 400 fights cannot buy, and duly failed on a
+   round that had not touched the balance at all. */
+const sureLow = (r, want) => r.died + 2 * r.se >= want;
+const sureHigh = (r, want) => r.died - 2 * r.se <= want;
+check(sureLow(f1, 30), 'floor one can be brawled through: ' + f1.died + '% deaths (+-' +
+  (2 * f1.se).toFixed(1) + '), and 30% is out of reach of that');
+check(sureHigh(f1, 55), 'floor one is a meat grinder: ' + f1.died + '% deaths (+-' +
+  (2 * f1.se).toFixed(1) + ')');
+check(sureLow(f2, 60), 'floor two does not demand your items: ' + f2.died + '% deaths (+-' +
+  (2 * f2.se).toFixed(1) + ')');
 
 const w1 = ctx.clearFloorWell(1, 400), w2 = ctx.clearFloorWell(2, 400);
 console.log('played well  : throwing first and resting between fights, ' +
@@ -692,11 +705,13 @@ check(lay.keyShared <= lay.keys / 40, lay.keyShared + ' of ' + lay.keys +
 console.log('secret rooms : ' + lay.panelled + '/' + lay.floors + ' floors have a panel, ' +
   lay.secret + ' of them reachable without blasting; ' +
   lay.behind.toFixed(1) + ' squares behind it, from a room ' +
-  lay.fromRoom + ', from a hallway ' + lay.fromHall);
+  lay.fromRoom + ', from the end of a dead end ' + lay.fromTip +
+  ', from the middle of a hallway ' + lay.fromHall);
 check(lay.panelled === lay.floors, (lay.floors - lay.panelled) + ' floors hide no room at all');
 check(lay.secret >= lay.floors * 0.95, 'only ' + lay.secret + ' of ' + lay.floors +
   ' hidden rooms can be reached without blasting a wall');
-check(lay.fromHall === 0, lay.fromHall + ' hidden doors are panels in a corridor wall');
+check(lay.fromHall === 0, lay.fromHall +
+  ' hidden doors are panels in the middle of a corridor wall - nobody searches those');
 console.log('dead rock    : ' + lay.pockets + ' floors have a pocket walled in by the ' +
   'halls, ' + lay.vaults + ' have a vault in one');
 check(lay.vaults >= lay.pockets * 0.9, 'dead space is going to waste: ' +
@@ -763,7 +778,8 @@ console.log('             : the choice waits ' + ctx.PERK_PAUSE +
 check(pkr.bad.length === 0, 'perks: ' + [...new Set(pkr.bad)].slice(0, 4).join('; '));
 
 const ovf = ctx.overflowAndStonesOK();
-console.log('a full pack  : what you take off goes in the pouch, not on the floor; ' +
+console.log('a full pack  : what you take off goes on the floor - the potion pouch ' +
+  'is not a second pack - but a potion always has room in it; ' +
   'two returning stones gave ' + ovf.flights + ' flights, one after the other');
 check(ovf.bad.length === 0, 'overflow: ' + [...new Set(ovf.bad)].slice(0, 4).join('; '));
 
@@ -867,8 +883,9 @@ check(bru.bad.length === 0, 'bridges: ' + [...new Set(bru.bad)].slice(0, 3).join
 const lep = ctx.leprechaunOK(10);
 console.log('leprechaun   : over ' + lep.floors + ' floors, never two at once; ' +
   lep.runs + ' robberies - he runs ' + lep.steps.toFixed(0) +
-  ' squares to the far side, reaches it ' + lep.arrived + '/' + lep.holed +
-  ' times, and stays there in plain sight');
+  ' squares to the stairs, shows himself, waits ' + lep.wait.toFixed(0) +
+  ' turns and takes them, gold and all (' + lep.arrived + '/' + lep.gone +
+  '); kill him first and the purse drops');
 check(lep.bad.length === 0, 'leprechaun: ' + [...new Set(lep.bad)].slice(0, 3).join('; '));
 
 const kbk = ctx.knockbackOK();

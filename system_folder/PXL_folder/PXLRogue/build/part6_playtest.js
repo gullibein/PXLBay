@@ -57,26 +57,68 @@ function playtestKit() {
   var pins = mkItem('pin', 0); pins.cnt = 3; addItem(pins);
   var crystals = mkItem('crystal', 0); crystals.cnt = 5; addItem(crystals);
 
-  /* a wand of everything, charged */
-  for (i = 0; i < WANDS.length && freeSlot() >= 0; i++) {
-    it = mkItem('wand', i); it.ch = 9; KNOWN.wand[i] = 1; addItem(it);
-  }
-  /* and a ring of everything, so the aimed ones can be tried */
-  for (i = 0; i < RINGS.length && freeSlot() >= 0; i++) addItem(mkItem('ring', i));
+  /* --- and then a handful of whatever ------------------------------
+     What is left of the pack is dealt rather than laid out.  A kit with
+     one of everything in it is a fine way to test a thing you already
+     know about and a poor way to notice one you do not: it looks the
+     same every time, so nothing in it ever looks odd.
 
-  /* and the drinkables in the pouch */
-  var want = ['healing', 'extra healing', 'liquid fire', 'blindness',
-              'confusion', 'water', 'holy water', 'haste self', 'see invisible',
-              'nourishment'];
-  for (i = 0; i < want.length; i++) {
-    var pk = -1;
-    for (var j = 0; j < POTIONS.length; j++) if (POTIONS[j].n === want[i]) pk = j;
-    if (pk < 0) continue;
-    KNOWN.pot[pk] = 1;
-    it = mkItem('potion', pk); it.cnt = 2;
-    for (var s = 0; s < POUCH_CAP; s++)
-      if (!pouch.items[s]) { pouch.items[s] = it; break; }
+     It was never one of everything anyway - there are 19 wands and 20
+     slots, so the old loop simply filled the pack with wands in table
+     order and stopped, and half of what it meant to hand you never fit.
+
+     Unidentified, on purpose.  Half of what a vial or a mushroom or a
+     ring IS lives in not knowing which one you are holding, and a
+     playtest that hands you the answer cannot show you that half.
+     Wands are the exception: they are the tool you reach for while
+     testing something else, so the ones dealt come charged and named. */
+  function ofKind(kind) {
+    var out = [], q;
+    if (kind === 'vial') for (q = 0; q < VIALS.length; q++) out.push(q);
+    if (kind === 'food') for (q = 0; q < FOODS.length; q++) if (isMushroom(q)) out.push(q);
+    if (kind === 'ring') for (q = 0; q < RINGS.length; q++) if (RINGS[q].p) out.push(q);
+    if (kind === 'wand') for (q = 0; q < WANDS.length; q++) out.push(q);
+    if (kind === 'potion') for (q = 0; q < POTIONS.length; q++) out.push(q);
+    if (kind === 'scroll') for (q = 0; q < SCROLLS.length; q++) out.push(q);
+    return out;
   }
+  /* The KIND is drawn first and the thing second, so nineteen wands do
+     not crowd out four vials simply by being nineteen. */
+  var kinds = ['vial', 'food', 'ring', 'wand', 'potion', 'scroll'];
+  function deal(kind, k) {
+    var thing = mkItem(kind, k);
+    if (kind === 'wand') { thing.ch = 9; KNOWN.wand[k] = 1; }
+    if (kind === 'ring') thing.ch = RINGS[k].charges === undefined
+      ? RING_CHARGES : RINGS[k].charges;
+    if (kind === 'vial' || kind === 'food') thing.cnt = 1 + rnd(2);
+    return addItem(thing);
+  }
+  function dealOne(kind) {
+    var list = ofKind(kind);
+    if (!list.length) return null;
+    return deal(kind, list[rnd(list.length)]);
+  }
+  /* one of each of the three that are worth seeing and easy to miss */
+  dealOne('vial'); dealOne('food'); dealOne('ring');
+  var guard = 0;
+  while (freeSlot() >= 0 && guard++ < 60) dealOne(kinds[rnd(kinds.length)]);
+
+  /* and the pouch, likewise: a mix of glass rather than the same ten
+     flasks every time.  addItem puts potions and vials in it by itself,
+     so this is only about filling what is left of it. */
+  var glass = [];
+  for (i = 0; i < POTIONS.length; i++) glass.push(['potion', i]);
+  for (i = 0; i < VIALS.length; i++) glass.push(['vial', i]);
+  for (var s = 0; s < POUCH_CAP && glass.length; s++) {
+    if (pouch.items[s]) continue;
+    var g = glass[rnd(glass.length)];
+    var gi = mkItem(g[0], g[1]);
+    gi.cnt = 1 + rnd(2);
+    pouch.items[s] = gi;
+  }
+  /* Scrolls stay known: they are the one kind you read to make something
+     else happen, and hunting for the identify scroll in a list of made-up
+     titles is not what anybody opened this file to do. */
   for (i = 0; i < SCROLLS.length; i++) KNOWN.scr[i] = 1;
 
   P.food = FOOD_MAX;

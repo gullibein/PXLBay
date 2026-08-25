@@ -1045,6 +1045,60 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   check(tw.bad.length === 0, 'thrown wear: ' + [...new Set(tw.bad)].slice(0, 4).join('; '));
 }
 
+/* --- the top of the dungeon is bare ----------------------------------- */
+{
+  const sh = ctx.shallowFloorsOK();
+  console.log('the first floors: nothing the dungeon laid out on ' + sh.floors +
+    ' of them was a ring or a two handed weapon, and from floor ' +
+    ctx.DEEP_ONLY_DEPTH + ' down both come back (' + sh.deepRings + ' rings, ' +
+    sh.deepTwos + ' great weapons in 3000 rolls)');
+  check(sh.bad.length === 0, 'shallow floors: ' + [...new Set(sh.bad)].slice(0, 4).join('; '));
+}
+
+/* --- vials -------------------------------------------------------------- */
+{
+  const v = ctx.vialsOK();
+  console.log('vials       : a colour apiece and no name until one is thrown; smoke fills ' +
+    v.smoke + ' squares of a room and stops at the walls, fumes take ' +
+    v.bite.toFixed(1) + ' a turn against gas at ' + v.gas.toFixed(1) +
+    ', ice glazes ' + v.ice + ' and is slippery and seals what is under it, ' +
+    'and nitro leaves a ragged hole - ' + v.holes + ' squares, ' + v.shapes +
+    ' different shapes in ' + v.forms + ' throws, cracked flagstones all round it ' +
+    'and whatever stood on it gone');
+  check(v.bad.length === 0, 'vials: ' + [...new Set(v.bad)].slice(0, 5).join('; '));
+}
+
+/* --- the potion of slime ---------------------------------------------- */
+{
+  const sl = ctx.slimeOK();
+  console.log('slime       : will not go down at all; thrown it covers ' +
+    sl.size.toFixed(1) + ' squares for ' + ctx.SLIME_TURNS[0] + '-' + ctx.SLIME_TURNS[1] +
+    ' turns, holds whatever walks in for a turn, and comes away on their feet ' +
+    sl.stick.toFixed(0) + '% of the time - following them ' + sl.chain.toFixed(2) +
+    ' squares before the luck runs out');
+  check(sl.bad.length === 0, 'slime: ' + [...new Set(sl.bad)].slice(0, 5).join('; '));
+}
+
+/* --- a dead end is worth searching ------------------------------------ */
+{
+  const de = ctx.deadEndDoorsOK(60);
+  console.log('dead ends   : ' + de.tips + ' real ones over ' + de.floors + ' floors (' +
+    de.perFloor.toFixed(2) + ' apiece, and a corridor running on into water is not ' +
+    'one of them); ' + de.withDoor + ' of them have a hidden door at the end - ' +
+    de.ofThose.toFixed(0) + '%, where it used to be none at all');
+  check(de.bad.length === 0, 'dead ends: ' + [...new Set(de.bad)].slice(0, 4).join('; '));
+}
+
+/* --- a floor that came down with you ---------------------------------- */
+{
+  const rb = ctx.blownHoleRubbleOK(14);
+  console.log('a blown hole: jumping through one you made lands you in ' +
+    rb.heap.toFixed(1) + ' squares of broken floor against ' + rb.plain.toFixed(1) +
+    ' for an ordinary fall, and ' + rb.soft + ' of ' + rb.tried +
+    ' landings were into the heap rather than onto bare stone');
+  check(rb.bad.length === 0, 'blown hole: ' + [...new Set(rb.bad)].slice(0, 4).join('; '));
+}
+
 if (errors.length) {
   console.log('\nFAILURES (' + errors.length + '):');
   [...new Set(errors)].slice(0, 12).forEach(e => console.log(' * ' + e));

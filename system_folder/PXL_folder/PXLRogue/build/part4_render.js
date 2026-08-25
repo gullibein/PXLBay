@@ -94,12 +94,32 @@ function boot() {
     if (box) box.style.display = 'flex';
   };
   atlasImg.onload = function () {
+    /* The sheet and the layout have to agree.  They are two files, and a
+       browser - or a CDN in front of one - will happily serve yesterday's
+       sheet beside today's HTML: the game then runs perfectly and cuts
+       every sprite out of the wrong cell, which looks like a bug in the
+       drawing rather than like a stale file.  The URL carries a stamp of
+       the sheet's own contents to stop that happening; this is the net
+       under it, so that if it ever does happen it SAYS so. */
+    if (atlasImg.naturalWidth && (atlasImg.naturalWidth !== ATLAS.atlasW ||
+                                  atlasImg.naturalHeight !== ATLAS.atlasH)) {
+      var box2 = document.getElementById('nosheet');
+      if (box2) {
+        box2.innerHTML = 'spritesheet.png is ' + atlasImg.naturalWidth + 'x' +
+          atlasImg.naturalHeight + ', and this build wants ' + ATLAS.atlasW + 'x' +
+          ATLAS.atlasH + '.<br>The two files have come apart - the page is ' +
+          'probably running from a stale cache.<br>Reload with SHIFT held down.';
+        box2.style.display = 'flex';
+      }
+      return;
+    }
     var keys = Object.keys(COLS);
     for (var i = 0; i < keys.length; i++) fonts[keys[i]] = makeFont(COLS[keys[i]]);
     hurtSheet = makeTint('#d82b2b');
     smokeSheet = makeTint(SMOKE_COL);
     dimSheet = makeDim();
     soundStart();
+    loadCrt();
     fitBars();
     ready = true;
     newGame(true);
@@ -211,6 +231,56 @@ function fit() {
   if (s < 1) s = 1;
   cv.style.width = (SW * s / dpr) + 'px';
   cv.style.height = (SH * s / dpr) + 'px';
+  fitCrt();
+}
+
+/* ------------------------------------------------------ retro monitor
+   Scanlines, laid over the picture rather than drawn into it.  The
+   backing store is exactly 230x128 and must stay that way, so a line
+   drawn in it would be a whole game pixel thick - four screen pixels at
+   the usual scale, straight through the middle of every sprite.  Over
+   the top they are as fine as whatever screen is showing them, which is
+   what a scanline is; and the browser composites it, so it costs the
+   game nothing per frame.
+
+   The switch is remembered on the machine rather than in the save,
+   because it is a fact about the screen you are sitting at and not about
+   the run - it should still be on when you start a new one. */
+var CRT_KEY = 'rogue8.crt';
+var CRT_ON = 0;
+function crtEl() {
+  return (typeof document !== 'undefined' && document.getElementById)
+    ? document.getElementById('crt') : null;
+}
+/* Lay the glass exactly over the picture.  It is fixed rather than
+   flowed, so it is put where the canvas actually ended up. */
+function fitCrt() {
+  var el = crtEl();
+  if (!el || !cv || !cv.getBoundingClientRect) return;
+  var r = cv.getBoundingClientRect();
+  el.style.left = r.left + 'px';
+  el.style.top = r.top + 'px';
+  el.style.width = r.width + 'px';
+  el.style.height = r.height + 'px';
+}
+function crtOn() { return !!CRT_ON; }
+function setCrt(on) {
+  CRT_ON = on ? 1 : 0;
+  var el = crtEl();
+  if (el) {
+    el.className = CRT_ON ? 'on' : '';
+    if (CRT_ON) fitCrt();
+  }
+  try { window.localStorage.setItem(CRT_KEY, CRT_ON ? '1' : '0'); } catch (e) { }
+  return CRT_ON;
+}
+function loadCrt() {
+  var v = null;
+  try { v = window.localStorage.getItem(CRT_KEY); } catch (e) { v = null; }
+  /* On unless it has been turned off.  Nothing said is a first visit,
+     and the game should look the way it is meant to look before anybody
+     has been into a menu - the switch is there to turn it OFF. */
+  setCrt(v !== '0');
 }
 /* Take the whole screen if the browser will give it.
 
@@ -431,9 +501,28 @@ function onTouchCancel() { TOUCH = null; MOUSE.held = null; MOUSE.on = 0; }
    other gesture people already use for moving a picture around.  A
    wheel does the same, which is no loss: it had nothing else to do. */
 var WHEEL_T = 0;
+/* Leftover wheel, kept between events.  A trackpad sends dozens of tiny
+   nudges where a mouse sends one shove; rounding each of them to a whole
+   line on its own would round every one of them to nothing. */
+var WHEEL_ACC = 0;
 function onWheel(e) {
   if (e.preventDefault) e.preventDefault();
   if (!ready) return;
+  /* A box of words scrolls.  The story is the long one - two hundred
+     lines of it - and walking that with the arrow keys is a poor way to
+     spend an evening. */
+  if (G.mode === 'story' && G.story) {
+    var room = storyRoom();
+    var end = Math.max(0, storyLines().length - room);
+    var by = e.deltaMode === 1 ? (e.deltaY || 0)
+           : e.deltaMode === 2 ? (e.deltaY || 0) * room
+           : (e.deltaY || 0) / WHEEL_TEXT_PX;
+    WHEEL_ACC += by;
+    var n = WHEEL_ACC > 0 ? Math.floor(WHEEL_ACC) : Math.ceil(WHEEL_ACC);
+    WHEEL_ACC -= n;
+    if (n) G.story.at = clamp(G.story.at + n, 0, end);
+    return;
+  }
   if (!MAP_MODES[G.mode]) return;         /* no dungeon behind it to move */
   /* pixels, lines or pages - only the first is any use as it stands */
   var k = e.deltaMode === 1 ? WHEEL_LINE_PX
@@ -1131,7 +1220,12 @@ function newGame(first, slot) {
   /* one scroll of identify: enough to learn one thing you find */
   var idScroll = mkItem('scroll', scrollIndex('identify'));
   addItem(idScroll);
-  var sandals = mkItem('feet', 0); sandals.known = 1; addItem(sandals);
+  /* On your feet, not in the pack.  They were in the pack because they
+     are the first thing you find rather than a thing you were given -
+     but nobody walks into a dungeon carrying their shoes, and a new
+     player putting them on by hand learns nothing from doing it. */
+  var sandals = mkItem('feet', 0); sandals.known = 1;
+  P.eq.feet = sandals;
 
   enterLevel(1);
   if (first) { G.msgq = []; G.mode = 'title'; return; }
@@ -1896,7 +1990,15 @@ function chooseKey(k) {
    this menu must not offer: it would leave two runs sharing a slot and
    the autosave writing over whichever it had last been told about. */
 var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['hints', 'HINTS'],
-                  ['restart', 'RESTART'], ['help', 'HELP'], ['exit', 'EXIT']];
+                  ['restart', 'RESTART'], ['help', 'HELP'],
+                  ['crt', 'RETRO MONITOR'], ['exit', 'EXIT']];
+/* Most lines say the same thing every time they are drawn.  The switch
+   does not: it has to say which way it is set, or it is not a switch. */
+function pauseText(i) {
+  var o = PAUSE_OPTS[i];
+  if (o[0] === 'crt') return o[1] + ': ' + (crtOn() ? 'ON' : 'OFF');
+  return o[1];
+}
 /* and the same menu on the title screen, where there is no run to save */
 var TITLE_OPTS = [['start', 'START'], ['load', 'LOAD'], ['scores', 'HIGHSCORE'],
                   ['hints', 'HINTS'], ['help', 'HELP'], ['exit', 'EXIT']];
@@ -1930,6 +2032,9 @@ function pauseKey(k) {
     return;
   }
   if (pick === 'hints') { openHints('pause'); return; }
+  /* A switch is thrown and you stay where you are: closing the menu on
+     you would mean opening it again to see what you had done. */
+  if (pick === 'crt') { setCrt(!crtOn()); return; }
   G.pause = null;
   if (pick === 'help') { G.mode = 'help'; return; }
   if (pick === 'restart') { newGame(false); return; }
@@ -1938,15 +2043,24 @@ function pauseKey(k) {
 function drawPause() {
   /* Wider than the title menu: SAVE AND QUIT is a longer line than
      anything on that one, and at 70 it ran into the frame. */
-  var i, w = 76, h = 12 + PAUSE_OPTS.length * 10 + 4;
-  var x = ((SW - w) >> 1), y = ((SH - h) >> 1);
+  /* Wide enough for the longest line it can show, which is the switch
+     with OFF on the end of it rather than SAVE AND QUIT.
+
+     Centred on the dungeon rather than on the whole screen.  This box is
+     drawn as part of the map, so the panel is painted over the top of
+     it afterwards - at the old width it cleared the panel by a single
+     pixel and nobody had to think about it, and the first line longer
+     than SAVE AND QUIT had its left hand end quietly eaten.  Centred on
+     the view it can be any width the view will take. */
+  var i, w = 100, h = 12 + PAUSE_OPTS.length * 10 + 4;
+  var x = VIEW_PX + ((VIEW_W * TS - w) >> 1), y = ((SH - h) >> 1);
   rect(x, y, w, h, '#0b0d1c');
   frame(x, y, w, h, '#636d85');
   text('PAUSED', x + 5, y + 4, 'y');
   for (i = 0; i < PAUSE_OPTS.length; i++) {
     var cur = G.pause && G.pause.i === i;
     if (cur) rect(x + 2, y + 13 + i * 10, w - 4, 10, '#2b3352');
-    text((cur ? '>' : ' ') + ' ' + PAUSE_OPTS[i][1], x + 5, y + 15 + i * 10, cur ? 'w' : '4');
+    text((cur ? '>' : ' ') + ' ' + pauseText(i), x + 5, y + 15 + i * 10, cur ? 'w' : '4');
     hit(x + 2, y + 13 + i * 10, w - 4, 10, 'pause', i);
   }
 }
@@ -2329,6 +2443,7 @@ function openStory() {
   var lines = storyLines();
   /* at the bottom: the last thing said, which is where you were */
   G.story = { at: Math.max(0, lines.length - storyRoom()) };
+  WHEEL_ACC = 0;                          /* a fresh box scrolls from rest */
   G.mode = 'story';
 }
 function closeStory() { G.story = null; resumeMode(); }
@@ -2875,13 +2990,15 @@ function invSpace() {
   var ib = titem;
   G.msgq = [];
 
-  /* drop into an open pouch that is sitting in a slot */
+  /* drop into an open pouch that is sitting in a slot - a potion, and
+     only a potion; the pouch is lined for glass and holds nothing else */
   if (ib && ib.t === 'pouch' && target.kind !== 'pouch' && ia.t !== 'pouch') {
+    if (!pouchTakes(ia)) { msg('The potion pouch holds nothing but glass.', 'R'); return; }
     for (var j = 0; j < contCap(ib); j++) {
       if (!ib.items[j]) {
         if (a.kind === 'eq' && ia.cursed) { msg('You cannot let go of it. It is cursed.', 'R'); return; }
         refSet(a, null); ib.items[j] = ia; G.sel = null;
-        msg('You stow ' + itemName(ia) + ' in the pouch.', 'w');
+        msg('You stow ' + itemName(ia) + ' in the potion pouch.', 'w');
         return;
       }
     }
@@ -2910,6 +3027,10 @@ function invSpace() {
     msg('A pouch will not fit inside a pouch.', 'R'); return;
   }
   if (target.kind === 'pouch' && ia.t === 'chest') { msg('The chest will not go in itself.', 'R'); return; }
+  /* and the same rule for a thing dragged into the open pouch's grid */
+  if (target.kind === 'pouch' && G.pouch && G.pouch.t === 'pouch' && !pouchTakes(ia)) {
+    msg('The potion pouch holds nothing but glass.', 'R'); return;
+  }
 
   refSet(a, ib); refSet(target, ia);
   G.sel = null;
@@ -2949,7 +3070,7 @@ function itemActions(it, ref) {
   }
   if (canAppraise(it) && !it.tried) out.push(['study', 'Study it']);
   if (isThrowable(it)) out.push(['throw',
-    it.t === 'dynamite' ? 'Light it' : isFlask(it) ? 'Hurl' : 'Throw']);
+    it.t === 'dynamite' ? 'Light it' : (isFlask(it) || isVial(it)) ? 'Hurl' : 'Throw']);
   switch (it.t) {
     case 'potion': out.push(['use', 'Drink']); break;
     case 'scroll': out.push(['use', 'Read']); break;
@@ -2979,9 +3100,9 @@ function itemActions(it, ref) {
      feet: somewhere to put a thing down without walking it across two
      screens.  A pouch cannot go in a pouch, and neither can anything
      that is on you and will not come off. */
-  if (ref.kind !== 'pouch' && it.t !== 'pouch' && carriedPouch() &&
+  if (ref.kind !== 'pouch' && pouchTakes(it) && carriedPouch() &&
       !(ref.kind === 'eq' && it.cursed))
-    out.push(['putbag', 'Put in pouch']);
+    out.push(['putbag', 'Put in the potion pouch']);
   out.push(['move', 'Move']);
   if (!(ref.kind === 'eq' && it.cursed)) out.push(['drop', 'Drop']);
   /* Every single thing can be looked at properly, whatever else it can
@@ -3137,14 +3258,15 @@ function putInPouch(it, ref) {
   G.msgq = [];
   var bag = carriedPouch();
   if (!bag) return false;
+  if (!pouchTakes(it)) { openNote('The potion pouch holds nothing but glass.'); return false; }
   var j, put = null;
   for (j = 0; j < POUCH_CAP; j++)
     if (stackable(bag.items[j], it)) { bag.items[j].cnt += it.cnt; put = bag.items[j]; break; }
   if (!put) for (j = 0; j < POUCH_CAP; j++) if (!bag.items[j]) { bag.items[j] = it; put = it; break; }
-  if (!put) { openNote('The pouch is full.'); return false; }
+  if (!put) { openNote('The potion pouch is full.'); return false; }
   if (ref.kind === 'eq') { P.eq[ref.key] = null; takeOffEffects(it); }
   else refSet(ref, null);
-  msg('You put ' + itemName(it) + ' in the pouch.', 'w');
+  msg('You put ' + itemName(it) + ' in the potion pouch.', 'w');
   G.sel = null; finishMsgs();
   return true;
 }
@@ -4256,6 +4378,15 @@ function drawMapAt(overX, overY) {
       }
       var tr = trapAt(mx, my);
       if (tr && tr.found) spr(tr.k.spr || 'trap', px, py, a);
+      /* Ice goes over the top of whatever the square is - flagstone,
+         water, a trap, the lid of a chest - because that is exactly what
+         it is: a glaze, not a tile of its own.  Half transparent, so you
+         can still read what is under it and still see at a glance that
+         you are about to walk on it. */
+      if (iceAt(mx, my)) spr('ice', px, py, a * ICE_ALPHA);
+      /* and a slick of slime, over the top of everything for the same
+         reason: it is on the floor, not instead of it */
+      if (slimeAt(mx, my)) spr('slime', px, py, a * SLIME_ALPHA);
     }
   }
   for (i = 0; i < L.items.length; i++) {
@@ -4339,6 +4470,8 @@ function drawMapAt(overX, overY) {
     /* alight, or frozen where it stands: both drawn over the creature
        so you can tell at a glance what is happening to it */
     if (see && m.burn > 0) spr(fireSprite(m.x, m.y), pos[0], pos[1], 0.85);
+    /* stuck in slime: the slick is on it, not under it */
+    else if (see && m.gummed > 0) spr('slime', pos[0], pos[1], 0.9);
     /* web looks like web and ice looks like ice: the block of ice used
        to be drawn over anything held for any reason at all */
     else if (see && m.webbed > 0) spr('web', pos[0], pos[1], 0.9);

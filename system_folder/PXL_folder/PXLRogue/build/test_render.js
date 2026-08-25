@@ -18,8 +18,11 @@ let blits = [], fills = [], problems = [];
    Cheap to check, so it is checked before anything else runs. */
 {
   const seen = new Map(), dupes = [];
+  /* part6 is only in playtest.html, but a name declared twice is a name
+     declared twice wherever it lives - and the playtest file is loaded
+     into the same machine as the rest, so a clash there is a clash. */
   for (const f of ['part1_core.js', 'part2_game.js', 'part3_actions.js',
-                   'part4_render.js', 'part5_sound.js']) {
+                   'part4_render.js', 'part5_sound.js', 'part6_playtest.js']) {
     const lines = fs.readFileSync(path.join(D, f), 'utf8').split('\n');
     lines.forEach((ln, i) => {
       const m = /^function ([A-Za-z_$][\w$]*)\s*\(/.exec(ln);
@@ -304,15 +307,45 @@ setTimeout(() => {
      wherever that happens, a panel has outgrown its space. */
   function textClash(label) {
     /* A modal paints an opaque box over whatever was behind it, so text
-       under an open menu or pouch is covered, not collided with. */
-    if (ctx.G && (ctx.G.menu || ctx.G.pouch || ctx.G.inspect ||
-                  ctx.G.mode === 'story')) return 0;
+       under an open menu is covered rather than collided with.
+
+       This used to be a list of the modes that do that, which was both
+       incomplete and too blunt: it named four of them, so a box in any
+       other mode read its own backdrop as a clash, and where it did
+       match it switched the check off altogether and stopped looking
+       inside the dialog as well.  What actually settles it is the
+       drawing itself - a glyph with an opaque rectangle painted over it
+       afterwards is not on the screen at all, so it is dropped, and
+       everything still showing is checked as before. */
+    /* Which pixels have had an opaque rectangle painted over them, and
+       when.  Counted pixel by pixel rather than glyph by glyph, because
+       a box is not always the whole of what is behind it: the story
+       screen starts two rows down the panel, so the top of the panel's
+       first line still shows above it while the rest of that same line
+       is covered.  Whole-glyph coverage read the covered part as a
+       clash and the visible part as fine, which is both ways round. */
+    const W = ctx.SW, H = ctx.SH;
+    const coverAt = new Int32Array(W * H);
+    for (const f of fills) {
+      if (f.tag !== 'screen') continue;
+      if (f.at !== undefined && f.at < 1) continue;
+      if (f.op === 'lighter') continue;
+      const x0 = Math.max(0, f.x | 0), y0 = Math.max(0, f.y | 0);
+      const x1 = Math.min(W, (f.x + f.w) | 0), y1 = Math.min(H, (f.y + f.h) | 0);
+      for (let y = y0; y < y1; y++)
+        for (let x = x0; x < x1; x++) {
+          const k = y * W + x;
+          if (f.seq > coverAt[k]) coverAt[k] = f.seq;
+        }
+    }
+    const showing = blits.filter(b => b.tag === 'screen' && b.from === 'font');
     const seen = new Set();
     let clashes = 0;
-    for (const b of blits) {
-      if (b.tag !== 'screen' || b.from !== 'font') continue;
+    for (const b of showing) {
       for (let y = b.dy; y < b.dy + b.dh; y++)
         for (let x = b.dx; x < b.dx + b.dw; x++) {
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          if (coverAt[y * W + x] > b.seq) continue;   /* painted over since */
           const k = y * 1000 + x;
           if (seen.has(k)) clashes++;
           seen.add(k);
@@ -321,10 +354,11 @@ setTimeout(() => {
     if (clashes > 0) {
       const where = [];
       const seen2 = new Set();
-      for (const b of blits) {
-        if (b.tag !== 'screen' || b.from !== 'font') continue;
+      for (const b of showing) {
         for (let y = b.dy; y < b.dy + b.dh; y++)
           for (let x = b.dx; x < b.dx + b.dw; x++) {
+            if (x < 0 || y < 0 || x >= W || y >= H) continue;
+            if (coverAt[y * W + x] > b.seq) continue;
             const k = y * 1000 + x;
             if (seen2.has(k)) { where.push(b.dx + ',' + b.dy); y = 1e9; break; }
             seen2.add(k);
@@ -6063,6 +6097,49 @@ setTimeout(() => {
     if (G.story.at >= atEnd) storyBad.push('PAGE UP did not move a page back');
     key('Home');
     if (G.story.at !== 0) storyBad.push('HOME did not go to the start');
+
+    /* and the wheel walks it, which is how anybody with a mouse in their
+       hand expects to read two hundred lines of anything.  Three kinds
+       of wheel event, because the browsers do not agree: pixels from a
+       trackpad, lines from a mouse, pages from whatever does that. */
+    const wheel = (dy, mode) => canvasListeners.wheel({
+      deltaX: 0, deltaY: dy, deltaMode: mode || 0, preventDefault() { } });
+    G.story.at = 0;
+    wheel(ctx.WHEEL_TEXT_PX * 3);
+    if (G.story.at !== 3)
+      storyBad.push('a shove of the wheel moved it ' + G.story.at + ' lines, not 3');
+    wheel(-ctx.WHEEL_TEXT_PX * 2);
+    if (G.story.at !== 1) storyBad.push('the wheel would not come back up');
+    /* a trackpad sends dozens of nudges too small to be a whole line;
+       each rounding to nothing on its own is how a box refuses to move */
+    G.story.at = 0;
+    for (let i = 0; i < 12; i++) wheel(ctx.WHEEL_TEXT_PX / 4);
+    if (G.story.at !== 3)
+      storyBad.push('twelve small nudges moved it ' + G.story.at + ' lines, not 3');
+    /* it stops at both ends rather than running off */
+    G.story.at = 0;
+    wheel(-ctx.WHEEL_TEXT_PX * 50);
+    if (G.story.at !== 0) storyBad.push('the wheel ran off the top to ' + G.story.at);
+    wheel(ctx.WHEEL_TEXT_PX * 5000);
+    if (G.story.at !== atEnd)
+      storyBad.push('the wheel ran off the bottom to ' + G.story.at + ' of ' + atEnd);
+    /* lines and pages, not only pixels */
+    G.story.at = 0;
+    wheel(2, 1);
+    if (G.story.at !== 2) storyBad.push('a wheel that counts in lines moved ' + G.story.at);
+    G.story.at = 0;
+    wheel(1, 2);
+    if (G.story.at !== ctx.storyRoom())
+      storyBad.push('a wheel that counts in pages moved ' + G.story.at +
+        ', not the ' + ctx.storyRoom() + ' lines a page holds');
+    /* and it does not shove the dungeon about behind the box */
+    G.story.at = 0;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    wheel(ctx.WHEEL_TEXT_PX * 3);
+    if (ctx.CAM_AT.x || ctx.CAM_AT.y)
+      storyBad.push('reading the story pushed the map to ' + ctx.CAM_AT.x + ',' + ctx.CAM_AT.y);
+    key('Home');
+
     /* and the start of the run is really in there */
     frame('story-top');
     const early = blits.filter(b => b.tag === 'screen' && b.from === 'font').length;
@@ -6088,7 +6165,8 @@ setTimeout(() => {
     if (!helpSays) storyBad.push('the help screen says nothing about T');
     console.log('the story so far     : ' + (storyBad.length ? storyBad.length + ' problems' :
       'T and a press on the panel both open ' + G.hist.length +
-      ' lines of it, and the arrows walk it end to end'));
+      ' lines of it; the arrows walk it end to end and so does the wheel, ' +
+      'in pixels, lines or pages'));
     for (const b of storyBad) problems.push('story: ' + b);
     G.log = []; G.hist = []; G.turn = 0;
   }
@@ -6189,39 +6267,96 @@ setTimeout(() => {
     const labels = (it, ref) => ctx.itemActions(it, ref).map(o => o[1]);
     const empty = () => { for (let i = 0; i < ctx.N_SLOTS; i++) P.slots[i] = null; };
 
-    /* carrying a pouch: everything in the pack offers to go in it */
+    /* The pouch is for potions.  It used to be a general overflow bag,
+       which made it a second pack - and a second pack is not a decision,
+       it is only more room. */
     G.mode = 'play'; G.note = null; ctx.setPouch(null); ctx.closeInv();
     empty();
     const pouch = ctx.mkItem('pouch', 0); ctx.addItem(pouch);
+    const potion = ctx.mkItem('potion', 0);
+    P.slots[P.slots.indexOf(null)] = potion;      /* by hand: addItem would stow it */
+    const vial = ctx.mkItem('vial', 0);
+    P.slots[P.slots.indexOf(null)] = vial;
     const scroll = ctx.mkItem('scroll', 0); ctx.addItem(scroll);
     ctx.openInv();
-    if (labels(scroll, slotRef(scroll)).indexOf('Put in pouch') < 0)
-      bad.push('the pack offers no way into the pouch');
-    /* and the pouch itself does not go in itself */
-    if (labels(pouch, slotRef(pouch)).indexOf('Put in pouch') >= 0)
+    const IN = 'Put in the potion pouch';
+    if (labels(potion, slotRef(potion)).indexOf(IN) < 0)
+      bad.push('a potion in the pack is offered no way into the pouch');
+    /* a vial is the same shape of problem as a potion, so it goes in the
+       same bag - it is the glass the lining is for */
+    if (labels(vial, slotRef(vial)).indexOf(IN) < 0)
+      bad.push('a vial in the pack is offered no way into the pouch');
+    if (labels(scroll, slotRef(scroll)).indexOf(IN) >= 0)
+      bad.push('a scroll is offered a place in the potion pouch');
+    if (labels(pouch, slotRef(pouch)).indexOf(IN) >= 0)
       bad.push('a pouch is offered a place inside itself');
     /* it goes in, and comes back out into the pack */
-    ctx.openItemMenu(scroll, slotRef(scroll));
+    ctx.openItemMenu(potion, slotRef(potion));
     ctx.doMenuAction('putbag');
-    if (pouch.items.indexOf(scroll) < 0) bad.push('it did not go in the pouch');
-    if (P.slots.indexOf(scroll) >= 0) bad.push('it is in the pack and the pouch at once');
+    if (pouch.items.indexOf(potion) < 0) bad.push('it did not go in the pouch');
+    if (P.slots.indexOf(potion) >= 0) bad.push('it is in the pack and the pouch at once');
     ctx.setPouch(pouch);
-    const pref = { kind: 'pouch', i: pouch.items.indexOf(scroll), pouch: pouch };
-    if (labels(scroll, pref).indexOf('Put in pack') < 0)
+    const pref = { kind: 'pouch', i: pouch.items.indexOf(potion), pouch: pouch };
+    if (labels(potion, pref).indexOf('Put in pack') < 0)
       bad.push('the pouch offers no way back into the pack');
-    ctx.openItemMenu(scroll, pref);
+    ctx.openItemMenu(potion, pref);
     ctx.doMenuAction('takeout');
-    if (P.slots.indexOf(scroll) < 0) bad.push('it did not come back into the pack');
-    if (pouch.items.indexOf(scroll) >= 0) bad.push('it is in the pouch and the pack at once');
+    if (P.slots.indexOf(potion) < 0) bad.push('it did not come back into the pack');
+    if (pouch.items.indexOf(potion) >= 0) bad.push('it is in the pouch and the pack at once');
+
+    /* a potion you pick up puts itself away, and nothing else does */
+    ctx.setPouch(null); ctx.closeInv(); G.mode = 'play';
+    empty();
+    P.slots[0] = pouch;
+    for (let j = 0; j < ctx.POUCH_CAP; j++) pouch.items[j] = null;
+    const found = ctx.mkItem('potion', 2);
+    ctx.addItem(found);
+    if (pouch.items.indexOf(found) < 0)
+      bad.push('a potion picked up did not put itself in the pouch');
+    if (P.slots.indexOf(found) >= 0) bad.push('the potion is in the pack as well');
+    const foundV = ctx.mkItem('vial', 1);
+    ctx.addItem(foundV);
+    if (pouch.items.indexOf(foundV) < 0)
+      bad.push('a vial picked up did not put itself in the pouch');
+    const scr2 = ctx.mkItem('scroll', 1);
+    ctx.addItem(scr2);
+    if (pouch.items.indexOf(scr2) >= 0) bad.push('a scroll put itself in the potion pouch');
+
+    /* and when it is full they simply stay in the pack rather than being
+       lost or refused: the bag is somewhere for them, not a promise */
+    for (let j = 0; j < ctx.POUCH_CAP; j++) pouch.items[j] = ctx.mkItem('potion', 1);
+    empty(); P.slots[0] = pouch;
+    const overflow = ctx.mkItem('vial', 2);
+    ctx.addItem(overflow);
+    if (pouch.items.indexOf(overflow) >= 0) bad.push('a vial went into a full pouch');
+    if (P.slots.indexOf(overflow) < 0)
+      bad.push('a vial with the pouch full ended up nowhere at all');
+
+    /* and finding the pouch sorts out the potions you already had */
+    empty();
+    for (let j = 0; j < ctx.POUCH_CAP; j++) pouch.items[j] = null;
+    const had = [ctx.mkItem('potion', 0), ctx.mkItem('vial', 0)];
+    P.slots[0] = had[0]; P.slots[1] = had[1]; P.slots[2] = ctx.mkItem('scroll', 0);
+    const keptOut = P.slots[2];
+    ctx.addItem(pouch);
+    for (const h of had) {
+      if (pouch.items.indexOf(h) < 0) bad.push('a potion you already had stayed out of the pouch');
+      if (P.slots.indexOf(h) >= 0) bad.push('a stowed potion is still in the pack');
+    }
+    if (P.slots.indexOf(keptOut) < 0) bad.push('the pouch swallowed a scroll off the pack');
 
     /* a full pouch says so in a box */
     G.note = null; G.mode = 'inv';
+    ctx.setPouch(null);
+    empty();
+    P.slots[0] = pouch;
+    const spare = ctx.mkItem('potion', 3); P.slots[1] = spare;
     for (let j = 0; j < ctx.POUCH_CAP; j++) pouch.items[j] = ctx.mkItem('potion', 1);
-    ctx.openItemMenu(scroll, slotRef(scroll));
+    ctx.openItemMenu(spare, slotRef(spare));
     ctx.doMenuAction('putbag');
     if (G.mode !== 'note' || !G.note) bad.push('a full pouch put no notice up');
     else if (!/pouch is full/i.test(G.note.line)) bad.push('it says "' + G.note.line + '"');
-    if (pouch.items.indexOf(scroll) >= 0) bad.push('it went into the full pouch anyway');
+    if (pouch.items.indexOf(spare) >= 0) bad.push('it went into the full pouch anyway');
     /* the notice is drawn, and over the pack it interrupted */
     blits = []; fills = [];
     vm.runInContext('render();', ctx);
@@ -6318,7 +6453,10 @@ setTimeout(() => {
     G.perkPick = null; G.note = null; G.levelUp = 0; G.mode = 'play';
 
     console.log('bags and notices     : ' + (bad.length ? bad.length + ' problems' :
-      'the pack and the pouch pass things both ways, a full one says so in a box, ' +
+      'the potion pouch takes potions and vials and refuses everything else, ' +
+      'stows the ones ' +
+      'you already had and the ones you pick up, passes them back to the pack, ' +
+      'says so in a box when it is full, ' +
       'a chest can be drunk from, what you stepped over is offered again once there ' +
       'is room, and a level gained is held up unless a perk is'));
     for (const b of bad) problems.push('notices: ' + b);
@@ -6448,6 +6586,224 @@ setTimeout(() => {
     G.splash = null;
     undo();
     ctx.computeVis();
+  }
+
+  /* --- the playtest pack ------------------------------------------------
+     playtest.html is not the game, so none of the four suites loads it -
+     which meant its one job, handing you a pack worth testing with, was
+     the only thing in the project nothing checked.  The file defines
+     functions and runs nothing at load, so it can be read into the same
+     machine and asked.
+
+     What it has to hand you is variety: a kit with one of everything in
+     it is a fine way to test a thing you already know about and a poor
+     way to notice one you do not.  And three kinds have to be in it
+     every time, because they are the easiest to go a whole session
+     without seeing. */
+  {
+    const bad = [];
+    let loaded = true;
+    try {
+      vm.runInContext(fs.readFileSync(path.join(D, 'part6_playtest.js'), 'utf8'), ctx);
+    } catch (e) { loaded = false; bad.push('the playtest file will not load: ' + e.message); }
+    if (loaded && typeof ctx.playtestKit !== 'function')
+      bad.push('the playtest file defines no kit');
+    else if (loaded) {
+      /* the live game goes on after this, so what the kit overwrites is
+         put back when it is done */
+      const wasSlots = ctx.P.slots, wasEq = ctx.P.eq;
+      const wasKnown = ctx.KNOWN, wasAppear = ctx.APPEAR;
+      const wasFood = ctx.P.food, wasGold = ctx.P.gold;
+      const kinds = [];
+      const seen = { vial: 0, food: 0, ring: 0, wand: 0 };
+      let varied = new Set();
+      for (let run = 0; run < 12; run++) {
+        ctx.srand(61000 + run);
+        vm.runInContext('makeAppearances(); playtestKit();', ctx);
+        const pouch = ctx.P.slots.find(s => s && s.t === 'pouch');
+        if (!pouch) { bad.push('no pouch in the playtest pack'); break; }
+        const all = ctx.P.slots.filter(Boolean)
+          .concat(pouch.items.filter(Boolean));
+        const have = {};
+        for (const it of all) have[it.t] = (have[it.t] || 0) + 1;
+        for (const k of ['vial', 'food', 'ring']) {
+          if (!have[k]) bad.push('a run of the playtest kit had no ' + k);
+          else seen[k]++;
+        }
+        if (have.wand) seen.wand++;
+        /* a mushroom rather than a ration: the kind you cannot name */
+        const mush = all.filter(it => it.t === 'food' && ctx.isMushroom(it.k));
+        if (!mush.length) bad.push('a run of the playtest kit had no mushroom');
+        /* nothing may be handed to you already worked out, bar the wands
+           and the scrolls, which are tools rather than puzzles */
+        for (const it of all) {
+          if (it.t === 'vial' && ctx.KNOWN.vial[it.k])
+            bad.push('a vial came already identified');
+          if (it.t === 'potion' && ctx.KNOWN.pot[it.k])
+            bad.push('a potion came already identified');
+        }
+        varied.add(ctx.P.slots.filter(Boolean).map(i => i.t).join(','));
+        kinds.push(Object.keys(have).length);
+      }
+      if (varied.size < 6)
+        bad.push('twelve runs of the kit came out in only ' + varied.size + ' shapes');
+      if (!seen.wand) bad.push('no run of the kit had a wand in it');
+      console.log('the playtest pack    : 12 runs, ' + varied.size +
+        ' different packs, every one of them with a vial, a mushroom and a ring in it');
+      ctx.P.slots = wasSlots; ctx.P.eq = wasEq;
+      ctx.KNOWN = wasKnown; ctx.APPEAR = wasAppear;
+      ctx.P.food = wasFood; ctx.P.gold = wasGold;
+      ctx.computeVis();
+    }
+    for (const b of bad) problems.push('playtest: ' + b);
+  }
+
+  /* --- the retro monitor, and a menu that is all there ------------------
+     The switch itself is a line in the ESC menu that has to say which
+     way it is set, and throwing it must leave you in the menu looking at
+     what you just did.
+
+     And the menu has to be ALL on the screen.  It is drawn as part of
+     the map, so the panel is painted over the top of it afterwards: at
+     its old width it cleared the panel by one pixel and nobody had to
+     think about it, and the first line longer than SAVE AND QUIT had its
+     left hand end quietly eaten with nothing failing anywhere. */
+  {
+    const P = ctx.P, G = ctx.G;
+    const bad = [];
+    G.mode = 'play'; G.note = null; ctx.selClear(); ctx.closeInv();
+    ctx.openPause();
+    const idx = ctx.PAUSE_OPTS.findIndex(o => o[0] === 'crt');
+    if (idx < 0) bad.push('there is no retro monitor line in the menu');
+    else {
+      /* it says which way it is set, both ways round */
+      ctx.setCrt(false);
+      if (!/OFF$/.test(ctx.pauseText(idx)))
+        bad.push('switched off the line reads "' + ctx.pauseText(idx) + '"');
+      ctx.setCrt(true);
+      if (!/ON$/.test(ctx.pauseText(idx)))
+        bad.push('switched on the line reads "' + ctx.pauseText(idx) + '"');
+      /* throwing it toggles, and leaves you in the menu */
+      ctx.setCrt(false);
+      G.pause.i = idx;
+      ctx.pauseKey('Enter');
+      if (!ctx.crtOn()) bad.push('pressing it did not switch the monitor on');
+      if (G.mode !== 'pause') bad.push('pressing it left the menu, for ' + G.mode);
+      ctx.pauseKey('Enter');
+      if (ctx.crtOn()) bad.push('pressing it again did not switch it off');
+      if (G.mode !== 'pause') bad.push('pressing it twice left the menu');
+      /* and it is remembered on the machine rather than in the run */
+      ctx.setCrt(true);
+      ctx.loadCrt();
+      if (!ctx.crtOn()) bad.push('the setting was forgotten between runs');
+      ctx.setCrt(false);
+      ctx.loadCrt();
+      if (ctx.crtOn()) bad.push('switching it off was forgotten between runs');
+
+      /* Somebody who has never been into the menu has said nothing, and
+         the game is meant to LOOK like a monitor before they do - the
+         switch is there to turn it off.  So an empty store is on. */
+      ctx.window.localStorage.removeItem(ctx.CRT_KEY);
+      ctx.loadCrt();
+      if (!ctx.crtOn())
+        bad.push('a first visit came up with the monitor off');
+      /* but that must be a default and not a switch that has stopped
+         working: having actually turned it off must still stick */
+      ctx.window.localStorage.setItem(ctx.CRT_KEY, '0');
+      ctx.loadCrt();
+      if (ctx.crtOn())
+        bad.push('turning it off did not survive - it comes up on regardless');
+      ctx.window.localStorage.removeItem(ctx.CRT_KEY);
+      ctx.setCrt(false);
+    }
+
+    /* every letter of every line, still on the screen when the frame is
+       finished - nothing painted over afterwards by the panel */
+    G.mode = 'pause'; G.pause = { i: 0 };
+    blits = []; fills = [];
+    vm.runInContext('render();', ctx);
+    const W = ctx.SW, H = ctx.SH;
+    const cover = new Int32Array(W * H);
+    for (const f of fills) {
+      if (f.tag !== 'screen') continue;
+      if (f.at !== undefined && f.at < 1) continue;
+      if (f.op === 'lighter') continue;
+      for (let y = Math.max(0, f.y | 0); y < Math.min(H, (f.y + f.h) | 0); y++)
+        for (let x = Math.max(0, f.x | 0); x < Math.min(W, (f.x + f.w) | 0); x++)
+          if (f.seq > cover[y * W + x]) cover[y * W + x] = f.seq;
+    }
+    /* the menu's own words are the last text drawn inside its box, so
+       they are found by asking which text is left showing */
+    const eaten = [];
+    for (const t of ctx.TEXTS) {
+      const want = t.s;
+      if (!want || !/^[>\s]*[A-Z]/.test(want)) continue;
+      if (!ctx.PAUSE_OPTS.some(o => want.indexOf(o[1]) >= 0) && want !== 'PAUSED') continue;
+      /* the glyphs of this run, and whether any of them was covered */
+      const mine = blits.filter(b => b.tag === 'screen' && b.from === 'font' &&
+        b.dy >= t.y - 1 && b.dy <= t.y + 8 && b.dx >= t.x - 1);
+      let lost = 0;
+      for (const b of mine) {
+        let vis = 0;
+        for (let y = b.dy; y < b.dy + b.dh && !vis; y++)
+          for (let x = b.dx; x < b.dx + b.dw && !vis; x++)
+            if (x >= 0 && y >= 0 && x < W && y < H && cover[y * W + x] <= b.seq) vis = 1;
+        if (!vis) lost++;
+      }
+      if (lost) eaten.push('"' + want + '" lost ' + lost + ' letters');
+    }
+    for (const e of eaten) bad.push('the menu is clipped: ' + e);
+
+    console.log('the retro monitor    : a line in the ESC menu that says which way it is ' +
+      'set, throws without closing the menu, is remembered between runs, is ON for ' +
+      'somebody who has never touched it, and the menu is drawn clear of the panel ' +
+      'with nothing eaten off it');
+    for (const b of bad) problems.push('retro: ' + b);
+    G.pause = null; G.mode = 'play';
+  }
+
+  /* --- every sprite a thing asks for is on the sheet --------------------
+     itemSprite returns a NAME, and a name that is not on the sheet draws
+     nothing at all.  There is no error, no gap in a log, no failing
+     check anywhere else - the thing is simply invisible on the floor and
+     blank in the pack.  A one word slip put the pouch in that state and
+     nothing noticed, so now this does: every kind of every type, asked
+     for its sprite, and the sheet has to have it. */
+  {
+    const missing = [];
+    const ask = (t, k) => {
+      const it = ctx.mkItem(t, k);
+      const nm = ctx.itemSprite(it);
+      if (!nm || ATLAS.index[nm] === undefined)
+        missing.push(t + '[' + k + '] wants "' + nm + '"');
+    };
+    const kinds = { potion: ctx.POTIONS.length, scroll: ctx.SCROLLS.length,
+                    wand: ctx.WANDS.length, ring: ctx.RINGS.length,
+                    food: ctx.FOODS.length, weapon: ctx.WEAPONS.length,
+                    armor: ctx.ARMORS.length, head: ctx.HEADS.length,
+                    feet: ctx.FEET.length, shield: ctx.SHIELDS.length,
+                    key: ctx.MATS.length, vial: ctx.VIALS.length };
+    /* the slime is the one thing on the floor with no item behind it,
+       so it is asked for by name */
+    for (const overlay of ['ice', 'slime'])
+      if (ATLAS.index[overlay] === undefined)
+        missing.push('the floor wants a "' + overlay + '" and there is none');
+    let asked = 0;
+    for (const t in kinds) for (let k = 0; k < kinds[t]; k++) { ask(t, k); asked++; }
+    for (const t of ['gold', 'amulet', 'pouch', 'pin', 'dynamite', 'crystal', 'chest'])
+      { ask(t, 0); asked++; }
+    /* a chest wears its lock, and an open one wears a different face */
+    for (let m = 0; m < ctx.MATS.length; m++) {
+      const c = ctx.mkItem('chest', 0); c.lock = m;
+      let nm = ctx.itemSprite(c);
+      if (ATLAS.index[nm] === undefined) missing.push('a ' + ctx.MATS[m] + ' chest wants "' + nm + '"');
+      c.seen = 1; nm = ctx.itemSprite(c);
+      if (ATLAS.index[nm] === undefined) missing.push('an open chest wants "' + nm + '"');
+      asked += 2;
+    }
+    console.log('every thing is drawn : ' + asked + ' kinds asked for a sprite, ' +
+      (missing.length ? missing.length + ' of them are not on the sheet' : 'all of them on the sheet'));
+    for (const m of missing) problems.push('sprite: ' + m);
   }
 
   /* --- a barrel knocks the room about ----------------------------------
@@ -6664,6 +7020,62 @@ setTimeout(() => {
     for (const b of bad) problems.push('pause: ' + b);
   }
 
+  /* --- what lies on the floor is drawn on the floor ---------------------
+     Ice and slime are both laid OVER the square rather than instead of
+     it, which means neither has an item or a tile of its own for
+     anything else to notice.  If one stopped being drawn there would be
+     no error anywhere and no failing check: the floor would simply look
+     like bare stone and behave like ice. */
+  {
+    const P = ctx.P, L = ctx.L, G = ctx.G;
+    const bad = [];
+    G.mode = 'play'; G.note = null; G.splash = null; ctx.selClear();
+    L.mons.length = 0; L.items.length = 0; L.clouds.length = 0;
+    L.ice = {}; L.slime = {};
+    const spot = [P.x + 1, P.y];
+    const undo = clearPatch(ctx, [spot]);
+    const j = spot[1] * ctx.MAP_W + spot[0];
+    const camx = P.x - (ctx.VIEW_W >> 1), camy = P.y - (ctx.VIEW_H >> 1);
+    const px = ctx.VIEW_PX + (spot[0] - camx) * ctx.TS;
+    const py = ctx.VIEW_PY + (spot[1] - camy) * ctx.TS;
+    const cellOf = (n) => { const i = ATLAS.index[n];
+      return [(i % ATLAS.cols) * 8, ((i / ATLAS.cols) | 0) * 8]; };
+    const drawnAt = () => {
+      blits = []; fills = [];
+      vm.runInContext('render();', ctx);
+      return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        b.dx === px && b.dy === py);
+    };
+    const wears = (name) => {
+      const c = cellOf(name);
+      return drawnAt().some(b => b.sx === c[0] && b.sy === c[1]);
+    };
+
+    if (wears('slime')) bad.push('bare stone is drawn with slime on it');
+    if (wears('ice')) bad.push('bare stone is drawn with ice on it');
+
+    L.slime[j] = 9;
+    ctx.computeVis();
+    L.flags[j] |= (ctx.F_VIS | ctx.F_SEEN);
+    if (!wears('slime')) bad.push('a slimed square is drawn as bare stone');
+    /* and the floor is still under it: a slick, not a tile */
+    const under = drawnAt().length;
+    if (under < 2) bad.push('the slime is drawn instead of the floor, not over it');
+
+    L.ice[j] = 9;
+    if (!wears('ice')) bad.push('an iced square is drawn as bare stone');
+    if (!wears('slime')) bad.push('the ice hid the slime under it');
+
+    L.ice = {}; L.slime = {};
+    if (wears('slime')) bad.push('the slime is still drawn once it has dried');
+    if (wears('ice')) bad.push('the ice is still drawn once it has thawed');
+
+    console.log('on the floor         : slime and ice are both drawn over the square ' +
+      'rather than instead of it, and both go when they go');
+    for (const b of bad) problems.push('overlays: ' + b);
+    undo(); ctx.computeVis();
+  }
+
   /* --- fire seen down the length of a hall -----------------------------
      Everything else is drawn only where the lamp reaches.  Fire and
      lightning carry their own light, so a barrel going up at the far end
@@ -6816,6 +7228,50 @@ setTimeout(() => {
     L.tiles[j] = ctx.FLOOR;
     undo();
     ctx.computeVis();
+  }
+
+  /* --- the sheet the page asks for is the sheet beside it --------------
+     The layout lives in the HTML and the pixels live in the PNG, and a
+     browser - or a CDN in front of one - will serve one of them from
+     yesterday and the other from today.  The game then runs perfectly
+     and cuts every sprite out of the wrong cell.  On the real site that
+     meant a hard reload every single visit, because a normal reload put
+     the old PNG straight back beside the new page.
+
+     So the sheet is asked for by a name carrying a stamp of its own
+     contents.  A cache cannot serve old bytes under a name it has never
+     seen, and an old page still asks for its own old sheet - a stale
+     cache gives you an old game that WORKS instead of a new one that
+     does not.  This checks the built pages really carry that stamp and
+     that it is the stamp of the sheet lying beside them. */
+  {
+    const crypto = require('crypto');
+    const root = path.join(D, '..');
+    const bad = [];
+    const want = crypto.createHash('sha1')
+      .update(fs.readFileSync(path.join(root, 'spritesheet.png')))
+      .digest('hex').slice(0, 10);
+    for (const page of ['index.html', 'playtest.html']) {
+      const p = path.join(root, page);
+      if (!fs.existsSync(p)) { bad.push(page + ' has not been built'); continue; }
+      const html = fs.readFileSync(p, 'utf8');
+      const m = /ATLAS_PNG = "spritesheet\.png(\?v=([0-9a-f]+))?"/.exec(html);
+      if (!m) { bad.push(page + ' does not point at spritesheet.png at all'); continue; }
+      if (!m[2]) {
+        bad.push(page + ' asks for the sheet by a bare name, so a cache can ' +
+          'serve an old one beside it');
+      } else if (m[2] !== want) {
+        bad.push(page + ' carries stamp ' + m[2] + ' but the sheet beside it ' +
+          'stamps ' + want + ' - the page was built against a different sheet');
+      }
+      /* and the rule that stamp exists to serve: the pixels stay a file */
+      if (html.indexOf('data:image/png;base64') >= 0)
+        bad.push(page + ' has the sheet baked into it');
+    }
+    console.log('the sheet is not stale: ' + (bad.length ? bad.length + ' problems' :
+      'both pages ask for spritesheet.png?v=' + want + ', which is the sheet ' +
+      'beside them, and neither has it baked in'));
+    for (const b of bad) problems.push('cache: ' + b);
   }
 
   if (problems.length) {

@@ -16,8 +16,9 @@ var CHEST_CAP = 5;
 /* ---------------------------------------------------------- appearances */
 function makeAppearances() {
   var i, j;
-  APPEAR = { pot: [], scr: [], wand: [], wandType: [], wandSpr: [], stone: {}, mush: {} };
-  KNOWN = { pot: [], scr: [], wand: [], weap: [] };
+  APPEAR = { pot: [], scr: [], wand: [], wandType: [], wandSpr: [], stone: {},
+             mush: {}, vial: [] };
+  KNOWN = { pot: [], scr: [], wand: [], weap: [], vial: [] };
   /* Two different things are hidden about a piece of kit, and they are
      learned separately.  KNOWN.gear says you recognise the kind on
      sight - a long sword, not "a notched blade".  it.known says you
@@ -43,6 +44,12 @@ function makeAppearances() {
 
   var cols = shuffle(P_COLORS.slice());
   for (i = 0; i < POTIONS.length; i++) { APPEAR.pot.push(cols[i]); KNOWN.pot.push(0); }
+
+  /* The same trick for vials, out of their own list of colours: they are
+     heavy dark glass rather than a flask of something clear, so they do
+     not share a word with the potions and cannot be mistaken for one. */
+  var vcols = shuffle(V_COLORS.slice());
+  for (i = 0; i < VIALS.length; i++) { APPEAR.vial.push(vcols[i]); KNOWN.vial.push(0); }
 
   var usedTitles = {};
   for (i = 0; i < SCROLLS.length; i++) {
@@ -174,6 +181,7 @@ function itemDef(it) {
     case 'feet': return FEET[it.k];
     case 'shield': return SHIELDS[it.k];
     case 'potion': return POTIONS[it.k];
+    case 'vial': return VIALS[it.k];
     case 'scroll': return SCROLLS[it.k];
     case 'wand': return WANDS[it.k];
     case 'ring': return RINGS[it.k];
@@ -413,11 +421,17 @@ function weaponRune() {
 
 /* Some weapons do not belong near the surface.  Roll again rather than
    handing a throwing dagger to somebody on the first floor. */
+function tooShallow(k, depth) {
+  var W = WEAPONS[k];
+  if (W.minDepth && depth < W.minDepth) return true;
+  /* and nothing that takes your shield hand until the third floor */
+  if (W.two && depth < DEEP_ONLY_DEPTH) return true;
+  return false;
+}
 function pickWeaponFor(depth) {
   for (var t = 0; t < 24; t++) {
     var k = weightedPick(WEAPONS);
-    var W = WEAPONS[k];
-    if (!W.minDepth || depth >= W.minDepth) return k;
+    if (!tooShallow(k, depth)) return k;
   }
   return weaponIndex('dagger');
 }
@@ -429,6 +443,7 @@ function newItem(depth) {
     case 'potion': it = mkItem('potion', weightedPick(POTIONS)); break;
     case 'scroll': it = mkItem('scroll', weightedPick(SCROLLS)); break;
     case 'wand': k = weightedPick(WANDS); it = mkItem('wand', k); it.ch = 3 + rnd(8); break;
+    case 'vial': it = mkItem('vial', weightedPick(VIALS)); break;
     case 'weapon': {
       k = pickWeaponFor(depth); it = mkItem('weapon', k);
       if (WEAPONS[k].grp) it.cnt = pileSize(k);
@@ -449,8 +464,10 @@ function newItem(depth) {
     case 'ring': {
       /* One of each in a run.  If the set is complete the dungeon has
          nothing left to give here, so it gives a wand instead rather
-         than a second ring nobody can tell from the first. */
-      var rk = pickUnfoundRing();
+         than a second ring nobody can tell from the first - and the same
+         goes for the top two floors, which are too early to spend one
+         of the run's rings on. */
+      var rk = depth < DEEP_ONLY_DEPTH ? -1 : pickUnfoundRing();
       if (rk < 0) { k = weightedPick(WANDS); it = mkItem('wand', k); it.ch = 3 + rnd(8); }
       else it = mkItem('ring', rk);
       break;
@@ -470,7 +487,7 @@ function itemName(it) {
   switch (it.t) {
     case 'gold': s = it.cnt + ' gold pieces'; break;
     case 'amulet': s = 'the Amulet of Yendor'; break;
-    case 'pouch': s = 'a pouch (' + pouchCount(it) + '/' + POUCH_CAP + ')'; break;
+    case 'pouch': s = 'a potion pouch (' + pouchCount(it) + '/' + POUCH_CAP + ')'; break;
     case 'key': s = artic(MATS[it.k] + ' key'); break;
     case 'crystal': s = (n > 1) ? (n + ' healing crystals') : 'a healing crystal'; break;
     case 'pin': s = (n > 1) ? (n + ' magical pins') : 'a magical pin'; break;
@@ -490,6 +507,12 @@ function itemName(it) {
     case 'potion': {
       var d = KNOWN.pot[it.k] ? 'potion of ' + POTIONS[it.k].n : APPEAR.pot[it.k] + ' potion';
       s = (n > 1) ? (n + ' ' + d + 's') : artic(d);
+      break;
+    }
+    case 'vial': {
+      var dv = KNOWN.vial[it.k] ? 'vial of ' + VIALS[it.k].n
+                                : APPEAR.vial[it.k] + ' vial';
+      s = (n > 1) ? (n + ' ' + dv + 's') : artic(dv);
       break;
     }
     case 'scroll': {
@@ -589,6 +612,7 @@ function itemSprite(it) {
     case 'crystal': return 'crystal';
     case 'food': return (APPEAR.mush && APPEAR.mush[it.k]) || FOODS[it.k].s;
     case 'potion': return P_SPRITE[APPEAR.pot[it.k]] || 'pot_b';
+    case 'vial': return V_SPRITE[APPEAR.vial[it.k]] || 'vial_g';
     case 'scroll': return 'scroll';
     case 'wand': return APPEAR.wandSpr[it.k] ||
       (APPEAR.wandType[it.k] === 'staff' ? 'staff' : 'wand');
@@ -622,20 +646,54 @@ function packCount() {
   return c;
 }
 /* try to add: stack, then free slot, then any open pouch */
+/* The pouch is for potions and for nothing else.  It used to be a
+   general overflow bag, which made it a second pack - and a second pack
+   is not a decision, it is just more room. */
+/* Both kinds of glass.  A vial is the same shape of problem as a potion
+   - fragile, heavy for its size, and there are always more of them than
+   there is room for - so the padded bag takes both.  Anything else still
+   belongs in the pack, where the decisions are. */
+function pouchTakes(it) { return !!(it && (it.t === 'potion' || it.t === 'vial')); }
+/* Straight into the pouch if there is room in it: a potion or a vial
+   picked up goes where the glass lives without being told to.  If it is
+   full they stay in the pack like anything else - the bag is a place for
+   them, not a promise that there will always be one. */
+function intoPouch(it) {
+  var i, j;
+  for (i = 0; i < N_SLOTS; i++) {
+    var s = P.slots[i];
+    if (!s || s.t !== 'pouch') continue;
+    for (j = 0; j < POUCH_CAP; j++)
+      if (stackable(s.items[j], it)) { s.items[j].cnt += it.cnt; return s.items[j]; }
+    for (j = 0; j < POUCH_CAP; j++)
+      if (!s.items[j]) { s.items[j] = it; return it; }
+  }
+  return null;
+}
+/* Everything already in the pack that belongs in the pouch, put away.
+   Called when the pouch itself arrives: the glass you were carrying
+   before you found it is exactly what it was worth finding for. */
+function stowGlass() {
+  var moved = 0, i;
+  for (i = 0; i < N_SLOTS; i++) {
+    var it = P.slots[i];
+    if (!pouchTakes(it)) continue;
+    if (intoPouch(it)) { P.slots[i] = null; moved++; }
+  }
+  return moved;
+}
 function addItem(it) {
   var i;
+  /* a potion goes to the pouch first, if there is one and it has room */
+  if (pouchTakes(it)) { var got = intoPouch(it); if (got) return got; }
   for (i = 0; i < N_SLOTS; i++)
     if (stackable(P.slots[i], it)) { P.slots[i].cnt += it.cnt; return P.slots[i]; }
   var f = freeSlot();
-  if (f >= 0) { P.slots[f] = it; return it; }
-  for (i = 0; i < N_SLOTS; i++) {
-    var s = P.slots[i];
-    if (s && s.t === 'pouch' && it.t !== 'pouch') {
-      for (var j = 0; j < POUCH_CAP; j++)
-        if (stackable(s.items[j], it)) { s.items[j].cnt += it.cnt; return s.items[j]; }
-      for (j = 0; j < POUCH_CAP; j++)
-        if (!s.items[j]) { s.items[j] = it; return it; }
-    }
+  if (f >= 0) {
+    P.slots[f] = it;
+    /* and the bag itself sorts the pack out the moment it is in it */
+    if (it.t === 'pouch') stowGlass();
+    return it;
   }
   return null;
 }
@@ -686,6 +744,12 @@ function isRuneStone(it) {
 }
 function isPlainAmmo(it) {
   return it && it.t === 'weapon' && WEAPONS[it.k].grp && !WEAPONS[it.k].rune;
+}
+/* Anything you throw by hand off the stone family, carved or plain.  It
+   is 'thrown' in the table that marks them - a spear is 'hurl' and an
+   arrow is neither, because an arrow wants a bow. */
+function isStoneAmmo(it) {
+  return !!(it && it.t === 'weapon' && WEAPONS[it.k].thrown);
 }
 function chargeable(it) {
   if (!it) return false;
@@ -853,7 +917,8 @@ function newPlayer() {
     slots: new Array(N_SLOTS).fill(null),
     eq: { rh: null, body: null, lh: null, head: null, feet: null },
     amulet: 0,
-    blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, held: 0, heldBy: null,
+    blind: 0, conf: 0, hallu: 0, haste: 0, frozen: 0, iced: 0, gummed: 0,
+    slimeOn: 0, held: 0, heldBy: null,
     seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
     unseen: 0, rage: 0, fireproof: 0,
     perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
@@ -1026,6 +1091,10 @@ function playerDamBonus() {
 }
 function playerHitBonus() {
   var b = strPlus(effStr()) + (((effDex() - 10) / 3) | 0);
+  /* footing is part of a blow: on ice you are half swinging and half
+     staying upright.  It is here rather than in the melee alone so that
+     a shot loosed off ice is as awkward as a swing struck on it. */
+  b -= iceClumsy(P.x, P.y);
   if (P.eq.rh) b += P.eq.rh.hp;
   var r = weaponRune();
   if (r && r.n === 'slaying') b += 2;
@@ -1075,7 +1144,7 @@ function thrownAmmo() {
 function isThrowable(it) {
   if (!it) return false;
   if (it.t === 'weapon' && (WEAPONS[it.k].thrown || WEAPONS[it.k].hurl)) return true;
-  return it.t === 'potion' || it.t === 'dynamite';
+  return it.t === 'potion' || it.t === 'dynamite' || it.t === 'vial';
 }
 /* a weapon that fights in the hand and flies from it */
 function isHurlWeapon(it) { return !!(it && it.t === 'weapon' && WEAPONS[it.k].hurl); }
@@ -1125,6 +1194,17 @@ function setReturning(it) {
   if (it) it.homing = 1;
 }
 function isFlask(it) { return !!(it && it.t === 'potion'); }
+/* A vial is thrown and never drunk: what is in one is too strong to
+   swallow, which is exactly why it is worth throwing. */
+function isVial(it) { return !!(it && it.t === 'vial'); }
+function vialKind(it) { return isVial(it) ? VIALS[it.k].n : null; }
+/* You have seen one work.  Every vial of that colour you are carrying
+   names itself from now on, and so does every one you pick up. */
+function learnVial(k) {
+  if (!KNOWN.vial || KNOWN.vial[k]) return 0;
+  KNOWN.vial[k] = 1;
+  return 1;
+}
 function flaskEffect(it) {
   return (it && it.t === 'potion') ? (POTIONS[it.k].hurl || null) : null;
 }
@@ -1401,7 +1481,7 @@ function watchedByFoe(known) {
 }
 /* You cannot walk while something is holding you. */
 function heldFast() {
-  return P.frozen > 0 || P.held || P.webbed > 0 || P.iced > 0;
+  return P.frozen > 0 || P.held || P.webbed > 0 || P.iced > 0 || P.gummed > 0;
 }
 
 /* ------------------------------------------------- asking you first
@@ -1492,7 +1572,8 @@ function playerEffects() {
   if (P.blind) out.push(['blind (' + P.blind + ')', 'P']);
   if (P.hallu) out.push(['hallucinating', 'P']);
   if (P.haste) out.push(['hasted (' + P.haste + ')', 'c']);
-  if (P.frozen) out.push([(P.iced ? 'frozen solid (' : P.webbed ? 'stuck in web (' : 'held fast (') + P.frozen + ')', 'R']);
+  if (P.frozen) out.push([(P.iced ? 'frozen solid (' : P.webbed ? 'stuck in web ('
+    : P.gummed ? 'stuck in slime (' : 'held fast (') + P.frozen + ')', 'R']);
   if (P.held) out.push(['gripped by a monster', 'R']);
   if (P.scare) out.push(['monsters flee you (' + P.scare + ')', 'G']);
   if (P.seeinv) out.push(['seeing invisible (' + P.seeinv + ')', 'c']);
@@ -1588,6 +1669,19 @@ function lookAt(x, y) {
     out.push(cap(tr.k.n) + (tr.spent ? ' (sprung)' : ''));
     var ti = TRAP_INFO[tr.k.k];
     if (ti) for (i = 0; i < ti.length; i++) out.push(ti[i]);
+    if (iceAt(x, y)) out.push('It is frozen under the ice.');
+  }
+
+  /* Ice is over the top of everything else on the square rather than
+     instead of it, so it is said before the square is described and it
+     does not stop the square describing itself. */
+  if (iceAt(x, y)) {
+    out.push('Glazed with ice.');
+    out.push('Slippery, and it seals what is under it.');
+  }
+  if (slimeAt(x, y)) {
+    out.push('A slick of slime.');
+    out.push('It holds what walks into it, and often comes away with it.');
   }
 
   /* The ground is only worth describing when nothing is standing on it.
@@ -2229,7 +2323,7 @@ function mkMonster(c, depth, x, y) {
     stones: D.sp === 'witch' ? WITCH_STONES : 0, blinkIn: 0, spiderIn: 0,
     flaskIn: 0, petOf: 0, warp: null, showAt: 0, face: 1,
     invis: D.invis ? 1 : 0, item: null, gold: 0, home: -1,
-    bolted: 0, holed: 0, spent: 0, goal: null, ran: 0,
+    bolted: 0, holed: 0, spent: 0, goal: null, ran: 0, wait: 0,
     disguise: D.sp === 'mimic' ? 1 : 0, flee: 0
   };
   m.hp = m.mhp;
@@ -2374,9 +2468,9 @@ function contCount(c) {
    three quarters of every hoard into gear, which is where most of the
    clutter came from; treasure still leans that way, but not that far. */
 var GOOD_THINGS = [
-  { t: 'potion', p: 22 }, { t: 'scroll', p: 22 }, { t: 'wand', p: 12 },
+  { t: 'potion', p: 20 }, { t: 'scroll', p: 20 }, { t: 'wand', p: 12 },
   { t: 'weapon', p: 12 }, { t: 'armor', p: 10 }, { t: 'shield', p: 8 },
-  { t: 'head', p: 7 }, { t: 'feet', p: 7 }
+  { t: 'head', p: 6 }, { t: 'feet', p: 6 }, { t: 'vial', p: 6 }
 ];
 function newGoodItem(depth) {
   /* A ring of the huntress turns up a quiver in a hoard now and then -
@@ -2393,8 +2487,11 @@ function newGoodItem(depth) {
     case 'wand': k = weightedPick(WANDS); it = mkItem('wand', k); it.ch = 6 + rnd(8); break;
     case 'scroll': it = mkItem('scroll', weightedPick(SCROLLS)); break;
     case 'potion': it = mkItem('potion', weightedPick(POTIONS)); break;
+    case 'vial': it = mkItem('vial', weightedPick(VIALS)); break;
     case 'weapon':
-      do { k = weightedPick(WEAPONS); } while (WEAPONS[k].grp);
+      /* a good one, and one that belongs on this floor: a hoard is
+         still on the floor it is buried in */
+      do { k = weightedPick(WEAPONS); } while (WEAPONS[k].grp || tooShallow(k, depth));
       it = mkItem('weapon', k); it.hp = 1 + rnd(3); it.dp = rnd(3);
       rollMake(it);
       break;
@@ -2968,6 +3065,36 @@ function blocksShot(x, y) {
            t === WATER || t === HOLY || t === HOLE || t === FIREWALL ||
            t === BRIDGE || t === TRAPDOOR);
 }
+/* ------------------------------------------------ filling a room up
+   Everything a vial lets loose spreads the same way: out from where the
+   glass broke, as far as it reaches, round corners and through doorways
+   and stopped dead by a wall.  Counted in steps rather than as the crow
+   flies, so a room five squares across fills and the corridor beside it
+   does not unless the door is open.
+
+   The square it lands on is always in it, walkable or not - the glass
+   broke there, and something has to have happened where it broke. */
+function reachWithin(cx, cy, r, dirs) {
+  var out = [[cx, cy]], seen = {}, q = [[cx, cy, 0]], head = 0;
+  dirs = dirs || DIR8;
+  seen[cy * MAP_W + cx] = 1;
+  while (head < q.length) {
+    var c = q[head++];
+    if (c[2] >= r) continue;
+    for (var d = 0; d < dirs.length; d++) {
+      var nx = c[0] + dirs[d][0], ny = c[1] + dirs[d][1];
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      var k = ny * MAP_W + nx;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      if (!walkable(nx, ny)) continue;
+      out.push([nx, ny]);
+      q.push([nx, ny, c[2] + 1]);
+    }
+  }
+  return out;
+}
+
 /* Bresenham again, this time for a clear shot rather than clear sight. */
 function shotClear(x0, y0, x1, y1) {
   var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
@@ -4112,6 +4239,11 @@ function enterLevel(depth, how) {
      Only at squares with nothing on them: a hallway with the stairs at
      the end of it is not a mistake. */
   trimDeadEnds(L, 1);
+  /* Now that no more corridors will be filled in or cut, the dead ends
+     that survived are the real ones - and some of them get something
+     behind the blank wall at the end.  See secretsAtDeadEnds for why
+     this is a different thing from the floor's guaranteed secret room. */
+  secretsAtDeadEnds(L);
   retireEmptyLocks(L);
   tidyRugs(L);
   /* A chest is placed on a square that is clear of doorways at the time
@@ -4748,7 +4880,9 @@ function monAttack(m) {
     return;
   }
   for (i = 0; i < dice.length; i++) {
-    if (swing(m.lv + (m.hasted ? 2 : 0), playerAC(), 0)) {
+    /* the same footing rule as your own: a creature swinging on ice is
+       swinging and staying upright at the same time */
+    if (swing(m.lv + (m.hasted ? 2 : 0), playerAC(), -iceClumsy(m.x, m.y))) {
       markHurt(P, m.x, m.y);
       var dm = damRoll([dice[i]]) + (m.dmgBonus || 0) - (dazzled(m) ? DAZZLE_DAMAGE : 0);
       if (dm < 1) dm = 1;
@@ -5051,7 +5185,12 @@ function monstersMove() {
        counting, or ducking out of sight of something standing in a
        stream never adds up to the two rounds that catch it out. */
     if ((m.slowed || dazzled(m)) && (G.turn & 1)) { noteSight(m); continue; }
-    if (m.stuck > 0) { m.stuck--; if (m.webbed > 0) m.webbed--; noteSight(m); continue; }
+    if (m.stuck > 0) {
+      m.stuck--;
+      if (m.webbed > 0) m.webbed--;
+      if (m.gummed > 0) m.gummed--;
+      noteSight(m); continue;
+    }
     /* thigh deep in water: this step goes on getting through it */
     if (monWades(m)) { noteSight(m); continue; }
 
@@ -5413,6 +5552,109 @@ function stickPlayer(turns) {
   return turns;
 }
 /* the webs on the floor grow old and rot away */
+/* --------------------------------------------------------------- ice
+   A vial of ice does not build a wall of it.  It glazes the floor, and
+   whatever was there is still there underneath: the flagstones, the
+   water, the trap, the lid of the chest.  Three things change.  The
+   floor is now something you go over on, about half the time.  A blow
+   struck while you are trying not to fall over is a worse blow.  And
+   nothing under the ice works or opens until it thaws - a plate cannot
+   be trodden on hard enough through an inch of it, and a lid frozen
+   into its frame is a lid that stays shut.
+
+   Kept the way webs are: the square, and how many turns it has left. */
+function iceAt(x, y) {
+  if (!L || !L.ice) return 0;
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 0;
+  return L.ice[y * MAP_W + x] || 0;
+}
+function freezeSquare(x, y, turns) {
+  if (!walkable(x, y)) return 0;
+  L.ice = L.ice || {};
+  var j = y * MAP_W + x;
+  /* a second vial over the same square tops it up rather than cutting
+     it short, which is what taking the larger of the two does */
+  if ((L.ice[j] || 0) >= turns) return 0;
+  var fresh = L.ice[j] ? 0 : 1;
+  L.ice[j] = turns;
+  return fresh;
+}
+function ageIce() {
+  if (!L.ice) return;
+  var wasUnderfoot = !!iceAt(P.x, P.y), k;
+  for (k in L.ice) {
+    if (--L.ice[k] > 0) continue;
+    delete L.ice[k];
+  }
+  /* The one square whose thawing you would actually notice is the one
+     you are standing on, and you would notice it: the floor stops being
+     something you might go over on. */
+  if (wasUnderfoot && !iceAt(P.x, P.y))
+    msg('The ice under you creaks and lets go.', 'c');
+}
+/* Anything on ice goes over about half the time.  Sure footed boots are
+   sure footed on ice as much as anywhere else - that is the whole of
+   what they are for. */
+function slipsOn(x, y, sure) {
+  if (!iceAt(x, y)) return false;
+  if (sure) return false;
+  return rnd(100) < ICE_SLIP_PCT;
+}
+/* and a blow struck while you are trying not to fall over is a worse
+   blow, whoever is striking it */
+function iceClumsy(x, y) { return iceAt(x, y) ? ICE_CLUMSY : 0; }
+
+/* ------------------------------------------------------------- slime
+   A flask of it breaks over a handful of squares and sits there, kept
+   the way ice and webs are: the square, and how many turns it has left.
+
+   The holding is the small half of it.  What makes slime worth throwing
+   is that it FOLLOWS - more often than not it comes away on the feet of
+   whatever walked into it and holds them again on the next square, and
+   the one after that, until the luck runs out.  So there are two things
+   to keep: what is on the floor, and what is on the boots. */
+function slimeAt(x, y) {
+  if (!L || !L.slime) return 0;
+  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 0;
+  return L.slime[y * MAP_W + x] || 0;
+}
+function slimeSquare(x, y, turns) {
+  if (!walkable(x, y)) return 0;
+  L.slime = L.slime || {};
+  var j = y * MAP_W + x;
+  var fresh = L.slime[j] ? 0 : 1;
+  if ((L.slime[j] || 0) < turns) L.slime[j] = turns;
+  return fresh;
+}
+function ageSlime() {
+  if (!L.slime) return;
+  var wasUnderfoot = !!slimeAt(P.x, P.y), k;
+  for (k in L.slime) {
+    if (--L.slime[k] > 0) continue;
+    delete L.slime[k];
+  }
+  if (wasUnderfoot && !slimeAt(P.x, P.y))
+    msg('The slime under you dries to nothing.', 'G');
+}
+/* Arriving somewhere with slime on it, or with slime already on you.
+   Either way the next turn is spent getting your feet back, and either
+   way it may or may not still be with you afterwards. */
+function slimeCatches(who, x, y) {
+  var wet = slimeAt(x, y) || (who && who.slimeOn);
+  if (!wet) { if (who) who.slimeOn = 0; return 0; }
+  /* whether it comes away with you when you finally move on */
+  who.slimeOn = rnd(100) < SLIME_STICK_PCT ? 1 : 0;
+  return 1;
+}
+/* Stuck fast in it.  The shape of this is the web's - see stickPlayer
+   for why the count is one higher than the turns it costs. */
+function gumPlayer() {
+  if (P.gummed > 0) return 0;
+  P.frozen += 2;
+  P.gummed = 2;
+  return 1;
+}
+
 function ageWebs() {
   if (!L.webs) return;
   for (var k in L.webs) {
@@ -5733,16 +5975,41 @@ function monRanged(m) {
 
    He does not wander the floor for ever and he cannot vanish twice: run
    him down and the purse is yours again, with whatever else is on him. */
+/* Away with your purse.  He does not hide in the dark at the far end of
+   the floor any more - he makes for the way DOWN, which is what anybody
+   would do with somebody else's money, and it gives you something to do
+   about it: get there first, or run him down on the way.
+
+   He waits at the top of the stairs a little while, because a thief who
+   vanished the instant he reached them would be a purse you could never
+   get back.  Then he takes them, and he and the gold are out of the run
+   for good - there is no following him down. */
 function startBolt(m) {
   m.invis = 1;
   m.bolted = 1;
   m.state = 2;
   m.disguise = 0;
   m.holed = 0;
-  m.goal = farthestRoom(P.x, P.y, m);
+  m.wait = 0;
+  /* the stairs if this floor has any; the far dark if it has not - a
+     cellar has no way down out of it */
+  m.goal = L.stair ? { x: L.stair.x, y: L.stair.y, room: roomIndexAt(L.stair.x, L.stair.y),
+                       stair: 1 }
+                   : farthestRoom(P.x, P.y, m);
   m.ran = 0;
-  if (canSeeMon(m)) msg(cap(monShort(m)) + ' bolts for the dark!', 'y');
+  if (canSeeMon(m)) msg(cap(monShort(m)) + ' bolts for the stairs!', 'y');
   else msg('He is gone before you can look at him.', 'y');
+}
+/* Down the stairs with it, and out of the game.  Not killed - there is
+   nothing to kill and nothing to drop; he simply is not on this floor
+   any more, and neither is what he took. */
+function leaveWithLoot(m) {
+  var i = L.mons.indexOf(m);
+  if (i >= 0) L.mons.splice(i, 1);
+  if (P.heldBy === m) { P.held = 0; P.heldBy = null; }
+  if (canSeeMon(m) || (L.flags[m.y * MAP_W + m.x] & F_VIS))
+    msg(cap(monShort(m)) + ' takes the stairs down, and your gold with him.', 'y');
+  else msg('Somewhere below, a door closes. Your gold is gone.', 'y');
 }
 
 /* the room centre furthest from here, by walking distance rather than as
@@ -5817,15 +6084,34 @@ function boltHoleUp(m, arrived) {
 function boltMove(m) {
   if (m.holed) return;
   if (!m.goal) { boltHoleUp(m, false); return; }
-  /* He is running, not migrating.  If the far room will not come to him
+  /* He is running, not migrating.  If the stairs will not come to him
      he settles for wherever he has got to. */
   m.ran = (m.ran || 0) + 1;
   if (m.ran > BOLT_PATIENCE) { boltHoleUp(m, false); return; }
+  /* Making for the stairs: he stands about at the top of them for a
+     while, and then he takes them. */
+  if (m.goal.stair) {
+    if (mdist2(m, m.goal.x, m.goal.y) <= 1) {
+      m.wait = (m.wait || 0) + 1;
+      /* he shows himself once he has stopped running */
+      if (m.invis) { m.invis = 0; if (canSeeMon(m)) msg(cap(monShort(m)) + ' waits by the stairs.', 'y'); }
+      if (m.wait > LEP_LINGER) leaveWithLoot(m);
+      return;
+    }
+    var st = boltStep(m, m.goal.x, m.goal.y);
+    if (!st) { boltHoleUp(m, false); return; }
+    if (!tryMonStep(m, st[0], st[1])) boltHoleUp(m, false);
+    return;
+  }
   /* home: this room is where he makes his stand */
   if (roomIndexAt(m.x, m.y) === m.goal.room) { boltHoleUp(m, true); return; }
   var step = boltStep(m, m.goal.x, m.goal.y);
   if (!step) { boltHoleUp(m, false); return; }
   if (!tryMonStep(m, step[0], step[1])) boltHoleUp(m, false);
+}
+/* how far a creature is from a given square, in king's moves */
+function mdist2(m, x, y) {
+  return Math.max(Math.abs(m.x - x), Math.abs(m.y - y));
 }
 
 /* Working the trail.  First to the square where you were last seen; then
@@ -6100,6 +6386,14 @@ function tryMonStep(m, dx, dy) {
      for, so a creature within reach of you could go over in the middle
      of a swing - and a swing is not a step. */
   if (monStumbles(m)) return true;
+  /* and ice, which trips whatever walks on it whether it was running or
+     strolling.  The turn is spent going over rather than going forward. */
+  if (slipsOn(nx, ny)) {
+    m.runSteps = 0;
+    if (canSeeMon(m))
+      msgFight(fightLine('', cap(monShort(m)), ' slips on the ice.'), 'c', 'slipped', 'c', m);
+    return true;
+  }
   /* Remember where it came from, and when this particular step happens.
      A quick creature takes two steps in a turn, and both used to share
      one start time - so the first was thrown away and the pair replayed
@@ -6118,6 +6412,16 @@ function tryMonStep(m, dx, dy) {
      That fire does not care who walks into it afterwards. */
   if (m.burn > 0) dropEmber(m.x, m.y);
   m.x = nx; m.y = ny;
+  /* Slime on the square, or slime already on its feet: either way the
+     next turn goes on getting them back.  m.stuck is read at the top of
+     its turn, so one is exactly one turn. */
+  if (slimeCatches(m, nx, ny)) {
+    m.stuck = (m.stuck || 0) + 1;
+    m.gummed = (m.gummed || 0) + 1;
+    if (canSeeMon(m))
+      msgFight(fightLine('', cap(monShort(m)), ' is stuck in the slime.'),
+        'G', 'stuck', 'G', m);
+  }
   if (webCatches(nx, ny, m)) {
     /* Held, not frozen.  They are the same lost turn to the game and
        nothing like the same thing to look at: web is not ice. */
@@ -6247,6 +6551,8 @@ function upkeep() {
   /* Standing in it is touching it, every turn you stand there. */
   if (inWater(P.x, P.y)) soakPlayer('The water burns where it touches you.');
   ageWebs();
+  ageIce();
+  ageSlime();
   /* powder first: a lit barrel has had its turn */
   if (typeof tickFuses === 'function') tickFuses();
   /* the ring burns whatever has come close, wherever you are now */
@@ -6391,7 +6697,7 @@ function upkeep() {
     }
   }
 
-  ['blind', 'conf', 'hallu', 'haste', 'frozen', 'iced', 'webbed', 'seeinv',
+  ['blind', 'conf', 'hallu', 'haste', 'frozen', 'iced', 'webbed', 'gummed', 'seeinv',
    'monsight', 'scare', 'fireShield', 'seer'].forEach(function (k) {
     if (P[k] > 0) {
       P[k]--;
@@ -6402,6 +6708,7 @@ function upkeep() {
         if (k === 'haste') msg('You feel yourself slowing down.', 'c');
         if (k === 'seer') msg('The ring goes quiet. The floor keeps its secrets again.', 'p');
         if (k === 'webbed') msg('You tear free of the web.', 'c');
+        if (k === 'gummed') msg('You pull your feet out of the slime.', 'G');
         if (k === 'monsight') msg('You stop feeling what moves nearby.', 'c');
       }
     }
@@ -6592,7 +6899,7 @@ function saySceneryBurnt(gone) {
    out of it - which reads as taking damage from a square you have left.
    It is the same fumes and the same dice; only the moment changed. */
 function cloudsOnYou() {
-  var i, hurt = 0, burn = 0, mend = 0, smoke = 0;
+  var i, hurt = 0, burn = 0, mend = 0, smoke = 0, venom = 0;
   for (i = 0; i < L.clouds.length; i++) {
     var c = L.clouds[i];
     if (c.x !== P.x || c.y !== P.y) continue;
@@ -6600,12 +6907,22 @@ function cloudsOnYou() {
     if (c.kind === 'mend') mend++;
     else if (c.kind === 'fire') burn++;
     else if (c.kind === 'smoke') smoke++;
+    else if (c.strong) venom++;              /* out of a vial, not a flask */
     else hurt++;
   }
   if (mend && P.hp < P.mhp) {
     var mv = roll(MEND_CLOUD[0], MEND_CLOUD[1]);
     msgTrap('The red mist closes your wounds.', 'G', '+' + mv + ' hp', 'G');
     healPlayer(mv);
+  }
+  /* What is in a vial is what is in a flask, boiled down until it is
+     worth throwing.  Same green, same cough, several times the bite. */
+  if (venom) {
+    msg('The fumes scald your lungs.', 'g');
+    if (!hasProp('sustain strength') && !hasPerk('ironblood') && rnd(100) < 40)
+      P.str = Math.max(3, P.str - 1);
+    markHurt(P, P.x, P.y - 1);
+    hurtPlayer(roll(VIAL_POISON_DAMAGE[0], VIAL_POISON_DAMAGE[1]), 'poison fumes', 'poison');
   }
   if (hurt) {
     msg('The poison burns your lungs.', 'g');
@@ -6631,7 +6948,7 @@ function cloudsOnYou() {
     markHurt(P, P.x, P.y - 1);
     hurtPlayer(sd, 'smoke');
   }
-  return hurt + burn + mend + smoke;
+  return hurt + burn + mend + smoke + venom;
 }
 function ageClouds() {
   var i, gone = [];
@@ -6650,6 +6967,7 @@ function ageClouds() {
     } else if (m && !m.ally) {
       var d = fire ? perkElemental(roll(FIRE_DAMAGE[0], FIRE_DAMAGE[1]), 'fire')
                    : kind === 'smoke' ? roll(SMOKE_DAMAGE[0], SMOKE_DAMAGE[1])
+                   : c.strong ? roll(VIAL_POISON_DAMAGE[0], VIAL_POISON_DAMAGE[1])
                    : roll(1, 3);
       m.hp -= d; m.state = 2;
       markHurt(m, c.x, c.y + 1);
@@ -7117,13 +7435,15 @@ function stockCellar(Lv, rooms, depth) {
   /* the pick of it */
   var prize = null;
   if (rnd(100) < CELLAR_RING_PCT) {
-    var rk = pickUnfoundRing();
+    /* a cellar under one of the top two floors is still one of the top
+       two floors: no ring there either */
+    var rk = depth < DEEP_ONLY_DEPTH ? -1 : pickUnfoundRing();
     if (rk >= 0) prize = mkItem('ring', rk);
   }
   if (!prize) {
     /* a blade somebody put work into, and a rune as often as not */
     var wk;
-    do { wk = weightedPick(WEAPONS); } while (WEAPONS[wk].grp);
+    do { wk = weightedPick(WEAPONS); } while (WEAPONS[wk].grp || tooShallow(wk, depth));
     prize = mkItem('weapon', wk);
     prize.hp = 1 + rnd(3); prize.dp = 1 + rnd(2);
     addRune(prize, WEAPONS[wk].launch ? 'wb' : 'w', 60);

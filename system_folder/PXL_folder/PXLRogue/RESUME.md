@@ -2243,3 +2243,366 @@ was measured and pinned rather than loosened:
 - **the shake probe** (new) split panel from map by pixel column, and the
   fake canvas only pretends to clip, so a shaken map tile slid into the
   panel's column.  The panel is read by its words instead.
+
+## Round 12 - vials, a potion pouch, and the shallow floors
+
+**Vials.**  A new item type: a potion's dangerous cousin, too strong to
+drink and meant to be thrown.  Four of them - smoke, poison, ice, nitro -
+each dealt one of `V_COLORS` per run, `APPEAR.vial` / `KNOWN.vial`,
+learned by throwing one.  `isVial`, `vialKind`, `learnVial` in part2;
+`breakVial`, `fumeVial`, `iceVial`, `nitroVial`, `crumbleSquare` in
+part3.  Every one of them changes the ROOM rather than the creature it
+lands on, which is the whole difference from a flask.
+
+`reachWithin(cx, cy, r, dirs)` in part2 is the shared spreader: BFS out
+from the square the glass broke on, counted in steps rather than as the
+crow flies, stopped dead by a wall.  Smoke and fumes reach
+`VIAL_FUME_REACH` 5 (capped at `VIAL_FUME_MAX` 140 squares so a cave does
+not put a thousand clouds on the map); ice reaches `VIAL_ICE_REACH` 3.
+
+Poison fumes are an ordinary `'poison'` cloud carrying `strong: 1`, which
+both `cloudsOnYou` and `ageClouds` read: `VIAL_POISON_DAMAGE` [2,4]
+against the roll(1,3) of flask gas.
+
+**Ice** is `L.ice` - a map from square to turns left, aged in `ageIce`
+beside `ageWebs`, saved for free because `packLevel` copies every field.
+It is a GLAZE, not a tile: drawn over whatever the square already was at
+`ICE_ALPHA`, so the floor still reads through it.  `slipsOn(x,y,sure)` at
+`ICE_SLIP_PCT` 50 trips the player (sure footed boots excepted) and every
+creature; `iceClumsy` takes `ICE_CLUMSY` 4 off a blow struck on it, put
+into `playerHitBonus` so a shot loosed off ice is as awkward as a swing.
+Traps under it are sealed rather than spent; chests and trapdoors will
+not open.
+
+**Nitro** is a barrel blast plus `crumbleSquare` over a `NITRO_HOLE` 1
+disc: HOLE tiles, anything standing there killed outright, and the
+chest / trap / trapdoor / web / ice / barrel on that square gone with it.
+The player standing on it falls.
+
+**The potion pouch.**  `pouchTakes` is `t === 'potion'` and nothing else.
+`intoPouch` puts a picked-up potion straight in; `stowPotions` sweeps the
+pack the moment the bag itself arrives; `addItem` no longer overflows
+anything into it, so a full pack is a full pack.  `POUCH_FLOOR_MIN` is 4.
+
+**The top of the dungeon.**  `DEEP_ONLY_DEPTH` 3: no ring and nothing
+`two` on floors 1-2, applied in `newItem`, `newGoodItem`, the vault prize
+and the cellar hoard via `tooShallow(k, depth)`.  Deliberately NOT
+applied to the witch's and the leprechaun's own rings - those are not
+laid out, they are the only way those two rings ever appear at all.
+
+**Also:** `STONE_RECOVER_PCT` 18 for a stone or a runestone alike
+(`isStoneAmmo` off the `thrown` flag; arrows keep `ARROW_RECOVER_PCT`);
+the sandals start on your feet rather than in the pack.
+
+### A whole class of bug, caught
+
+`itemSprite` returns a NAME.  A name that is not on the sheet draws
+nothing at all - no error, no gap in a log, nothing failing anywhere.
+A one word slip while renaming the pouch put it in exactly that state and
+every suite stayed green.  The render suite now asks every kind of every
+type for its sprite and checks the sheet has it (`every thing is drawn`).
+
+### Probes that were failing on the dice, not on the game
+
+- **breathed fire** placed the breather with `straightLine4`, which uses
+  `walkable()` - and water is walkable.  A half dragon standing in a
+  stream never spits at all, so it never breathed.  `straightLine4` takes
+  a `dry` flag now.
+- **overflow** and the **bags and notices** render probe both encoded the
+  old "the pouch is where a full pack overflows" rule and were rewritten
+  to the new one, not loosened.
+
+### Adding sprites without moving any
+
+The vials and the ice went in as a NEW GROUP at the very end of
+`LAYOUT`.  Every group above it keeps the cells it was painted in, so
+`migrate_sheet.py` said `graphics altered: none` with nothing to carry
+sideways.  Worth doing that way whenever the new sprites do not belong
+inside an existing group.
+
+## Round 13 - the retro monitor, glass in the pouch, a dealt playtest pack
+
+**The retro monitor.**  `RETRO MONITOR: ON/OFF` in the ESC menu, kept in
+localStorage under `rogue8.crt` rather than in the save - it is a fact
+about the screen you are sitting at, not about the run, so it survives
+starting a new one.  `crtOn` / `setCrt` / `loadCrt` / `fitCrt` in part4.
+
+It is a `#crt` div laid OVER the canvas, not anything drawn into it, and
+that is the whole point: the backing store is exactly 230x128, so a
+scanline drawn in it would be a whole game pixel thick - four screen
+pixels at the usual scale, straight through the middle of every sprite.
+Over the top they are as fine as the screen showing them, which is what
+a scanline is, and the browser composites it for nothing per frame.
+`fit()` lays it over the canvas's own rect; the CSS is in both build.py
+and build_playtest.py.
+
+**The pouch takes vials too** - `pouchTakes` is potion-or-vial, and
+`stowPotions` is now `stowGlass`.  Full is full: they stay in the pack.
+
+**The playtest pack is dealt, not laid out.**  It was never one of
+everything anyway - 19 wands and 20 slots, so the old loop filled the
+pack in table order and stopped.  Now: the staples, then one vial, one
+mushroom and one ring guaranteed, then the rest dealt.  The KIND is drawn
+first and the thing second, so nineteen wands do not crowd out four vials
+by being nineteen.  Everything dealt comes unidentified except wands and
+scrolls, which are tools rather than puzzles.
+
+`playtest.html` is not the game, so none of the four suites loaded it and
+its one job was the only thing in the project nothing checked.  The
+render suite reads `part6_playtest.js` into the same machine now, runs
+the kit twelve times and asks for variety and for the three kinds that
+are easiest to go a session without seeing.  It is also in the
+declared-twice scan.
+
+### Two checks that were weaker than they read
+
+**textClash** exempted four modes outright, so a box in any OTHER mode
+read its own backdrop as a clash, and where it did match it stopped
+looking inside the dialog as well.  It now paints every opaque fill into
+a coverage stamp and drops glyph PIXELS that were painted over
+afterwards - pixel by pixel, because a box is not always the whole of
+what is behind it (the story screen starts two rows down the panel, so
+the top of the panel's first line still shows above it while the rest of
+that same line is covered).
+
+**The pause box** is drawn as part of the map, so the panel is painted
+over the top of it afterwards.  At its old width it cleared the panel by
+one pixel and nobody had to think about it; the first line longer than
+SAVE AND QUIT had its left hand end quietly eaten with nothing failing
+anywhere.  It is centred on the view now rather than on the screen, and
+the retro probe checks that every letter of every line survives to the
+end of the frame.
+
+## Round 14 - a ragged hole, and the potion of slime
+
+**The nitro hole is grown, not stamped.**  It was a fixed disc of five
+squares with clean square edges and nothing round it, which reads as a
+tile somebody forgot to finish rather than as a drop.  Now it grows a
+square at a time out from where the glass broke - `NITRO_HOLE_MIN` 3 to
+`NITRO_HOLE_MAX` 6 cells, spreading to each neighbour only
+`NITRO_HOLE_SPREAD` 62% of the time, which is what makes the edge ragged
+rather than an even blob.  `canCrumble` was split out of `crumbleSquare`
+so the growth can ask before it commits.
+
+`crackAround(L, cells)` was lifted out of `digHole` and is now shared:
+every hole in the floor gets the cracked flagstones that warn you about
+it, however it came to be there.
+
+**The potion of slime.**  The one flask that will not go down at all -
+refused BEFORE it is spent, since a potion you could not drink that
+vanished out of your pack anyway would be the worst of both, and you have
+still learnt what it is because you had it at your lips.
+
+Thrown, `slimeSplash` covers the square it broke on plus `SLIME_SPLASH`
+2-3 of the eight round it, for `SLIME_TURNS` 8-10.  `L.slime` is kept the
+way `L.ice` is and aged in `ageSlime` beside `ageIce`.
+
+The holding is the small half of it.  `slimeCatches(who, x, y)` is the
+whole rule: slime on the square OR slime already on you costs the next
+turn, and `SLIME_STICK_PCT` 60 decides whether it comes away on your feet
+and does it again on the NEXT square.  A slick follows you 2.5 squares on
+average.  The player uses `gumPlayer` / `P.gummed` (the web's shape - see
+`stickPlayer` for why the count is one higher than the turns it costs);
+a creature uses `m.stuck` for the lost turn and `m.gummed` so the slime
+is drawn on it rather than an icecube.
+
+### Changing a generated sprite that is already in the sheet
+
+`migrate_sheet.py` carries any name it finds in the old atlas byte for
+byte - that is its whole job - so editing the pixels of a sprite that has
+already been migrated in does NOT reach the sheet.  The way to change
+one's own placeholder is to put the sheet back to the version on the
+device first (the staged copy), leave `atlas_layout_before.json` at the
+layout that sheet was painted in, and then run the dance once: the sprite
+is `fresh` again and the new art lands.  Nothing hand-painted is ever at
+risk, because the restore is to Gulli's own file.
+
+### Two checks the round earned
+
+- **the sip probe** asserted every flask is worth a mouthful.  Slime is
+  the exception, so it now asks for the exception exactly: nothing gained,
+  the flask not spent, the kind learnt, and the refusal said out loud.
+- **overlays** - ice and slime are both laid OVER a square rather than
+  instead of it, so neither has an item or a tile for anything else to
+  notice.  If one stopped being drawn there would be no error and no
+  failing check: the floor would look like bare stone and behave like
+  ice.  A render probe now puts each on a visible square and asks for it
+  back off the screen.
+
+## Round 15 - the leprechaun takes the stairs, and dead ends mean something
+
+**The leprechaun makes for the way DOWN.**  He used to bolt for the far
+dark and stand there, which gave you nothing to do about it.  Now
+`startBolt` sets his goal to `L.stair`, `boltMove` grows a stairs branch:
+he shows himself when he stops running, waits `LEP_LINGER` 10 turns at
+the top, and `leaveWithLoot` takes him and the gold out of the run.  Kill
+him on the way and the purse still drops.  The hint and the monster note
+both say so now.  A floor with no way down (a cellar) still gets the old
+behaviour, which is still the right one there.
+
+**The wheel scrolls the story.**  `onWheel` grows a branch before the
+map-panning one; pixels, lines and pages all work, and `WHEEL_ACC` keeps
+the leftovers between events - a trackpad sends dozens of nudges too
+small to be a whole line, and each rounding to nothing on its own is how
+a box refuses to move.
+
+**A floor you blew a hole in comes down with you.**  `crumbleSquare`
+marks `L.blown`; `fallDown` reads it BEFORE `enterLevel` changes L, and
+`spillRubble` lays the heap where you land - before the soft-landing
+check, because landing in it is the whole of what it does.  A second
+`rubble2` sprite so a heap is not one stone stamped over and over.
+
+### Dead ends: measured first, and the measurement was the answer
+
+The hint says a dead end in a corridor is worth searching.  It was true
+*never*: the one hidden door a floor is guaranteed is cut into the wall
+of a ROOM on purpose, and nineteen dead ends over thirty floors had a
+door behind exactly none of them.
+
+Measuring again showed the shape of the fix.  Of the squares behind a
+dead end, **fifty of sixty were somebody's floor** - a dead end usually
+stops one square short of a room it never joined.  So the answer is
+mostly not a cupboard: it is a hidden SHORTCUT into a room you could
+already reach the long way.  `secretsAtDeadEnds` tries `carveBehindWall`
+first (rock behind it, so there is room for a cache) and falls back to
+the shortcut.
+
+Three rules were learnt the hard way, all from the soak:
+
+- **The roll comes after the eligibility check.**  Rolled first, a tip
+  that could never have had a door - ten of twenty-eight stop at water -
+  still ate its chance, and the share that came out was half the number.
+- **The door must be a shortcut and NOTHING else.**  What is behind it
+  has to be reachable from that very corridor already, with every other
+  door as it is.  Without that it quietly became a second way into a
+  locked vault, a way into a walled-in room, and a way into a hidden room
+  without searching for its own panel - all three, measured.
+- **`fromHall` had to learn the difference.**  A panel in the MIDDLE of a
+  tunnel wall is still forbidden and still checked; a panel at the blank
+  END of a dead end is the thing the hint is about.
+
+### And then a fourth rule, from being told
+
+"A corridor that stops at water can never hide a door" was wrong twice
+over, and Gulli said so.  A secret door opening straight onto a pool is a
+perfectly good hidden door - wading out of one is a better find than
+another flagstone.  And worse: `deadEndTip` listed by hand what counts as
+a way on, and the list left WATER out, so a corridor running INTO a pool
+was being called a dead end at all.  Ten of twenty-eight were nothing of
+the kind; you could simply wade along.
+
+Both fixed: the tip asks `walkable()` (plus LOCKED, which is a way out
+with a key) rather than a hand-written list, and the far side of a
+shortcut door may be anything you could stand on.  The probe now asserts
+the water case cannot come back - every real dead end has stone straight
+ahead of it, because a square you can put a foot on is a way on.
+
+Now: 0.37 REAL dead ends a floor, and about 45% of them hide something.
+The check's floor is set at 30, not at the 45 it measures - a check set
+at the measured value is a check that fails the next time the dice move,
+which is the same mistake the balance numbers were making.
+
+### Three probes that were weaker than they read
+
+- **blast shape** picked a barrel within two squares of a room centre and
+  asked for the whole 13-square disc - but a big chamber hard against the
+  top of the map has a perfectly good centre with no square two north of
+  it.  It asks for room for the disc now.
+- **a barrel goes up** asked for a fixed number of embers.  They are laid
+  only on dry open ground, so a barrel on the edge of a stream leaves
+  fewer than it rolled for.  The probe picks somewhere with room to burn.
+- **toe to toe** checked a 400-fight sample against a hard 30%.  At a
+  third, that sample's standard error is over two points, so the check
+  fired about one code change in ten on resampling alone - and did, on a
+  round that had not touched the balance.  `clearFloorOdds` hands back
+  the error now and the check asks whether the REAL rate could be below
+  the line, not whether one sample was.
+
+### And a real bug the dice shift uncovered
+
+`tidyBarrels` will take a barrel out of a powder store to keep the floor
+passable, and `tidyStores` prunes what is left to one clump.  Between
+them they can cut a store below the four barrels the generator refuses to
+BUILD one with - leaving a room still calling itself a powder store with
+three barrels in it, and a floor whose `L.special` pointed at nothing.
+`POWDER_MIN` is named now, and a store cut below it loses the barrels and
+the title together.
+
+**Slime, after a round of play:** `SLIME_TURNS` 8-10 became 10-13 (a
+quarter longer, both ends multiplied and the half rounded up) and
+`SLIME_STICK_PCT` 60 became 75.  At 60 the chain ran out after two and a
+half squares; at 75 it runs about four, which is long enough to walk
+something into a corner with.
+
+### Two more probes that were leaning on the dice
+
+- **a fire seen down a hall** scanned for a long dark run and allowed
+  water along it.  Nothing burns on water, so no ember was laid, and the
+  check read "the fire could not be seen" when there had never been a
+  fire.  It asks for dry ground now.
+- **the dead-end share** was briefly set at the value it measured, which
+  is the knife-edge mistake this round had already fixed elsewhere.
+
+## Round 16 - the monitor is on to begin with, and the sheet cannot go stale
+
+**The retro monitor starts on.**  `loadCrt` reads the stored value and
+now switches on for anything that is not an explicit `'0'`.  Nothing
+stored is a first visit, and the game should look the way it is meant to
+look before anybody has been into a menu - the switch in the ESC menu is
+there to turn it OFF.  The render probe asserts both halves: an empty
+store comes up ON, and a stored `'0'` still comes up off, so a passing
+check means the default moved rather than the switch breaking.
+
+### The sprites on pxlbay.net, and why Ctrl+F5 never stuck
+
+The symptom: the site came up with every sprite cut from the wrong cell.
+Ctrl+F5 fixed it; a normal reload of the freshly fixed page broke it
+again immediately.
+
+That last detail is the whole diagnosis.  If the stale thing were the
+HTML, a hard reload would have replaced it and the next ordinary reload
+would have been fine.  It was not fine, so what was being restored was a
+**subresource** - `spritesheet.png` - almost certainly from a CDN edge
+that Ctrl+F5 bypasses for one request without ever updating.
+
+The layout lives in the HTML and the pixels live in the PNG, and they are
+two files.  Serve one of them from yesterday next to the other from today
+and the game does not break, which would be obvious: it runs perfectly
+and draws every sprite out of the wrong cell, which reads like a bug in
+the renderer.
+
+**The fix is to make the sheet's name depend on its contents.**
+`_stamp()` in both builders takes `sha1(spritesheet.png)[:10]` and the
+pages ask for `spritesheet.png?v=<stamp>`.  A cache cannot serve old
+bytes for a URL it has never seen, and an old HTML goes on asking for its
+own old sheet - so the worst a stale cache can now do is give you an old
+game that **works** instead of a new one that does not.
+
+It costs nothing that matters.  A query string does not change which file
+the server hands over, so painting `spritesheet.png` and reloading still
+shows the new paint, and the standing rule holds: nothing is baked in and
+there is still no build step for art.  `build.py`'s refuse-to-write guard
+had to widen from an exact match to a prefix - `ATLAS_PNG =
+"spritesheet.png` - because the name now carries the stamp after it.
+
+**And a net under it.**  `atlasImg.onload` compares the PNG's real size
+with `ATLAS.atlasW/atlasH` and, if they disagree, writes into the
+`#nosheet` box that the two files have come apart and to reload with
+SHIFT held.  A mismatch used to be silent; now it says so.
+
+**The probe** reads the built `index.html` and `playtest.html`, and
+requires that each asks for a *stamped* sheet and that the stamp is the
+stamp of the `spritesheet.png` lying beside it.  Proved to fail on the
+old code three ways: no stamp at all (both pages), and a page whose stamp
+no longer matches a repainted sheet.  It also re-checks that neither page
+has base64 in it, which is the rule the stamp exists to keep serving.
+
+### The half that is not in this repo
+
+The stamp fixes the sheet.  It cannot fix `index.html` itself, because
+that is the document the browser asks for by its own bare name.  If
+pxlbay.net's host or CDN serves it with a long `max-age`, the browser
+will go on running an old page - which will now at least be a *working*
+old page, since it asks for its own old sheet.  For new work to appear,
+`index.html` wants `Cache-Control: no-cache` (revalidate every load).
+The PNG can be cached hard and for ever; that is what the stamp is for.

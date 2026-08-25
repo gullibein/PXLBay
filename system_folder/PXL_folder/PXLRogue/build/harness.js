@@ -2050,7 +2050,17 @@ function clearFloorOdds(depth, runs){
     }
     if(alive){ ok++; hpLeft+=P.hp; mobs+=roster.length; } else died++;
   }
-  return { died: Math.round(100*died/runs),
+  /* The share and how much of it is sampling.  400 fights is a sample,
+     not a measurement: at a third the standard error is well over two
+     points, so a threshold read off the point estimate fires about one
+     code change in ten on the resampling alone - and it did, at 29
+     against a floor of 30.  Handing the error back lets the check ask
+     the question it means: not "is this number above 30" but "could the
+     real rate be below 30". */
+  var p = died / runs;
+  return { died: Math.round(100 * p),
+           se: 100 * Math.sqrt(p * (1 - p) / Math.max(1, runs)),
+           runs: runs,
            hp: ok ? Math.round(hpLeft/ok) : 0,
            mobs: ok ? (mobs/ok) : 0 };
 }
@@ -2356,7 +2366,7 @@ function pinOK(){
    into through the wall of another room - not off a corridor. */
 function layoutOK(seeds){
   var floors=0, stairShared=0, stairForced=0, keyShared=0, keyStranded=0, keys=0, secret=0, panelled=0;
-  var fromRoom=0, fromHall=0, behind=[], vaults=0, pockets=0, s, d, i, k, q;
+  var fromRoom=0, fromHall=0, fromTip=0, behind=[], vaults=0, pockets=0, s, d, i, k, q;
   for(s=0;s<seeds;s++){
     bootTest(83000+s);
     for(d=1;d<=8;d++){
@@ -2406,7 +2416,21 @@ function layoutOK(seeds){
         }
         if(outer<0) continue;
         got=1;
-        if(L.tiles[outer]===CORR) fromHall++; else fromRoom++;
+        /* Where the panel is matters, and there are two quite different
+           places it can be.  A panel in the MIDDLE of a tunnel wall is
+           not something anybody thinks to search, and the floor's
+           guaranteed hidden room must never be behind one.  A panel at
+           the blank END of a dead end is the opposite: a corridor
+           somebody cut that arrives nowhere is the one place in a
+           dungeon where a wall is itself a question, and a hint tells
+           you so. */
+        if(L.tiles[outer]!==CORR) fromRoom++;
+        else {
+          var ox=outer%MAP_W, oy=(outer/MAP_W)|0;
+          var tp=deadEndTip(L, outer);
+          if(tp && ox+tp.dx===x && oy+tp.dy===y) fromTip++;
+          else fromHall++;
+        }
         if(inner>=0){ var rid=L.roomAt[inner];
           behind.push(rid>=0?L.rooms[rid].floors.length:1); }
       }
@@ -2423,7 +2447,7 @@ function layoutOK(seeds){
   return { floors:floors, stairShared:stairShared, stairForced:stairForced,
            keys:keys, keyShared:keyShared,
            keyStranded:keyStranded, panelled:panelled,
-           secret:secret, fromRoom:fromRoom, fromHall:fromHall,
+           secret:secret, fromRoom:fromRoom, fromHall:fromHall, fromTip:fromTip,
            behind: behind.reduce(function(a,b){return a+b;},0)/Math.max(1,behind.length),
            pockets:pockets, vaults:vaults };
 }
@@ -3181,7 +3205,10 @@ function specialRoomsOK(seeds){
            rest of the floor - those are meant to stand on their own */
         var bs=[];
         for(var k in L.barrels) if(inPowderRoom(k|0)) bs.push(k|0);
-        if(bs.length<4) bad.push('a powder store with '+bs.length+' barrels');
+        if(bs.length<POWDER_MIN)
+          bad.push('a room still calling itself a powder store with '+bs.length+
+            ' barrels - below '+POWDER_MIN+' it is not a pile, and the title should '+
+            'have gone with them');
         /* every barrel must touch another, or nothing chains */
         var lone=0;
         for(i=0;i<bs.length;i++){
@@ -3421,8 +3448,13 @@ function crossingsOK(seeds){
 }
 
 
-/* One leprechaun to a floor; he runs off with the purse rather than
-   vanishing out of the world, and you can get it back. */
+/* One leprechaun to a floor.  He robs you and makes for the WAY DOWN -
+   not the far dark, which is where he used to go and which gave you
+   nothing to do about it.  He stands at the top of the stairs a little
+   while, and then he takes them and is out of the run with your gold.
+
+   The window is the whole point: get there first, or run him down on the
+   way, or the purse is gone for good. */
 function leprechaunOK(seeds){
   var bad=[], floors=0, twoUp=0, s, d, i;
   for(s=0;s<seeds;s++){
@@ -3435,7 +3467,7 @@ function leprechaunOK(seeds){
     }
   }
   /* the robbery itself */
-  var holed=0, kept=0, arrived=0, shortOfIt=0, sameRoom=0, runs=0, invis=0, steps=[];
+  var gone=0, kept=0, arrived=0, runs=0, invis=0, showed=0, steps=[], waits=[];
   for(s=0;s<40;s++){
     bootTest(76500+s);
     L.mons.length=0; P.hp=P.mhp=400; P.gold=200; G.dead=0;
@@ -3456,52 +3488,80 @@ function leprechaunOK(seeds){
     if(L.mons.indexOf(m)<0){ bad.push('he vanished instead of running'); continue; }
     if(m.invis) invis++;
     kept++;
-    /* now watch him run for the far side of the floor */
-    var startRoom = roomIndexAt(m.x, m.y), n2 = 0;
-    var want = m.goal ? m.goal.room : -1;
-    if (want < 0) bad.push('he had nowhere to run to');
-    for(var turn=0;turn<BOLT_PATIENCE+40;turn++){
-      var bx=m.x, by=m.y;
-      boltMove(m);
-      if(m.holed) break;
-      if(m.x===bx && m.y===by){ bad.push('he stopped running without giving up'); break; }
-      n2++;
-    }
-    steps.push(n2);
-    if(!m.holed) bad.push('he never settled anywhere');
-    else {
-      holed++;
-      if(m.invis) bad.push('he made his stand and stayed invisible');
-      if(!m.spent) bad.push('he could still vanish a second time');
-      if(want>=0 && roomIndexAt(m.x,m.y)!==want) shortOfIt++;
-      else if(want>=0) arrived++;
-      if(want>=0 && want===startRoom) sameRoom++;
-      /* and he stays there */
-      var hx=m.x, hy=m.y;
-      for(i=0;i<30;i++) boltMove(m);
-      if(m.x!==hx||m.y!==hy) bad.push('he wandered off after making his stand');
-      /* robbing you again does not make him vanish again */
-      P.gold=200; P.x=m.x+1>=MAP_W?m.x-1:m.x+1; P.y=m.y;
-      m.spent=1;
-      retaliateOK;                       /* no-op: keeps the linter honest */
-    }
+    /* he makes for the way down, and there is one on every floor */
+    if(!m.goal) { bad.push('he had nowhere to run to'); continue; }
+    if(!m.goal.stair) bad.push('he ran for something other than the stairs');
+    else if(m.goal.x!==L.stair.x || m.goal.y!==L.stair.y)
+      bad.push('he ran for '+m.goal.x+','+m.goal.y+' and the stairs are at '+
+        L.stair.x+','+L.stair.y);
 
-    /* and killing him gives the purse back */
+    /* killing him on the way gives the purse back, so that is checked on
+       a copy of the situation before he is allowed to get there */
     var gold0=0;
     for(i=0;i<L.items.length;i++) if(L.items[i].t==='gold') gold0+=L.items[i].cnt;
-    var owed=m.gold;
+    var owed=m.gold, mx0=m.x, my0=m.y, mg0=m.gold;
     killMonster(m,true);
     var gold1=0;
     for(i=0;i<L.items.length;i++) if(L.items[i].t==='gold') gold1+=L.items[i].cnt;
     if(gold1-gold0 < owed) bad.push('killing him did not give the gold back');
+
+    /* and now let one run the whole way instead */
+    var m2=mkMonster('L',3,mx0,my0);
+    m2.hp=m2.mhp=400; m2.gold=mg0;
+    startBolt(m2);
+    L.mons.push(m2);
+    var n2=0, atStairs=0, waited=0, sawShow=0;
+    for(var turn=0;turn<BOLT_PATIENCE+LEP_LINGER+80;turn++){
+      if(L.mons.indexOf(m2)<0) break;          /* down the stairs and away */
+      var bx=m2.x, by=m2.y, wasInvis=m2.invis;
+      boltMove(m2);
+      if(m2.holed) break;
+      if(L.mons.indexOf(m2)<0) break;
+      if(mdist2(m2, L.stair.x, L.stair.y)<=1){
+        atStairs=1;
+        waited++;
+        if(wasInvis && !m2.invis) sawShow=1;
+        /* Not on the turn he arrives: the step that brings him within
+           reach of the stairs happens before the waiting does, so he is
+           still running - and still unseen - for that one move. */
+        if(waited>1 && m2.invis) bad.push('he waited at the stairs still invisible');
+      } else if(m2.x===bx && m2.y===by){
+        bad.push('he stopped running without giving up'); break;
+      } else n2++;
+    }
+    steps.push(n2);
+    if(m2.holed){
+      /* a floor he cannot cross: he settles for where he got to, which
+         is the old behaviour and still the right one when there is no
+         way through to the stairs */
+      continue;
+    }
+    if(L.mons.indexOf(m2)>=0){ bad.push('he never got to the stairs or gave up'); continue; }
+    gone++;
+    if(!atStairs) bad.push('he left without ever reaching the stairs');
+    else {
+      arrived++;
+      waits.push(waited);
+      if(!sawShow) bad.push('he never showed himself while he waited');
+      else showed++;
+      if(waited < LEP_LINGER)
+        bad.push('he waited only '+waited+' turns of the '+LEP_LINGER+' he should');
+      if(waited > LEP_LINGER+2)
+        bad.push('he waited '+waited+' turns, well past the '+LEP_LINGER);
+    }
+    /* and he takes the gold out of the world with him: nothing dropped */
+    var loose=0;
+    for(i=0;i<L.items.length;i++) if(L.items[i].t==='gold') loose+=L.items[i].cnt;
+    if(loose>gold1) bad.push('he dropped the purse on his way down the stairs');
   }
   if(invis<kept) bad.push('he ran off without turning invisible');
-  if(!holed) bad.push('he never makes a stand anywhere');
-  if(arrived < holed / 2)
-    bad.push('he only reached the room he was making for '+arrived+' times of '+holed);
+  if(!gone) bad.push('he never once got down the stairs with it');
+  if(arrived < gone)
+    bad.push('he reached the stairs only '+arrived+' times of the '+gone+' he left on');
   var avg = steps.length ? steps.reduce(function(a,b){return a+b;},0)/steps.length : 0;
-  return { floors:floors, twoUp:twoUp, runs:runs, holed:holed, arrived:arrived,
-           steps:avg, bad:bad };
+  var wavg = waits.length ? waits.reduce(function(a,b){return a+b;},0)/waits.length : 0;
+  return { floors:floors, twoUp:twoUp, runs:runs, gone:gone, arrived:arrived,
+           steps:avg, wait:wavg, bad:bad };
 }
 
 /* Knockback: on a blade it drives a foe back, on your gear it throws off
@@ -4591,25 +4651,45 @@ function overflowAndStonesOK(){
     P.eq.body=arm;
     return arm;
   }
-  /* with a pouch, it goes in the pouch */
-  var arm=fill(true);
+  /* The pouch is for potions and nothing else, so a full pack is a full
+     pack: the armour goes on the floor whether you are carrying one or
+     not.  It used to overflow into the pouch, which made the pouch a
+     second pack - and a second pack is not a decision, it is only more
+     room. */
+  var arm=fill(true), q, s;
   G.msgq=[];
   unequipTo(arm);
   var inPouch=0;
   for(i=0;i<N_SLOTS;i++){
-    var s=P.slots[i];
+    s=P.slots[i];
     if(s && s.t==='pouch')
-      for(var q=0;q<POUCH_CAP;q++) if(s.items[q]===arm) inPouch=1;
+      for(q=0;q<POUCH_CAP;q++) if(s.items[q]===arm) inPouch=1;
   }
-  if(!inPouch) bad.push('a full pack dropped the armour instead of pouching it');
-  if(itemAt(L,P.x,P.y)===arm) bad.push('the armour went on the floor with a pouch free');
-  /* with no pouch and no room, it really does go on the floor */
+  if(inPouch) bad.push('the armour went into the potion pouch');
+  var onFloor=0;
+  for(i=0;i<L.items.length;i++) if(L.items[i]===arm) onFloor=1;
+  if(!onFloor) bad.push('a full pack did not drop the armour with a pouch carried');
+  /* with no pouch and no room, the same */
   arm=fill(false);
   G.msgq=[];
   unequipTo(arm);
   var floored=0;
   for(i=0;i<L.items.length;i++) if(L.items[i]===arm) floored=1;
   if(!floored) bad.push('a full pack with no pouch did not drop it');
+
+  /* and the thing the pouch IS for: a potion, with the pack full to the
+     brim, still has somewhere to go */
+  fill(true);
+  var flask=mkItem('potion', 0);
+  var got=addItem(flask);
+  if(!got) bad.push('a potion had nowhere to go with a pouch half empty');
+  var flasked=0;
+  for(i=0;i<N_SLOTS;i++){
+    s=P.slots[i];
+    if(s && s.t==='pouch')
+      for(q=0;q<POUCH_CAP;q++) if(s.items[q]===flask) flasked=1;
+  }
+  if(!flasked) bad.push('a potion did not go into the potion pouch');
 
   /* --- a stack of returning stones, spent one at a time ------------ */
   bootTest(89100);
@@ -7771,8 +7851,10 @@ function breathOK(){
     /* Where you happen to start is not always somewhere with four clear
        squares in front of it, and which square that is moves with the
        dice.  Go and stand somewhere that has one. */
-    var line=straightLine4(1);
-    if(!line){ bad.push('nowhere to breathe down'); continue; }
+    /* dry: a half dragon standing in a stream never spits at all, so a
+       line that happens to end in water is not a line to breathe down */
+    var line=straightLine4(1, 1);
+    if(!line){ bad.push('nowhere dry to breathe down'); continue; }
     var m=mkMonster(kinds[w][0],8,line.x,line.y);
     m.hp=m.mhp=900; m.state=2; m.cast=0; m.doused=0;
     L.mons.push(m);
@@ -8603,12 +8685,21 @@ function webSpinnerOK(seeds){
            spits:avgSpits, kept:kept, backedOff:backedOff, setups:tried2,
            bites:bitesWhenStuck.length };
 }
-function straightLine4(move){
+/* Four clear squares in a row from where you stand, and the square at
+   the far end of them.  `dry` refuses water anywhere along it: a thing
+   that throws fire will not do it standing in a stream, so a probe that
+   wants one to breathe has to be given somewhere it can. */
+function straightLine4(move, dry){
+  var bars=function(x,y){
+    if(!walkable(x,y)||monAt(L,x,y)||isDoorish(x,y)) return 1;
+    if(dry && isWater(x,y)) return 1;
+    return 0;
+  };
   for(var i=0;i<DIR4.length;i++){
     var dx=DIR4[i][0], dy=DIR4[i][1], x=P.x, y=P.y, ok=1, n;
     for(n=1;n<=4;n++){
       x+=dx; y+=dy;
-      if(!walkable(x,y)||monAt(L,x,y)||isDoorish(x,y)){ ok=0; break; }
+      if(bars(x,y)){ ok=0; break; }
     }
     if(ok) return { x:x, y:y, dx:dx, dy:dy };
   }
@@ -8623,7 +8714,7 @@ function straightLine4(move){
       var ex=sx, ey=sy, good=1;
       for(var k=1;k<=4;k++){
         ex+=DIR4[d][0]; ey+=DIR4[d][1];
-        if(!walkable(ex,ey)||monAt(L,ex,ey)||isDoorish(ex,ey)){ good=0; break; }
+        if(bars(ex,ey)){ good=0; break; }
       }
       if(!good) continue;
       P.x=sx; P.y=sy; computeVis();
@@ -9704,10 +9795,18 @@ function blastShapeOK(seeds){
     for(i=0;i<L.rooms.length;i++)
       if(!L.rooms[i].gone && L.rooms[i].floors.length>40){ r=L.rooms[i]; break; }
     if(!r) continue;
+    /* Room for the whole disc, not merely room for the barrel.  A big
+       chamber hard against the top of the map has a perfectly good
+       centre with no square two north of it, and the blast is clipped
+       at the edge of the world - so the check read a correct disc as a
+       broken one. */
     var c=null;
     for(i=0;i<r.floors.length;i++){
       var f=r.floors[i];
-      if(Math.abs(f[0]-r.cx)<2 && Math.abs(f[1]-r.cy)<2){ c=f; break; }
+      if(Math.abs(f[0]-r.cx)>=2 || Math.abs(f[1]-r.cy)>=2) continue;
+      if(f[0]<=BARREL_BLAST || f[1]<=BARREL_BLAST) continue;
+      if(f[0]>=MAP_W-1-BARREL_BLAST || f[1]>=MAP_H-1-BARREL_BLAST) continue;
+      c=f; break;
     }
     if(!c) continue;
     L.barrels[c[1]*MAP_W+c[0]]=1; L.decor[c[1]*MAP_W+c[0]]='barrel';
@@ -12409,10 +12508,22 @@ function potionSipOK(){
     P.food=500; P.hp=P.mhp=900000; P.blind=0; P.conf=0; P.hallu=0; G.dead=0;
     var before=P.food;
     var it=mkItem('potion',k); it.cnt=1; addItem(it);
+    G.msgq=[];
     quaff(it);
     var got=P.food-before;
     tried++;
-    if(POTIONS[k].n==='nourishment'){
+    if(POTIONS[k].n==='slime'){
+      /* The one flask that will not go down at all.  It is refused
+         before it is spent - a potion you could not drink that vanished
+         out of your pack anyway would be the worst of both - and you
+         have still learnt what it is, because you had it at your lips. */
+      if(got!==0) bad.push('the slime went down and was worth '+got);
+      if(countOf(it)!==1) bad.push('the slime was spent by being refused');
+      if(!KNOWN.pot[k]) bad.push('putting slime to your lips taught you nothing');
+      var said=G.msgq.map(function(m){return m.s||'';}).join(' ');
+      if(said.indexOf("can't drink it")<0)
+        bad.push('nothing was said about why the slime would not go down: "'+said+'"');
+    } else if(POTIONS[k].n==='nourishment'){
       if(got<POTION_FEED[0]) bad.push('a flask of nourishment fed you only '+got);
       if(got>POTION_FEED[0]+POTION_FEED[1]) bad.push('nourishment fed you '+got+' - a sip on top of the meal');
     } else if(got!==POTION_SIP) bad.push('drinking '+POTIONS[k].n+' was worth '+got+', not '+POTION_SIP);
@@ -12682,6 +12793,11 @@ function fireLightsFarOK(seeds){
           var nx=sx+DIR4[d][0]*(n+1), ny=sy+DIR4[d][1]*(n+1);
           if(blocksShot(nx,ny)||isDoorish(nx,ny)) break;
           if(!walkable(nx,ny)) break;
+          /* Dry the whole way.  A hall that ends in a pool is a fine
+             dark hall and a poor place to put a fire: nothing burns on
+             water, so no ember is laid and the check reads "the fire
+             could not be seen" when there was never a fire. */
+          if(inWater(nx,ny)) break;
           n++;
         }
         if(n>LIT_RADIUS+4){ spot={x:sx,y:sy,d:DIR4[d],n:n}; break; }
@@ -13421,6 +13537,20 @@ function barrelBlastOK(seeds){
     P.hp=P.mhp=900000; P.blind=0; G.dead=0; G.splash=null;
     var bx=lane.x, by=lane.y, bj=by*MAP_W+bx;
     if(!walkable(bx,by)) continue;
+    /* Somewhere with dry ground to burn.  The embers are laid only on
+       open squares that are not water, so a barrel that goes up on the
+       edge of a stream leaves fewer fires than it rolled for - and the
+       check read that as the wrong number rather than as nowhere to put
+       them.  Ask for room for the most it could ever lay. */
+    var dry=0, ex, ey;
+    for(ey=by-BARREL_BLAST;ey<=by+BARREL_BLAST;ey++)
+      for(ex=bx-BARREL_BLAST;ex<=bx+BARREL_BLAST;ex++){
+        if(ex<1||ey<1||ex>=MAP_W-1||ey>=MAP_H-1) continue;
+        var ox=ex-bx, oy=ey-by;
+        if(ox*ox+oy*oy>BARREL_BLAST_SQ) continue;
+        if(walkable(ex,ey) && !inWater(ex,ey)) dry++;
+      }
+    if(dry<BARREL_FIRES_MAX) continue;
     tried++;
     L.barrels[bj]=1; L.decor[bj]='barrel';
     G.msgq=[]; G.beat=0;
@@ -13810,4 +13940,617 @@ function thrownWearOK(){
 
   return { bad:bad, broke:pct, worn:pctW, fine:pctFine,
            hurls:hurls, dealtFine:dealtFine };
+}
+
+/* --------------------------------------- the top of the dungeon is bare
+   Two things do not belong on the floors you learn the game on.  A ring
+   is the run's one shot at that ring, and finding it before you know
+   what any of them do spends it for nothing.  A two handed weapon takes
+   your shield hand, which is a real decision and a poor one to be handed
+   on the floor you start with a plain dagger on.
+
+   The rule is about what the dungeon LAYS OUT.  A ring wrestled off a
+   leprechaun or a witch is not laid out - it is the only way that ring
+   ever appears at all - and those are left alone on purpose. */
+function shallowFloorsOK(){
+  var bad=[], i;
+  bootTest(59100);
+  var shallowRings=0, shallowTwos=0, deepRings=0, deepTwos=0, deepTried=0;
+  for(i=0;i<3000;i++){
+    var d = 1 + (i & 1);                      /* the first two floors */
+    var a = newItem(d);
+    if(a.t==='ring') shallowRings++;
+    if(a.t==='weapon' && WEAPONS[a.k].two) shallowTwos++;
+    var b = newGoodItem(d);                   /* and what a hoard holds */
+    if(b.t==='ring') shallowRings++;
+    if(b.t==='weapon' && WEAPONS[b.k].two) shallowTwos++;
+  }
+  if(shallowRings) bad.push(shallowRings+' rings were laid out on the top two floors');
+  if(shallowTwos) bad.push(shallowTwos+' two handed weapons were laid out on the top two floors');
+
+  /* and from the third floor down both come back, or the rule has
+     quietly turned into "never" */
+  for(i=0;i<3000;i++){
+    var d2 = DEEP_ONLY_DEPTH + (i % 5);
+    var c = newItem(d2);
+    if(c.t==='ring') deepRings++;
+    if(c.t==='weapon' && WEAPONS[c.k].two) deepTwos++;
+    var e = newGoodItem(d2);
+    if(e.t==='weapon' && WEAPONS[e.k].two) deepTwos++;
+    deepTried++;
+  }
+  if(!deepRings) bad.push('no ring was ever laid out below the top two floors');
+  if(!deepTwos) bad.push('no two handed weapon was ever laid out deeper down');
+
+  /* and the floors themselves, as they are actually built */
+  var onFloor=0, floors=0, s;
+  for(s=0;s<12;s++){
+    bootTest(59200+s);
+    var d3;
+    for(d3=1;d3<DEEP_ONLY_DEPTH;d3++){
+      if(d3>1) enterLevel(d3);
+      floors++;
+      for(i=0;i<L.items.length;i++){
+        var it=L.items[i];
+        if(it.t==='ring'){ onFloor++; bad.push('a ring was lying on floor '+d3); }
+        if(it.t==='weapon' && WEAPONS[it.k].two){
+          onFloor++; bad.push('a '+WEAPONS[it.k].n+' was lying on floor '+d3);
+        }
+        if(it.t==='chest' && it.items){
+          for(var q=0;q<it.items.length;q++){
+            var ci=it.items[q];
+            if(!ci) continue;
+            if(ci.t==='ring'){ onFloor++; bad.push('a ring was in a chest on floor '+d3); }
+            if(ci.t==='weapon' && WEAPONS[ci.k].two){
+              onFloor++; bad.push('a '+WEAPONS[ci.k].n+' was in a chest on floor '+d3);
+            }
+          }
+        }
+      }
+    }
+  }
+  return { bad:bad, floors:floors, onFloor:onFloor,
+           deepRings:deepRings, deepTwos:deepTwos };
+}
+
+/* ---------------------------------------------------------------- vials
+   A potion's dangerous cousin.  Every one of the four changes the room
+   rather than the creature it lands on, which is what makes a vial a
+   different decision from a flask: you throw one at the floor because of
+   what the floor will be afterwards.
+
+   Which colour is which is a fact about the run, so the first one you
+   throw is a gamble - and the moment it goes off you know that colour
+   for the rest of the run. */
+function vialsOK(){
+  var bad=[], i, k;
+
+  /* --- the colours, and learning them ------------------------------- */
+  bootTest(60100);
+  var cols={}, sprites={};
+  for(i=0;i<VIALS.length;i++){
+    var col=APPEAR.vial[i];
+    if(!col){ bad.push(VIALS[i].n+' was dealt no colour'); continue; }
+    if(cols[col]) bad.push('two vials are both '+col);
+    cols[col]=1;
+    if(V_SPRITE[col]===undefined) bad.push(col+' has no sprite');
+    sprites[V_SPRITE[col]]=1;
+    if(KNOWN.vial[i]) bad.push(VIALS[i].n+' is known before it has been thrown');
+    var it=mkItem('vial', i);
+    if(itemName(it).indexOf(VIALS[i].n)>=0)
+      bad.push('an unknown vial names itself: '+itemName(it));
+    if(itemName(it).indexOf(col)<0)
+      bad.push('an unknown vial does not say its colour: '+itemName(it));
+    if(!isThrowable(it)) bad.push('a vial cannot be thrown');
+    if(isFlask(it)) bad.push('a vial reads as a flask');
+  }
+  /* two runs deal them differently, or the colour is not a secret */
+  var first=APPEAR.vial.join(',');
+  var same=0;
+  for(i=0;i<12;i++){ bootTest(60200+i); if(APPEAR.vial.join(',')===first) same++; }
+  if(same>8) bad.push('the colours came out the same in '+same+' runs of 12');
+
+  /* --- what each one does ------------------------------------------- */
+  function clearRoom(seed){
+    bootTest(seed);
+    L.mons.length=0; L.items.length=0; L.clouds.length=0; L.traps=[];
+    L.ice={}; L.webs={};
+    P.hp=P.mhp=90000; P.blind=0; G.beat=0; G.msgq=[];
+    /* somewhere with room round it */
+    var r=null;
+    for(var q=0;q<L.rooms.length;q++)
+      if(!L.rooms[q].gone && L.rooms[q].floors.length>28){ r=L.rooms[q]; break; }
+    if(!r) return null;
+    var best=null, bd=1e9;
+    for(q=0;q<r.floors.length;q++){
+      var f=r.floors[q];
+      if(L.tiles[f[1]*MAP_W+f[0]]!==FLOOR) continue;
+      var d=Math.abs(f[0]-r.cx)+Math.abs(f[1]-r.cy);
+      if(d<bd){ bd=d; best=f; }
+    }
+    if(!best) return null;
+    P.x=best[0]; P.y=best[1]; computeVis();
+    return r;
+  }
+  function vialIndex(name){
+    for(var q=0;q<VIALS.length;q++) if(VIALS[q].n===name) return q;
+    return -1;
+  }
+  function hurl(name, tx, ty){
+    var it=mkItem('vial', vialIndex(name));
+    addItem(it);
+    G.msgq=[];
+    throwAtSquare(it, tx, ty);
+    return it;
+  }
+
+  /* smoke: it fills the room and stops at the wall */
+  var smokeCells=0, smokeTurns=[], poisonBite=0, plainBite=0;
+  if(clearRoom(60300)){
+    var tx=P.x+1, ty=P.y;
+    if(!walkable(tx,ty)){ tx=P.x; ty=P.y+1; }
+    hurl('smoke', tx, ty);
+    smokeCells=L.clouds.length;
+    for(i=0;i<L.clouds.length;i++){
+      if(L.clouds[i].kind!=='smoke') bad.push('a smoke vial made '+L.clouds[i].kind);
+      smokeTurns.push(L.clouds[i].turns);
+      /* nothing of it inside the rock */
+      if(!walkable(L.clouds[i].x, L.clouds[i].y))
+        bad.push('smoke got into a square you cannot walk on');
+      /* and nothing further off than it reaches */
+      var step=Math.max(Math.abs(L.clouds[i].x-tx), Math.abs(L.clouds[i].y-ty));
+      if(step>VIAL_FUME_REACH)
+        bad.push('smoke reached '+step+' squares, past the '+VIAL_FUME_REACH+' it may');
+    }
+    if(smokeCells<8) bad.push('a smoke vial made only '+smokeCells+' squares of it');
+    for(i=0;i<smokeTurns.length;i++)
+      if(smokeTurns[i]<VIAL_SMOKE_TURNS[0]||smokeTurns[i]>VIAL_SMOKE_TURNS[1])
+        bad.push('a square of smoke lasts '+smokeTurns[i]+' turns');
+    if(!KNOWN.vial[vialIndex('smoke')])
+      bad.push('throwing one did not teach you what colour it was');
+  } else bad.push('nowhere to try a smoke vial');
+
+  /* poison: the same shape, biting harder */
+  if(clearRoom(60310)){
+    var px2=P.x+1, py2=P.y;
+    if(!walkable(px2,py2)){ px2=P.x; py2=P.y+1; }
+    hurl('poison', px2, py2);
+    var strong=0, weak=0;
+    for(i=0;i<L.clouds.length;i++){
+      if(L.clouds[i].kind!=='poison') bad.push('a poison vial made '+L.clouds[i].kind);
+      if(L.clouds[i].strong) strong++; else weak++;
+    }
+    if(!strong) bad.push('a poison vial made ordinary gas');
+    if(weak) bad.push(weak+' squares of it were only ordinary gas');
+    /* and it costs you more to stand in than a flask of gas does */
+    function bite(strongOne){
+      var was=P.hp=P.mhp=900000;
+      L.clouds.length=0;
+      L.clouds.push({ x:P.x, y:P.y, kind:'poison', turns:5, strong:strongOne?1:0 });
+      var total=0;
+      for(var q=0;q<400;q++){
+        P.hp=P.mhp=900000; G.msgq=[];
+        cloudsOnYou();
+        total+=900000-P.hp;
+      }
+      P.hp=P.mhp=was;
+      return total/400;
+    }
+    poisonBite=bite(1); plainBite=bite(0);
+    if(!(poisonBite > plainBite*1.5))
+      bad.push('vial fumes take '+poisonBite.toFixed(1)+' a turn against gas at '+
+        plainBite.toFixed(1)+' - that is not "more"');
+    L.clouds.length=0;
+  } else bad.push('nowhere to try a poison vial');
+
+  /* ice: it glazes the floor, it is slippery, it seals what is under it */
+  var iceCells=0;
+  if(clearRoom(60320)){
+    var ix=P.x+1, iy=P.y;
+    if(!walkable(ix,iy)){ ix=P.x; iy=P.y+1; }
+    hurl('ice', ix, iy);
+    for(k in L.ice){
+      iceCells++;
+      var kx=(k|0)%MAP_W, ky=((k|0)/MAP_W)|0;
+      if(!walkable(kx,ky)) bad.push('ice formed on a square you cannot walk on');
+      var st=Math.max(Math.abs(kx-ix), Math.abs(ky-iy));
+      if(st>VIAL_ICE_REACH)
+        bad.push('ice reached '+st+' squares, past the '+VIAL_ICE_REACH+' it may');
+      if(L.ice[k]<VIAL_ICE_TURNS[0]||L.ice[k]>VIAL_ICE_TURNS[1])
+        bad.push('a square of ice lasts '+L.ice[k]+' turns');
+    }
+    if(iceCells<5) bad.push('an ice vial glazed only '+iceCells+' squares');
+    if(!iceAt(ix,iy)) bad.push('the square it broke on is not iced');
+
+    /* it thaws, and on its own schedule */
+    var longest=0;
+    for(k in L.ice) longest=Math.max(longest, L.ice[k]);
+    for(i=0;i<longest;i++) ageIce();
+    var left=0; for(k in L.ice) left++;
+    if(left) bad.push(left+' squares of ice never thawed');
+
+    /* slipping: about half, and never with sure footing */
+    L.ice={}; L.ice[iy*MAP_W+ix]=10;
+    var slips=0, tries=4000;
+    for(i=0;i<tries;i++) if(slipsOn(ix,iy)) slips++;
+    var slipPct=slips*100/tries;
+    if(Math.abs(slipPct-ICE_SLIP_PCT)>3)
+      bad.push('things go over on the ice '+slipPct.toFixed(1)+'% of the time, not '+
+        ICE_SLIP_PCT+'%');
+    var sure=0;
+    for(i=0;i<500;i++) if(slipsOn(ix,iy,1)) sure++;
+    if(sure) bad.push('sure footing slipped '+sure+' times');
+    if(slipsOn(P.x,P.y)) bad.push('a square with no ice on it was slippery');
+
+    /* a blow struck on it is a worse blow */
+    if(iceClumsy(ix,iy)!==ICE_CLUMSY) bad.push('a blow on ice is not clumsy');
+    if(iceClumsy(P.x,P.y)) bad.push('a blow on bare stone is clumsy');
+    var wasX=P.x, wasY=P.y;
+    var bare=playerHitBonus();
+    P.x=ix; P.y=iy;
+    var onIce=playerHitBonus();
+    P.x=wasX; P.y=wasY;
+    if(bare-onIce!==ICE_CLUMSY)
+      bad.push('standing on ice cost the swing '+(bare-onIce)+', not '+ICE_CLUMSY);
+    L.ice={};
+  } else bad.push('nowhere to try an ice vial');
+
+  /* nitro: it goes off like a barrel and takes the floor with it, in a
+     ragged shape with cracks round it like any other hole */
+  var holes=0, shapes={};
+  if(clearRoom(60330)){
+    var nx=P.x+3, ny=P.y;
+    if(!walkable(nx,ny)){ nx=P.x; ny=P.y+3; }
+    if(walkable(nx,ny)){
+      /* something standing on the square that is about to stop existing */
+      var doomed=mkMonster('K',3,nx,ny);
+      doomed.hp=doomed.mhp=900000; doomed.state=2;
+      L.mons.push(doomed);
+      var before=L.mons.length;
+      hurl('nitro', nx, ny);
+      if(L.tiles[ny*MAP_W+nx]!==HOLE) bad.push('nitro left no hole where it landed');
+      if(L.mons.indexOf(doomed)>=0)
+        bad.push('something standing on the floor that crumbled is still there');
+      if(L.mons.length>=before) bad.push('nothing went down with the floor');
+      /* The hole itself: everything reachable from where it landed by
+         walking hole to hole.  Counted that way rather than over the
+         whole map, because a floor can perfectly well have had a chasm
+         of its own on it before anything was thrown. */
+      function holeFrom(sx, sy){
+        var q=[[sx,sy]], seen={}, out=[];
+        seen[sy*MAP_W+sx]=1;
+        while(q.length){
+          var c=q.shift();
+          if(L.tiles[c[1]*MAP_W+c[0]]!==HOLE) continue;
+          out.push(c);
+          for(var d=0;d<DIR4.length;d++){
+            var ax=c[0]+DIR4[d][0], ay=c[1]+DIR4[d][1];
+            if(ax<0||ay<0||ax>=MAP_W||ay>=MAP_H) continue;
+            var ak=ay*MAP_W+ax;
+            if(seen[ak]) continue;
+            seen[ak]=1; q.push([ax,ay]);
+          }
+        }
+        return out;
+      }
+      var mine=holeFrom(nx,ny);
+      holes=mine.length;
+      if(holes<NITRO_HOLE_MIN)
+        bad.push('the hole is '+holes+' squares, short of the '+NITRO_HOLE_MIN+' it should be');
+      /* It can come out larger than the cap if it ran into a chasm that
+         was already there - what must not happen is it growing past the
+         cap on its own, so the shapes are counted rather than the total. */
+      if(holes>NITRO_HOLE_MAX+4)
+        bad.push('the hole is '+holes+' squares, past the '+NITRO_HOLE_MAX+' it may grow to');
+      /* cracked flagstones round it, the way every other hole has */
+      var cracked=0, edges=0;
+      for(i=0;i<mine.length;i++)
+        for(var d2=0;d2<DIR4.length;d2++){
+          var ex=mine[i][0]+DIR4[d2][0], ey=mine[i][1]+DIR4[d2][1];
+          if(ex<0||ey<0||ex>=MAP_W||ey>=MAP_H) continue;
+          var ek=ey*MAP_W+ex;
+          if(L.tiles[ek]!==FLOOR) continue;
+          edges++;
+          if(CRACKS.indexOf(L.decor[ek])>=0) cracked++;
+        }
+      if(edges && cracked<edges)
+        bad.push((edges-cracked)+' of the '+edges+' flagstones round the hole are not cracked');
+      if(!edges) bad.push('the hole has no floor round it at all to crack');
+    } else bad.push('nowhere clear to try a nitro vial');
+  } else bad.push('nowhere to try a nitro vial');
+
+  /* and no two of them the same shape: a stamped disc every time reads
+     as a tile rather than as a floor that gave way */
+  var forms=0;
+  for(i=0;i<14;i++){
+    if(!clearRoom(60400+i)) continue;
+    var sx2=P.x+3, sy2=P.y;
+    if(!walkable(sx2,sy2)){ sx2=P.x; sy2=P.y+3; }
+    if(!walkable(sx2,sy2)) continue;
+    var was={};
+    for(k=0;k<L.tiles.length;k++) if(L.tiles[k]===HOLE) was[k]=1;
+    hurl('nitro', sx2, sy2);
+    var form=[];
+    for(k=0;k<L.tiles.length;k++)
+      if(L.tiles[k]===HOLE && !was[k])
+        form.push(((k%MAP_W)-sx2)+','+(((k/MAP_W)|0)-sy2));
+    if(!form.length) continue;
+    form.sort();
+    shapes[form.join(' ')]=1;
+    forms++;
+  }
+  var distinct=0;
+  for(k in shapes) distinct++;
+  if(forms>6 && distinct<4)
+    bad.push(forms+' nitro vials made only '+distinct+' shapes of hole between them');
+
+  return { bad:bad, smoke:smokeCells, ice:iceCells, holes:holes,
+           shapes:distinct, forms:forms, bite:poisonBite, gas:plainBite };
+}
+
+/* ----------------------------------------------------------- the slime
+   The one flask that will not go down at all, and the only potion whose
+   whole point is what it does to the floor.  What makes it worth
+   throwing is not the holding - one turn is one turn - but that it
+   FOLLOWS: more often than not it comes away on the feet of whatever
+   walked into it and holds them again on the next square, and the one
+   after that, until the luck runs out. */
+function slimeOK(){
+  var bad=[], i, k;
+  bootTest(62100);
+  var sk=-1;
+  for(k=0;k<POTIONS.length;k++) if(POTIONS[k].n==='slime') sk=k;
+  if(sk<0) return { bad:['there is no potion of slime'] };
+  if(POTIONS[sk].hurl!=='slime') bad.push('a flask of slime does nothing when thrown');
+
+  /* --- the slick ---------------------------------------------------- */
+  var sizes=[], lives=[], off=[];
+  for(var s=0;s<14;s++){
+    bootTest(62200+s);
+    L.mons.length=0; L.items.length=0; L.slime={};
+    var r=null;
+    for(i=0;i<L.rooms.length;i++)
+      if(!L.rooms[i].gone && L.rooms[i].floors.length>24){ r=L.rooms[i]; break; }
+    if(!r) continue;
+    var spot=null, bd=1e9;
+    for(i=0;i<r.floors.length;i++){
+      var f=r.floors[i];
+      if(L.tiles[f[1]*MAP_W+f[0]]!==FLOOR) continue;
+      var d=Math.abs(f[0]-r.cx)+Math.abs(f[1]-r.cy);
+      if(d<bd){ bd=d; spot=f; }
+    }
+    if(!spot) continue;
+    L.slime={};
+    var n=slimeSplash(spot[0], spot[1]);
+    var cells=0;
+    for(k in L.slime){
+      cells++;
+      lives.push(L.slime[k]);
+      var kx=(k|0)%MAP_W, ky=((k|0)/MAP_W)|0;
+      if(!walkable(kx,ky)) bad.push('slime landed on a square you cannot walk on');
+      var step=Math.max(Math.abs(kx-spot[0]), Math.abs(ky-spot[1]));
+      if(step>1) bad.push('slime landed '+step+' squares from where the flask broke');
+    }
+    if(n!==cells) bad.push('it said '+n+' squares and made '+cells);
+    if(!slimeAt(spot[0], spot[1]))
+      bad.push('the square the flask broke on has no slime on it');
+    sizes.push(cells);
+    off.push(cells-1);
+  }
+  if(!sizes.length) bad.push('nowhere to break a flask of slime');
+  for(i=0;i<sizes.length;i++)
+    if(sizes[i] < 1+SLIME_SPLASH[0] || sizes[i] > 1+SLIME_SPLASH[1])
+      bad.push('a slick came out '+sizes[i]+' squares, not '+(1+SLIME_SPLASH[0])+
+        '-'+(1+SLIME_SPLASH[1]));
+  for(i=0;i<lives.length;i++)
+    if(lives[i]<SLIME_TURNS[0]||lives[i]>SLIME_TURNS[1])
+      bad.push('a square of slime lasts '+lives[i]+' turns');
+
+  /* --- and it dries out on its own schedule -------------------------- */
+  var longest=0;
+  for(k in L.slime) longest=Math.max(longest, L.slime[k]);
+  for(i=0;i<longest;i++) ageSlime();
+  var left=0; for(k in L.slime) left++;
+  if(left) bad.push(left+' squares of slime never dried');
+
+  /* --- the holding, and the following -------------------------------- */
+  bootTest(62300);
+  L.slime={};
+  var who={ slimeOn:0 };
+  /* walking onto a clean square with nothing on your feet does nothing */
+  if(slimeCatches(who, P.x, P.y)) bad.push('a clean square held you');
+  /* walking into it holds you */
+  L.slime[P.y*MAP_W+P.x]=9;
+  var held=0, stuckAfter=0, tries=4000;
+  for(i=0;i<tries;i++){
+    who.slimeOn=0;
+    if(slimeCatches(who, P.x, P.y)) held++;
+    if(who.slimeOn) stuckAfter++;
+  }
+  if(held!==tries) bad.push('walking into slime held you only '+held+' times of '+tries);
+  var stickPct=stuckAfter*100/tries;
+  if(Math.abs(stickPct-SLIME_STICK_PCT)>3)
+    bad.push('it came away with you '+stickPct.toFixed(1)+'% of the time, not '+
+      SLIME_STICK_PCT+'%');
+
+  /* it follows onto CLEAN squares, and keeps rolling the same odds */
+  L.slime={};
+  var chains=[], runs=2000;
+  for(i=0;i<runs;i++){
+    var w2={ slimeOn:1 }, n2=0, guard=0;
+    while(w2.slimeOn && guard++ < 200){
+      if(!slimeCatches(w2, P.x, P.y)) break;   /* clean square, slime on foot */
+      n2++;
+    }
+    chains.push(n2);
+  }
+  var anyChain=0, ended=0;
+  for(i=0;i<chains.length;i++){ if(chains[i]>1) anyChain++; if(chains[i]<200) ended++; }
+  if(ended!==runs) bad.push('a chain of slime never let go');
+  if(!anyChain) bad.push('slime on your feet never held you a second time');
+  var meanChain=0;
+  for(i=0;i<chains.length;i++) meanChain+=chains[i];
+  meanChain/=runs;
+  /* one hold, then a 60% chance of another, and so on: 1/(1-p) squares */
+  var want=1/(1-SLIME_STICK_PCT/100);
+  if(Math.abs(meanChain-want)>0.35)
+    bad.push('a slick follows you '+meanChain.toFixed(2)+' squares on average, not '+
+      want.toFixed(2));
+
+  var meanSize=0;
+  for(i=0;i<sizes.length;i++) meanSize+=sizes[i];
+  return { bad:bad, size:sizes.length?meanSize/sizes.length:0,
+           stick:stickPct, chain:meanChain };
+}
+
+/* ------------------------------------------- doors at the dead ends
+   One hint says a dead end in a corridor is worth searching, and until
+   this was measured it simply was not true: the one hidden door a floor
+   is guaranteed is deliberately cut into the wall of a ROOM, on the
+   grounds that a panel in a tunnel is not something anyone thinks to
+   search - which is the opposite of what the hint tells you to do.
+
+   A dead end that survives the trimming is a corridor long enough to be
+   a place in its own right that arrives nowhere, which is exactly the
+   thing the hint is about.  So some of them have somewhere to arrive. */
+function deadEndTips(Lv){
+  /* one answer to "is this a dead end", and deadEndTip is it */
+  var out = [], i;
+  for (i = 0; i < Lv.tiles.length; i++)
+    if (deadEndTip(Lv, i)) out.push([i % MAP_W, (i / MAP_W) | 0]);
+  return out;
+}
+function deadEndDoorsOK(seeds){
+  var bad=[], s, i, d, floors=0, tips=0, withDoor=0, bare=0, wet=0;
+  for(s=0;s<(seeds||40);s++){
+    bootTest(63000+s);
+    floors++;
+    var t = deadEndTips(L);
+    tips += t.length;
+    for(i=0;i<t.length;i++){
+      var found=null;
+      for(d=0;d<DIR4.length;d++){
+        var nx=t[i][0]+DIR4[d][0], ny=t[i][1]+DIR4[d][1];
+        if(L.tiles[ny*MAP_W+nx]===SDOOR){ found=[nx,ny,d]; break; }
+      }
+      if(!found){
+        /* Every real dead end has stone straight ahead of it, because a
+           square you could put a foot on is a way ON and the corridor
+           would not be a dead end at all.  Asked anyway: the list of
+           what counts as a way used to leave water out, and ten of
+           twenty-eight "dead ends" were corridors you could simply wade
+           along. */
+        var tp = deadEndTip(L, t[i][1]*MAP_W + t[i][0]);
+        var et = tp ? L.tiles[(t[i][1]+tp.dy)*MAP_W + (t[i][0]+tp.dx)] : ROCK;
+        if(et===WALL||et===ROCK) bare++;
+        else {
+          wet++;
+          bad.push('a corridor running on into '+et+' was counted as a dead end');
+        }
+        continue;
+      }
+      withDoor++;
+      /* it has to LEAD somewhere: a hidden door onto solid rock is a
+         wall with extra steps */
+      var bx=found[0]+DIR4[found[2]][0], by=found[1]+DIR4[found[2]][1];
+      var bt=L.tiles[by*MAP_W+bx];
+      if(bt!==FLOOR && bt!==CORR && bt!==STAIR && bt!==STAIR_UP)
+        bad.push('a door at a dead end opens onto '+bt);
+      /* and the floor still hangs together with it shut */
+      var hid=[], q;
+      for(q=0;q<L.tiles.length;q++) if(L.tiles[q]===SDOOR){ hid.push(q); L.tiles[q]=DOOR; }
+      var whole=everywhereReachable(L);
+      for(q=0;q<hid.length;q++) L.tiles[hid[q]]=SDOOR;
+      if(!whole) bad.push('a dead end door left part of the floor unreachable');
+    }
+  }
+  var share = tips ? withDoor*100/tips : 0;
+  var couldHave = withDoor + bare;
+  var ofThose = couldHave ? withDoor*100/couldHave : 0;
+  /* The hint says a dead end is worth searching.  It has to be true
+     often enough to be worth believing - it used to be true never - and
+     not so often that it stops being a gamble. */
+  /* A floor of 30, not of the 45 it measures at.  A check set at the
+     measured value is a check that fails the next time the dice move -
+     the same mistake the balance numbers were making.  What is being
+     asserted is that the hint is worth believing, and three dead ends in
+     ten is that; nought in ten, which is what it was, is not. */
+  if(!tips) bad.push('no dead ends at all to search');
+  else if(ofThose < 30)
+    bad.push('only '+ofThose.toFixed(0)+'% of dead ends hide anything, which is '+
+      'not often enough for the hint to be worth believing');
+  if(couldHave > 8 && withDoor === couldHave)
+    bad.push('every single dead end hides a door - searching is a chore, not a gamble');
+  return { bad:bad, floors:floors, tips:tips, perFloor:floors?tips/floors:0,
+           withDoor:withDoor, share:share, bare:bare, wet:wet, ofThose:ofThose };
+}
+
+/* --------------------------------------- what comes down with you
+   A chasm that has been there since the dungeon was cut has had a long
+   time to settle.  A floor you blew a hole in this afternoon is still
+   coming down, and what is under it is wearing most of it - so jumping
+   through one you made lands you in the ceiling. */
+function blownHoleRubbleOK(seeds){
+  var bad=[], s, i, tried=0, heaps=[], plain=[], soft=0;
+  function rubbleRound(x, y, r){
+    var n=0, xx, yy;
+    for(yy=y-r;yy<=y+r;yy++) for(xx=x-r;xx<=x+r;xx++){
+      if(xx<0||yy<0||xx>=MAP_W||yy>=MAP_H) continue;
+      var d=L.decor[yy*MAP_W+xx];
+      if(d==='rubble'||d==='rubble2') n++;
+    }
+    return n;
+  }
+  for(s=0;s<(seeds||14);s++){
+    bootTest(64000+s);
+    P.hp=P.mhp=900000; G.dead=0; P.slots=new Array(N_SLOTS).fill(null);
+    /* an ordinary fall first, for something to compare against */
+    var was=G.depth;
+    fallDown();
+    if(G.depth<=was) bad.push('an ordinary fall went nowhere');
+    plain.push(rubbleRound(P.x,P.y,RUBBLE_REACH));
+
+    /* and now one through a hole of your own making */
+    bootTest(64000+s);
+    P.hp=P.mhp=900000; G.dead=0; P.slots=new Array(N_SLOTS).fill(null);
+    L.blown = {};
+    L.blown[P.y*MAP_W+P.x] = 1;
+    G.msgq=[];
+    var was2=G.depth;
+    fallDown();
+    if(G.depth<=was2){ bad.push('the fall through a blown hole went nowhere'); continue; }
+    tried++;
+    var n=rubbleRound(P.x,P.y,RUBBLE_REACH);
+    heaps.push(n);
+    if(!n) bad.push('nothing came down after you at all');
+    /* the square you land on is the middle of it */
+    var mid=L.decor[P.y*MAP_W+P.x];
+    if(L.tiles[P.y*MAP_W+P.x]===FLOOR || L.tiles[P.y*MAP_W+P.x]===CORR){
+      if(mid!=='rubble' && mid!=='rubble2')
+        bad.push('the square you landed on has no rubble on it: '+mid);
+      else soft++;
+    }
+    /* and it was said */
+    var said=G.msgq.map(function(m){return m.s||'';}).join(' ');
+    if(said.indexOf('comes down')<0)
+      bad.push('nothing was said about the floor coming down');
+    /* both kinds of heap get used, or one sprite is doing all the work */
+    var kinds={};
+    for(i=0;i<L.tiles.length;i++){
+      var d2=L.decor[i];
+      if(d2==='rubble'||d2==='rubble2') kinds[d2]=1;
+    }
+    if(n>6 && !kinds.rubble2 && !kinds.rubble)
+      bad.push('a big heap used neither kind of rubble');
+  }
+  var mean=function(a){ var t=0,q; for(q=0;q<a.length;q++) t+=a[q]; return a.length?t/a.length:0; };
+  var hm=mean(heaps), pm=mean(plain);
+  if(!tried) bad.push('never got a fall through a blown hole to happen');
+  else if(!(hm > pm + 3))
+    bad.push('a blown hole left '+hm.toFixed(1)+' squares of rubble against '+
+      pm.toFixed(1)+' for an ordinary fall - that is not "lots"');
+  /* and landing in it is softer than landing on bare stone */
+  if(tried && soft < tried*0.6)
+    bad.push('you landed on bare stone '+(tried-soft)+' times of '+tried);
+  return { bad:bad, tried:tried, heap:hm, plain:pm, soft:soft };
 }

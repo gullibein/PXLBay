@@ -159,14 +159,24 @@ function addDam(s) {
    after 16 would be 22 - past the cap - so a maximal run makes five of
    these choices and an ordinary one makes three or four.  That is a
    tight budget, so every perk has to be worth a whole level. */
-/* The one pouch in the game turns up on one of these floors - late
-   enough that the pack has been tight, early enough to be worth having. */
-var POUCH_FLOOR_MIN = 3, POUCH_FLOOR_MAX = 5;
+/* The one potion pouch in the game turns up on one of these floors -
+   late enough that the pack has been tight, early enough to be worth
+   having.  It holds potions and nothing else, and everything it holds
+   goes into it by itself: a bag that sorts one kind of thing out of your
+   pack is worth more than a bag that is simply bigger, because the pack
+   is where the decisions are and potions were crowding it. */
+/* Not before the fourth: the pack has to have been tight for a while
+   before a bag that fixes it is worth finding. */
+var POUCH_FLOOR_MIN = 4, POUCH_FLOOR_MAX = 6;
 
 var PERK_LEVELS = [2, 4, 7, 11, 16];
 /* how long he will keep making for a room before settling for where he
    has got to */
 var BOLT_PATIENCE = 120;
+/* How long he stands about at the top of the stairs before taking them.
+   Long enough that a player who saw where he went has a real chance of
+   catching him up; short enough that dawdling costs you the purse. */
+var LEP_LINGER = 10;
 var PERK_OFFER = 3;          /* how many you are shown to choose between */
 /* How long after the last blow the screen waits before it appears.  The
    creature you just killed is still on the tombstone list, the log has
@@ -288,7 +298,19 @@ var ARROW_RECOVER_PCT = 20;   /* chance a hit arrow survives to be reused */
    does not always wear off in one throw.  Now and then it is lying there
    afterwards with its carving intact, to be picked up and thrown again.
    (A returning stone has its own arrangement and does not use this.) */
-var RUNE_RECOVER_PCT = 25;
+/* A stone is a stone, carved or plain: what it takes to survive being
+   thrown at a wall is the same either way, so both ask this.  An arrow
+   has its own number above - it is a different object with a different
+   way of failing, and a shaft in a wall is not a pebble on the floor. */
+/* The top of the dungeon is where you learn what the dungeon is, and
+   two things do not belong there.  A ring is the run's one shot at that
+   ring and finding it on the first floor spends it before you know what
+   any of them do.  A two handed weapon takes your shield hand away,
+   which is a real decision to make and a poor one to be handed on the
+   floor you start with a plain dagger on. */
+var DEEP_ONLY_DEPTH = 3;      /* rings and great weapons from here down */
+var STONE_RECOVER_PCT = 18;
+var RUNE_RECOVER_PCT = STONE_RECOVER_PCT;
 /* How much of the run's talk is kept for reading back.  The panel holds
    the last few lines; this is the whole story of the run, and it is what
    the T key opens.  Long enough to reach the start of any ordinary run
@@ -334,6 +356,12 @@ var TOUCH_HOLD_MS = 450;
    it before the picture settles onto the grid.  A wheel notch that
    reports lines rather than pixels is worth about this many. */
 var WHEEL_HOLD_MS = 140, WHEEL_LINE_PX = 16;
+/* How much wheel is one line in a box of words.  A notch on a mouse is
+   about a hundred CSS pixels, so this is roughly three lines a notch -
+   and the leftovers are kept between events, or a trackpad's dozens of
+   tiny nudges would each round to nothing and the box would never
+   move. */
+var WHEEL_TEXT_PX = 34;
 /* how long a pressed inventory button stays lit */
 var BTN_FLASH_MS = 110;
 /* how much of the way home the sliding map travels each frame, and how
@@ -431,14 +459,24 @@ var BATTLE_MAX = 4;
    back for every turn you stand in it */
 var HOLY_MIN = 2, HOLY_MAX = 3, HOLY_HEAL = 2;
 /* holes in the floor: how likely, how big, and how far you drop */
+/* How few barrels stop being a pile.  A powder store is a stack where
+   every barrel touches another, so that one going up takes the lot; below
+   this it is not a store, it is some barrels. */
+var POWDER_MIN = 4;
 var HOLE_CHANCE = 15, HOLE_MIN = 1, HOLE_MAX = 4;
 var FALL_MIN = 1, FALL_MAX = 5;
+/* A floor you blew a hole in comes down with you.  How far the heap
+   reaches, how readily it covers a square next to the one you landed on,
+   and how much less readily for every square further out - so the middle
+   of it is solid and the edge of it is scattered. */
+var RUBBLE_REACH = 2, RUBBLE_SPREAD = 96, RUBBLE_FALLOFF = 34;
 /* What breaks a fall, and by how much.  Landing on something soft is the
    difference between a bad landing and a very bad one. */
 var SOFT_LANDING = {
   moss:   [0.20, 'You land in soft moss. It breaks your fall.'],
   moss2:  [0.20, 'You land in soft moss. It breaks your fall.'],
-  rubble: [0.10, 'You land in loose rubble. It gives a little.']
+  rubble: [0.10, 'You land in loose rubble. It gives a little.'],
+  rubble2: [0.10, 'You land in loose rubble. It gives a little.']
   /* the rug's own squares are added further down, where the tiles it is
      laid from are named */
 };
@@ -479,6 +517,10 @@ var LEP_RING_PCT = 12;
    or two going nowhere; a blind passage is only interesting if it is
    long enough to be somewhere. */
 var DEAD_END_MIN = 8;
+/* How often the blank wall at the end of one is worth searching.  Not
+   always: a dead end that really is a dead end is what makes searching
+   the others a gamble rather than a chore. */
+var DEAD_END_SECRET_PCT = 70;
 /* how often a room is cut in two by a stream, and how often by a gap in
    the floor.  Either way a bridge is laid across it. */
 /* How often a room is offered a stream or a chasm across it.  These are
@@ -1050,7 +1092,12 @@ var POTIONS = [
   /* Water is water.  It is worth carrying because of what it does when
      you throw it, not when you drink it. */
   { n: 'water', p: 9, w: 3, hurl: 'water' },
-  { n: 'holy water', p: 4, w: 70, hurl: 'holy' }
+  { n: 'holy water', p: 4, w: 70, hurl: 'holy' },
+  /* The one flask in the game that is no use at all until you throw it -
+     it will not go down your throat and it does nothing to what it hits.
+     What it does is to the floor, which makes it the only potion that is
+     really a piece of ground you can put where you like. */
+  { n: 'slime', p: 7, w: 55, hurl: 'slime' }
 ];
 /* What a piece of kit looks like before you know anything about it.
    Assigned per kind at the start of a run, the way a potion's colour is,
@@ -1081,6 +1128,80 @@ var P_COLOUR = {
   pot_y: '#fad039', pot_c: '#74d6e8', pot_p: '#b26ce0', pot_b: '#1f8fd8',
   pot_o: '#f59e0b', pot_w: '#e6edf5', pot_r: '#d82b2b', pot_g: '#93bd27'
 };
+
+/* -------------------------------------------------------------- vials
+   A potion's dangerous cousin: too strong to drink, stoppered in heavy
+   glass, and meant to be thrown.  Which colour is which is a fact about
+   the run rather than about the game, the same as potions and mushrooms
+   - you find out by throwing one, and finding out is both the fun and
+   the risk of them.
+
+   Every one of them changes the room rather than the creature it lands
+   on, which is what makes them different from a flask: you throw a vial
+   at the floor because of what the floor will be afterwards. */
+var VIALS = [
+  { n: 'smoke',  p: 30, w: 45 },
+  { n: 'poison', p: 26, w: 65 },
+  { n: 'ice',    p: 24, w: 80 },
+  { n: 'nitro',  p: 14, w: 120 }
+];
+var V_COLORS = ['bottle green', 'ink black', 'oily', 'pearl', 'rust red',
+  'smoked', 'sulphur', 'thundercloud'];
+var V_SPRITE = {
+  'bottle green': 'vial_g', 'ink black': 'vial_k', 'oily': 'vial_p',
+  'pearl': 'vial_w', 'rust red': 'vial_r', 'smoked': 'vial_k',
+  'sulphur': 'vial_y', 'thundercloud': 'vial_b'
+};
+var V_COLOUR = {
+  vial_g: '#93bd27', vial_k: '#6b2f9c', vial_p: '#b26ce0', vial_w: '#e6edf5',
+  vial_r: '#d82b2b', vial_y: '#fad039', vial_b: '#1f8fd8'
+};
+/* Smoke and fumes both fill the room they are let loose in rather than
+   drifting a few squares: five out from where the glass breaks, round
+   corners and through doorways, and stopped dead by a wall. */
+var VIAL_FUME_REACH = 5;
+var VIAL_SMOKE_TURNS = [6, 9];      /* how long it hangs about, low to high */
+var VIAL_POISON_DAMAGE = [2, 4];    /* against the roll(1,3) of ordinary gas */
+/* Ice covers whatever it lands on - flagstone, water, a trap, the lid of
+   a chest - and holds it for a good while.  It is not a wall: you can
+   walk on it, and about half the time you wish you had not. */
+var VIAL_ICE_REACH = 3;
+var VIAL_ICE_TURNS = [18, 23];
+var ICE_SLIP_PCT = 50;              /* stumbling, for you and for them */
+var ICE_CLUMSY = 4;                 /* how much worse a blow struck on it is */
+var ICE_ALPHA = 0.62;               /* you can read the floor through it */
+/* A room five squares across is a room, and a fume vial fills it.  The
+   cap is only there so that a vial thrown into a cave the size of the
+   floor does not put a thousand clouds on the map at once. */
+var VIAL_FUME_MAX = 140;
+/* Nitro goes off like a barrel and takes the floor with it.  The hole is
+   smaller than the blast: the blow reaches two squares and the floor
+   gives way for one, so what is left is a hole with a scorched ring
+   round it rather than a crater the size of the room. */
+/* Not a stamped disc.  A hole blown in a floor is a ragged thing, and
+   the ones the dungeon digs for itself are grown a square at a time -
+   so this one is too, out from where the glass broke, over the same
+   handful of squares a natural chasm covers. */
+var NITRO_HOLE_MIN = 3, NITRO_HOLE_MAX = 6;
+var NITRO_HOLE_SPREAD = 62;   /* how readily it runs to the next square */
+
+/* ------------------------------------------------------------- slime
+   A flask of it breaks over a handful of squares and sits there.  What
+   makes it worth throwing is not the holding - one turn is one turn -
+   but that it FOLLOWS: more often than not it comes away on the feet of
+   whatever walked into it and holds them again on the next square, and
+   the square after that, until the luck runs out.  A patch of slime is
+   a thing that turns a corridor into a long argument. */
+/* A quarter longer than it was, both ends multiplied and the half
+   rounded up: 8-10 turns became 10-13. */
+var SLIME_TURNS = [10, 13];       /* how long the patch lasts */
+var SLIME_SPLASH = [2, 3];        /* squares beside the one it broke on */
+/* Three times in four rather than three in five.  It is the following
+   that makes slime worth throwing, and at 60 the chain ran out after two
+   and a half squares; at 75 it runs four, which is long enough to walk
+   something into a corner with. */
+var SLIME_STICK_PCT = 75;         /* how often it comes with you */
+var SLIME_ALPHA = 0.78;           /* you can still read the floor under it */
 
 var SCROLLS = [
   { n: 'monster confusion', p: 7, w: 140 },
@@ -1317,7 +1438,10 @@ var THINGS = [
   { t: 'head', p: 4 }, { t: 'feet', p: 4 }, { t: 'shield', p: 4 },
   /* One of each in a whole run, so the chance of turning one up has to
      be low or you would have the set by the sixth floor. */
-  { t: 'ring', p: 4 }
+  { t: 'ring', p: 4 },
+  /* rarer than a potion and worth more than one: a vial is a thing you
+     carry for a floor and a half waiting for the right room */
+  { t: 'vial', p: 7 }
 ];
 
 /* ------------------------------------------------------------ runes
@@ -1502,6 +1626,7 @@ var DECOR_INFO = {
   bones:   ['Somebody died here.'],
   skull:   ['A skull, picked clean.'],
   rubble:  ['Loose rubble and broken stone.'],
+  rubble2: ['A heap of broken stone.'],
   table:   ['A table. You can walk round it,', 'not over it.'],
   chair:   ['A chair, long since abandoned.'],
   kerb:    ['Dressed stone round the spring.'],
@@ -1624,7 +1749,7 @@ var MON_INFO = {
   I: ['An ice monster. Its touch', 'freezes you where you stand.'],
   J: ['A jabberwock. Enormous teeth,', 'no wit at all behind them.'],
   K: ['A rat. Small, quick, and there', 'are always more of them.'],
-  L: ['A leprechaun. He steals gold and', 'runs. Kill him to get it back.'],
+  L: ['A leprechaun. He robs you and runs', 'for the stairs. Catch him first.'],
   M: ['A medusa. Her gaze leaves you', 'confused and stumbling.'],
   N: ['A nymph. She takes something', 'from your pack and vanishes.'],
   O: ['An orc. It goes out of its way', 'for gold lying on the floor.'],
@@ -1685,7 +1810,7 @@ var HINTS = [
   'Bows and crossbows both take arrows. There is no need to carry two kinds.',
   'A locked door always has its key somewhere on the same floor, never in a room the door itself shuts off.',
   'Keys you never used go back where you found them when you leave the floor. Spend them before you take the stairs.',
-  'A leprechaun robs you and runs for the far side of the floor. Kill it quickly or lose the gold.',
+  'A leprechaun robs you and runs for the stairs down. He waits by them a little while, and then he is gone with your gold for good.',
   'Throwing a rock at a trap sets it off from a safe distance.',
   'Potions can be thrown. A potion of blindness will blind what it hits, and a healing potion will heal it, so aim with care.',
   "It's much safer to identify objects with a scroll than to try them on yourself.",
@@ -1741,6 +1866,13 @@ var HINTS = [
    falls back to LORE_KIND, and anything you have not identified is
    described by what you can actually see of it - see itemLore. */
 var LORE = {
+  /* the four vials, once you know which is which */
+  vial: {
+    'smoke': 'Heavy glass, and something the colour of a bonfire behind it. It fills a room and nothing sees through it.',
+    'poison': 'The same weight of glass, and the green behind it moves when the vial does not.',
+    'ice': 'Cold enough to stick to the fingers. It glazes a floor, and the floor stays glazed a long while.',
+    'nitro': 'Do not drop it. Do not drop it near a wall you are standing against.'
+  },
   potion: {
     'confusion': 'A flask that will not sit still in the hand. Whatever is in it seems to be arguing with itself.',
     'hallucination': 'The liquid runs through every colour there is, and one or two there are not.',
@@ -1762,7 +1894,8 @@ var LORE = {
     'thirst quenching': 'Water, as far as anyone can tell. Somebody bottled it and stoppered it with care.',
     'nourishment': 'Thick, brown and slow. It is a meal that somebody has gone to the trouble of pouring.',
     'water': 'Ordinary water in an ordinary flask. Useful for what it puts out.',
-    'holy water': 'Clear water with a blessing said over it. There are things down here that cannot bear it.'
+    'holy water': 'Clear water with a blessing said over it. There are things down here that cannot bear it.',
+    'slime': 'It moves when the flask does not, and it is still moving a moment after. Nothing on earth would drink it.'
   },
   scroll: {
     'monster confusion': 'The letters wander off their lines and have to be chased back.',
@@ -1892,7 +2025,7 @@ var LORE = {
     'pin': 'A small bright pin. Pinned to a piece of clothing it changes it, though not always kindly.',
     'key': 'A heavy key, cut for one lock and no other.',
     'chest': 'A stout wooden chest. Whatever is in it, somebody wanted it kept.',
-    'pouch': 'A leather pouch on a drawstring. It holds more than the size of it suggests.',
+    'pouch': 'A leather pouch on a drawstring, lined and padded for glass. Potions and vials go into it by themselves, and nothing else will fit.',
     'amulet': 'The Amulet of Yendor. It is warm, and it is heavier than gold, and it is what you came down here for.',
     'gold': 'Coins of the realm, none of them minted lately.'
   }
@@ -1901,6 +2034,7 @@ var LORE = {
    general, said in a sentence. */
 var LORE_KIND = {
   potion: 'A stoppered flask of something.',
+  vial: 'Thick dark glass, corked and sealed with wax. Too strong to drink.',
   scroll: 'A rolled sheet of paper with writing on it.',
   wand: 'A slender rod with something worked into it.',
   ring: 'A ring, made to be worn and pressed.',
@@ -2488,6 +2622,26 @@ function tidyStores(L) {
       delete L.decor[mine[k]];
       removed++;
     }
+    /* And if what is left is no longer a pile, it is no longer a store.
+       The generator will not BUILD one below POWDER_MIN, but tidying can
+       cut one down afterwards - a barrel walling off a corner of the
+       floor has to go whatever room it is standing in - and a room still
+       calling itself a powder store with three barrels in it is a room
+       that lost an argument, not a room somebody laid out.  Measured over
+       336 floors it happened; the barrels go with the title. */
+    if (best.length < POWDER_MIN) {
+      for (k = 0; k < best.length; k++) {
+        delete L.barrels[best[k]];
+        delete L.decor[best[k]];
+        removed++;
+      }
+      r.special = null;
+      /* and the floor stops saying it has one.  The level keeps its own
+         note of which special room it was dealt, and a note with no room
+         behind it is worse than no note - the game looks the room up and
+         finds nothing. */
+      if (L.special === 'powder') L.special = null;
+    }
   }
   return removed;
 }
@@ -2506,7 +2660,7 @@ function makePowderStore(L, r, depth) {
      and stops being a pile, and a barrel that is refused must never have
      been part of it, or the next one grows off a square that is not
      there and the pile comes apart in two halves. */
-  var want = 5 + rnd(5), i, d;
+  var want = POWDER_MIN + 1 + rnd(5), i, d;
   var free = {};
   for (i = 0; i < spots.length; i++) free[spots[i][1] * MAP_W + spots[i][0]] = 1;
   L.barrels = L.barrels || {};
@@ -2540,7 +2694,7 @@ function makePowderStore(L, r, depth) {
     if (!put(nx, ny)) continue;
     pile.push([nx, ny]);
   }
-  if (pile.length < 4) { takeItAllBack(); return false; }
+  if (pile.length < POWDER_MIN) { takeItAllBack(); return false; }
   r.special = 'powder';
   return true;
 }
@@ -3358,22 +3512,34 @@ function digHole(L, r) {
     return false;
   }
 
-  /* Cracked flagstones run along the edges of a hole, not off its
-     corners: a crack sprite is drawn turned to face the hole it belongs
-     to, and a square that only touches one corner-on has no side facing
-     it to point at. */
+  crackAround(L, cells);
+  L.holes = (L.holes || 0) + cells.length;
+  return true;
+}
+
+/* Cracked flagstones run along the edges of a hole, not off its corners:
+   a crack sprite is drawn turned to face the hole it belongs to, and a
+   square that only touches one corner-on has no side facing it to point
+   at.
+
+   Every hole in the floor gets them, however it came to be there.  A
+   nitro vial takes the floor out the same way a chasm does, and a hole
+   with clean square edges and no warning round it reads as a tile
+   somebody forgot to finish rather than as a drop. */
+function crackAround(L, cells) {
+  var n = 0, i, d;
   for (i = 0; i < cells.length; i++) {
-    for (var dd = 0; dd < DIR4.length; dd++) {
-      var nx = cells[i][0] + DIR4[dd][0], ny = cells[i][1] + DIR4[dd][1];
+    for (d = 0; d < DIR4.length; d++) {
+      var nx = cells[i][0] + DIR4[d][0], ny = cells[i][1] + DIR4[d][1];
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
       var k2 = ny * MAP_W + nx;
       if (L.tiles[k2] !== FLOOR) continue;
       if (L.decor[k2] === 'kerb') continue;      /* dressed stone stays put */
       L.decor[k2] = pick(CRACKS);
+      n++;
     }
   }
-  L.holes = (L.holes || 0) + cells.length;
-  return true;
+  return n;
 }
 
 function genLevelOnce(depth) {
@@ -3523,7 +3689,7 @@ function genLevelOnce(depth) {
     if (L.tiles[dj] !== FLOOR) continue;
     if (L.decor[dj]) continue;
     if (itemAt(L, dp.x, dp.y)) continue;
-    L.decor[dj] = pick(MOSS_FIELD.concat(['bones', 'skull', 'rubble']));
+    L.decor[dj] = pick(MOSS_FIELD.concat(['bones', 'skull', 'rubble', 'rubble2']));
   }
   buildLitMap(L);
   pickDarkness(L, depth);
@@ -4084,55 +4250,70 @@ function carveSecretRoom(L) {
     if (carveSecretShape(L, shapes[si][0], shapes[si][1])) return true;
   return false;
 }
+/* One chamber, cut into raw rock behind a panel.  (wx,wy) is the square
+   that becomes the hidden door and (dx,dy) is the way through it, so the
+   caller decides what the door opens off - the wall of a room, or the
+   blank end of a corridor that arrives nowhere.
+
+   Returns the new room, or null if there was not the rock for it. */
+function carveBehindWall(L, wx, wy, dx, dy, sw, sh) {
+  var T = L.tiles, xx, yy, i;
+  /* Dressed wall or raw rock - both are stone, and a panel cut into
+     either is a panel.  A room's neighbours are always walls, so this
+     only ever matters at the end of a corridor, where the stone the
+     tunnel stopped against may never have been faced. */
+  if (T[wy * MAP_W + wx] !== WALL && T[wy * MAP_W + wx] !== ROCK) return null;
+
+  /* a chamber beyond it, across the way in and along it */
+  var w = sw, h = sh;
+  if (dx) { var s = w; w = h; h = s; }           /* deeper than it is wide */
+  var x0 = wx + dx, y0 = wy + dy;
+  if (dx < 0) x0 -= w - 1;
+  if (dy < 0) y0 -= h - 1;
+  if (dx) y0 -= (h >> 1); else x0 -= (w >> 1);
+
+  if (x0 < 2 || y0 < 2 || x0 + w >= MAP_W - 2 || y0 + h >= MAP_H - 2) return null;
+
+  /* every square of it, and everything touching it, must still be raw
+     rock or existing stone - the room may not breach anything */
+  var ok = 1;
+  for (yy = y0 - 1; yy <= y0 + h && ok; yy++)
+    for (xx = x0 - 1; xx <= x0 + w; xx++) {
+      if (xx === wx && yy === wy) continue;      /* the panel itself */
+      var nt = T[yy * MAP_W + xx];
+      if (nt !== ROCK && nt !== WALL) { ok = 0; break; }
+    }
+  if (!ok) return null;
+
+  T[wy * MAP_W + wx] = SDOOR;
+  var floors = [];
+  for (yy = y0; yy < y0 + h; yy++) for (xx = x0; xx < x0 + w; xx++) {
+    T[yy * MAP_W + xx] = FLOOR;
+    floors.push([xx, yy]);
+  }
+  for (yy = y0 - 1; yy <= y0 + h; yy++) for (xx = x0 - 1; xx <= x0 + w; xx++) {
+    if (xx === wx && yy === wy) continue;
+    if (T[yy * MAP_W + xx] === ROCK) T[yy * MAP_W + xx] = WALL;
+  }
+
+  var idx = L.rooms.length;
+  var room = { gone: 0, lit: 1, idx: idx, id: idx, sealed: 1, secret: 1,
+               x: x0, y: y0, w: w, h: h,
+               cx: x0 + (w >> 1), cy: y0 + (h >> 1), floors: floors };
+  L.rooms.push(room);
+  for (i = 0; i < floors.length; i++)
+    L.roomAt[floors[i][1] * MAP_W + floors[i][0]] = idx;
+  return room;
+}
 function carveSecretShape(L, sw, sh) {
-  var T = L.tiles, tries, xx, yy, i;
+  var T = L.tiles, tries;
   for (tries = 0; tries < 260; tries++) {
     var r = L.rooms[rnd(L.rooms.length)];
     if (!r || r.gone || !r.floors.length) continue;
     var f = r.floors[rnd(r.floors.length)], d = rnd(4);
     var dx = DIR4[d][0], dy = DIR4[d][1];
-    var wx = f[0] + dx, wy = f[1] + dy;          /* the panel */
-    if (T[wy * MAP_W + wx] !== WALL) continue;
-
-    /* a chamber beyond it, across the way in and along it */
-    var w = sw, h = sh;
-    if (dx) { var s = w; w = h; h = s; }         /* deeper than it is wide */
-    var x0 = wx + dx, y0 = wy + dy;
-    if (dx < 0) x0 -= w - 1;
-    if (dy < 0) y0 -= h - 1;
-    if (dx) y0 -= (h >> 1); else x0 -= (w >> 1);
-
-    if (x0 < 2 || y0 < 2 || x0 + w >= MAP_W - 2 || y0 + h >= MAP_H - 2) continue;
-
-    /* every square of it, and everything touching it, must still be raw
-       rock or existing stone - the room may not breach anything */
-    var ok = 1;
-    for (yy = y0 - 1; yy <= y0 + h && ok; yy++)
-      for (xx = x0 - 1; xx <= x0 + w; xx++) {
-        if (xx === wx && yy === wy) continue;    /* the panel itself */
-        var nt = T[yy * MAP_W + xx];
-        if (nt !== ROCK && nt !== WALL) { ok = 0; break; }
-      }
-    if (!ok) continue;
-
-    T[wy * MAP_W + wx] = SDOOR;
-    var floors = [];
-    for (yy = y0; yy < y0 + h; yy++) for (xx = x0; xx < x0 + w; xx++) {
-      T[yy * MAP_W + xx] = FLOOR;
-      floors.push([xx, yy]);
-    }
-    for (yy = y0 - 1; yy <= y0 + h; yy++) for (xx = x0 - 1; xx <= x0 + w; xx++) {
-      if (xx === wx && yy === wy) continue;
-      if (T[yy * MAP_W + xx] === ROCK) T[yy * MAP_W + xx] = WALL;
-    }
-
-    var idx = L.rooms.length;
-    var room = { gone: 0, lit: 1, idx: idx, id: idx, sealed: 1, secret: 1,
-                 x: x0, y: y0, w: w, h: h,
-                 cx: x0 + (w >> 1), cy: y0 + (h >> 1), floors: floors };
-    L.rooms.push(room);
-    for (i = 0; i < floors.length; i++)
-      L.roomAt[floors[i][1] * MAP_W + floors[i][0]] = idx;
+    var room = carveBehindWall(L, f[0] + dx, f[1] + dy, dx, dy, sw, sh);
+    if (!room) continue;
 
     /* something worth the search, in the middle where it will be seen */
     var cache = newGoodItem(L.depth);
@@ -4142,6 +4323,124 @@ function carveSecretShape(L, sw, sh) {
     return true;
   }
   return false;
+}
+
+/* --------------------------------------------- the end of a dead end
+   A hint says a dead end in a corridor is worth searching.  It was not
+   true: the one hidden door a floor is guaranteed is cut into the wall
+   of a ROOM on purpose, because a panel in the middle of a tunnel is not
+   something anyone thinks to search - and the measurement bore it out,
+   nineteen dead ends over thirty floors with a door behind exactly none
+   of them.
+
+   But the END of a dead end is not the middle of a tunnel.  It is a
+   corridor somebody went to the trouble of cutting that arrives
+   nowhere, which is the one place in a dungeon where a blank wall is
+   itself a question.  So some of them have an answer behind them.
+
+   Not all: a dead end that really is just a dead end is what makes
+   searching the others a gamble rather than a chore. */
+function deadEndTip(L, i) {
+  if (L.tiles[i] !== CORR) return null;
+  var x = i % MAP_W, y = (i / MAP_W) | 0, ways = 0, back = null, d;
+  for (d = 0; d < DIR4.length; d++) {
+    var nx = x + DIR4[d][0], ny = y + DIR4[d][1];
+    /* Anything you can put a foot on, and a locked door - which is a way
+       out with the right key rather than a wall.
+
+       This used to list the tiles by hand and the list left out water,
+       so a corridor that runs on into a pool read as a corridor that
+       stops: ten of twenty-eight "dead ends" were nothing of the kind,
+       you could simply wade on.  A hidden door is not the interesting
+       thing at the end of one of those; there is no end. */
+    if (walkable(nx, ny) || L.tiles[ny * MAP_W + nx] === LOCKED) { ways++; back = d; }
+  }
+  if (ways !== 1) return null;
+  /* the way on is the way it was heading: straight past the one way back */
+  return { x: x, y: y, dx: -DIR4[back][0], dy: -DIR4[back][1] };
+}
+/* Whether a wall square would make a sensible door: solid stone on both
+   sides of the way through it, so it reads as a doorway rather than as a
+   gap somebody forgot to fill. */
+function doorwayShaped(L, wx, wy, dx, dy) {
+  var T = L.tiles;
+  var ax = dy, ay = dx;                          /* across the way through */
+  var a = T[(wy + ay) * MAP_W + (wx + ax)];
+  var b = T[(wy - ay) * MAP_W + (wx - ax)];
+  var solid = function (t) { return t === WALL || t === ROCK; };
+  return solid(a) && solid(b);
+}
+function secretsAtDeadEnds(L) {
+  var shapes = [[2, 2], [2, 1], [1, 2], [1, 1]], made = 0, i, si;
+  for (i = 0; i < L.tiles.length; i++) {
+    var tip = deadEndTip(L, i);
+    if (!tip) continue;
+    /* The odds are rolled AFTER the square is known to be a candidate,
+       not before.  Rolled first, a tip that could never have had a door
+       anyway - a corridor that stops at the edge of a stream, which is
+       ten of the twenty-eight measured - still ate its chance, and the
+       share that actually came out was half of what the number said. */
+    var wx = tip.x + tip.dx, wy = tip.y + tip.dy;
+    var pt = L.tiles[wy * MAP_W + wx];
+    if (pt !== WALL && pt !== ROCK) continue;
+    var bx0 = wx + tip.dx, by0 = wy + tip.dy;
+    var bt0 = L.tiles[by0 * MAP_W + bx0];
+    var couldOpen = walkable(bx0, by0) &&
+                    doorwayShaped(L, wx, wy, tip.dx, tip.dy) &&
+                    !!reachSet(L, tip.x, tip.y, false)[by0 * MAP_W + bx0];
+    var couldCarve = (bt0 === ROCK || bt0 === WALL);
+    if (!couldOpen && !couldCarve) continue;
+    if (rnd(100) >= DEAD_END_SECRET_PCT) continue;
+
+    /* Best case: raw rock behind it, so there is room for a cupboard
+       with something in it. */
+    var room = null;
+    for (si = 0; si < shapes.length && !room; si++)
+      room = carveBehindWall(L, wx, wy, tip.dx, tip.dy,
+                             shapes[si][0], shapes[si][1]);
+    if (room) {
+      /* Worth the walk down and the searching: the same class of thing
+         the floor's guaranteed secret room holds. */
+      var cache = newGoodItem(L.depth);
+      cache.x = room.cx; cache.y = room.cy;
+      delete L.decor[room.cy * MAP_W + room.cx];
+      L.items.push(cache);
+      made++;
+      continue;
+    }
+
+    /* Far commoner: there is no rock behind it at all.  A dead end
+       usually stops one square short of a room it never joined - which
+       was measured rather than guessed, fifty of the sixty squares
+       behind them being somebody's floor - and that is a better answer
+       than a cupboard anyway.  The wall is blank because the corridor
+       was going somewhere and stopped, and what is behind it is the
+       place it was going: a hidden shortcut into a room you could
+       already reach the long way round. */
+    /* Anywhere you could stand, which includes water: a panel that opens
+       straight onto the edge of a pool is a perfectly good hidden door,
+       and wading out of one is a better find than another flagstone. */
+    var bx = wx + tip.dx, by = wy + tip.dy;
+    if (!walkable(bx, by)) continue;
+    if (!doorwayShaped(L, wx, wy, tip.dx, tip.dy)) continue;
+    /* A SHORTCUT and nothing else.  What is behind it has to be
+       somewhere you could already get to from this very corridor with
+       every other door exactly as it is - no key used, no panel opened.
+
+       Without that rule this quietly became a way IN to things it had no
+       business opening: a second entrance to a locked vault, so the lock
+       stopped being worth a key; a walled-in room joined to the floor
+       that was walled off from it on purpose; a hidden room reachable
+       without searching for its own panel.  Measured over 120 floors it
+       broke all three. */
+    var seen = reachSet(L, tip.x, tip.y, false);
+    if (!seen[by * MAP_W + bx]) continue;
+    L.tiles[wy * MAP_W + wx] = SDOOR;
+    if (L.locks) delete L.locks[wy * MAP_W + wx];
+    if (L.decor) delete L.decor[wy * MAP_W + wx];
+    made++;
+  }
+  return made;
 }
 
 /* Where does each of a room's doors actually lead?
