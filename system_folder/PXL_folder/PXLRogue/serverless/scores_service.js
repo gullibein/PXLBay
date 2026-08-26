@@ -28,7 +28,7 @@ const HS_NAME_MAX = 12;
 const MAX_LEVEL = 21;
 const MAX_DEPTH = 26;
 const MAX_SUBMISSIONS_PER_HOUR = 20;
-const DEFAULT_BIN = '6a8c44f9da38895dfe0a98c0';
+const DEFAULT_BIN = '6a8f330fda38895dfe147360';
 
 // In-memory rate limiting store (IP -> array of submission timestamps in ms)
 const rateLimitMap = new Map();

@@ -3,7 +3,7 @@ main = "worker.js"
 compatibility_date = "2024-01-01"
 
 [vars]
-HS_BIN = "6a8c44f9da38895dfe0a98c0"
+HS_BIN = "6a8f330fda38895dfe147360"
 
 # Secret variable HS_KEY should be set using:
 # npx wrangler secret put HS_KEY
