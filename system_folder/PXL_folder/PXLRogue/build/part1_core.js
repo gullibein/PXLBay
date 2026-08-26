@@ -615,8 +615,8 @@ var SHOCK_BLINK_MS = 70, SHOCK_ON = 3;
    public read needs no key, and keeps new scores on the machine they
    were made on. */
 var HS_BIN = '6a8c44f9da38895dfe0a98c0';
-var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
-var HS_PROXY = '';
+var HS_KEY = '';
+var HS_PROXY = 'https://pxlrogue-scores.gundur.workers.dev';
 var HS_MAX = 10;              /* how many the table holds */
 var HS_NAME_MAX = 12;         /* and how long a name may be */
 var HS_KEY_HEADER = 'X-Access-Key';

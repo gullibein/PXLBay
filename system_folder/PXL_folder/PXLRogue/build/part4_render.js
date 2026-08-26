@@ -2202,7 +2202,13 @@ function drawSlots() {
    rather than sitting blank: waiting, asking for a name, showing.  It is
    never a wall: ENTER goes on from any of them. */
 function hsEntryNow() {
-  return { name: '', xp: P.exp | 0, level: P.lv | 0 };
+  return {
+    name: '',
+    xp: P.exp | 0,
+    level: P.lv | 0,
+    depth: (typeof G !== 'undefined' && G ? G.depth : 1) | 0,
+    turns: (typeof G !== 'undefined' && G ? G.turn : 0) | 0
+  };
 }
 function openScores(from) {
   var e = hsEntryNow();

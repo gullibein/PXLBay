@@ -37,8 +37,9 @@ folder, then open <code>http://localhost:8000/</code>) and try again.</p>
 
 <script>
 var HS_BIN = '6a8c44f9da38895dfe0a98c0';
-var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
-var URL_BASE = 'https://api.jsonbin.io/v3/b/' + HS_BIN;
+var HS_KEY = '';
+var HS_PROXY = 'https://pxlrogue-scores.gundur.workers.dev';
+var URL_BASE = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN);
 
 function say(id, cls, text) {
   var el = document.getElementById(id);
@@ -52,9 +53,13 @@ say('whereOut', location.protocol === 'file:' ? 'warn' : 'ok',
       'If step 1 fails with a network or CORS error, serve the folder over http and retry.'
     : location.origin + ' - a real origin, which is what the API expects.');
 
-var got = null;
+function getHeaders(extra) {
+  var h = extra || {};
+  if (HS_KEY) h['X-Access-Key'] = HS_KEY;
+  return h;
+}
 
-fetch(URL_BASE + '/latest', { headers: { 'X-Bin-Meta': 'false', 'X-Access-Key': HS_KEY } })
+fetch(URL_BASE, { headers: getHeaders({ 'X-Bin-Meta': 'false' }) })
   .then(function (r) {
     return r.text().then(function (body) { return { ok: r.ok, status: r.status, body: body }; });
   })
@@ -78,10 +83,12 @@ fetch(URL_BASE + '/latest', { headers: { 'X-Bin-Meta': 'false', 'X-Access-Key': 
 document.getElementById('go').onclick = function () {
   if (!got) { say('writeOut', 'bad', 'nothing was read, so there is nothing safe to write back'); return; }
   say('writeOut', 'warn', 'writing...');
+  var writeMethod = HS_PROXY ? 'POST' : 'PUT';
+  var writeBody = HS_PROXY && got.length ? got[0] : got;
   fetch(URL_BASE, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'X-Access-Key': HS_KEY },
-    body: JSON.stringify(got)
+    method: writeMethod,
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(writeBody)
   }).then(function (r) {
     return r.text().then(function (body) { return { ok: r.ok, status: r.status, body: body }; });
   }).then(function (r) {

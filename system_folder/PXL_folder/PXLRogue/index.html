@@ -702,8 +702,8 @@ var SHOCK_BLINK_MS = 70, SHOCK_ON = 3;
    public read needs no key, and keeps new scores on the machine they
    were made on. */
 var HS_BIN = '6a8c44f9da38895dfe0a98c0';
-var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
-var HS_PROXY = '';
+var HS_KEY = '';
+var HS_PROXY = 'https://pxlrogue-scores.gundur.workers.dev';
 var HS_MAX = 10;              /* how many the table holds */
 var HS_NAME_MAX = 12;         /* and how long a name may be */
 var HS_KEY_HEADER = 'X-Access-Key';
@@ -7182,7 +7182,8 @@ function hsFetch(cb) {
      yet, which is the one thing you must not have to guess about. */
   setTimeout(function () { finish(hsLocal(), 'offline'); }, HS_TIMEOUT_MS);
   try {
-    fetch('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest',
+    var url = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest');
+    fetch(url,
       { headers: hsHeaders({ 'X-Bin-Meta': 'false' }) })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
@@ -7216,7 +7217,9 @@ function hsSubmit(list, entry, cb) {
     /* the proxy is given the one run and works the table out itself,
        since it is the only one of the two that can be trusted to */
     var body = HS_PROXY ? { name: hsName(entry.name) || '-', xp: entry.xp | 0,
-                            level: entry.level | 0 } : t;
+                            level: entry.level | 0,
+                            depth: (entry.depth !== undefined ? entry.depth : (typeof G !== 'undefined' && G ? G.depth : 1)) | 0,
+                            turns: (entry.turns !== undefined ? entry.turns : (typeof G !== 'undefined' && G ? G.turn : 0)) | 0 } : t;
     fetch(url, {
       method: HS_PROXY ? 'POST' : 'PUT',
       headers: hsHeaders({ 'Content-Type': 'application/json' }),
@@ -18273,7 +18276,13 @@ function drawSlots() {
    rather than sitting blank: waiting, asking for a name, showing.  It is
    never a wall: ENTER goes on from any of them. */
 function hsEntryNow() {
-  return { name: '', xp: P.exp | 0, level: P.lv | 0 };
+  return {
+    name: '',
+    xp: P.exp | 0,
+    level: P.lv | 0,
+    depth: (typeof G !== 'undefined' && G ? G.depth : 1) | 0,
+    turns: (typeof G !== 'undefined' && G ? G.turn : 0) | 0
+  };
 }
 function openScores(from) {
   var e = hsEntryNow();

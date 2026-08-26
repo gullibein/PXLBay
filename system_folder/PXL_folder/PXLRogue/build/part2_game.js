@@ -2011,7 +2011,8 @@ function hsFetch(cb) {
      yet, which is the one thing you must not have to guess about. */
   setTimeout(function () { finish(hsLocal(), 'offline'); }, HS_TIMEOUT_MS);
   try {
-    fetch('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest',
+    var url = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest');
+    fetch(url,
       { headers: hsHeaders({ 'X-Bin-Meta': 'false' }) })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
@@ -2045,7 +2046,9 @@ function hsSubmit(list, entry, cb) {
     /* the proxy is given the one run and works the table out itself,
        since it is the only one of the two that can be trusted to */
     var body = HS_PROXY ? { name: hsName(entry.name) || '-', xp: entry.xp | 0,
-                            level: entry.level | 0 } : t;
+                            level: entry.level | 0,
+                            depth: (entry.depth !== undefined ? entry.depth : (typeof G !== 'undefined' && G ? G.depth : 1)) | 0,
+                            turns: (entry.turns !== undefined ? entry.turns : (typeof G !== 'undefined' && G ? G.turn : 0)) | 0 } : t;
     fetch(url, {
       method: HS_PROXY ? 'POST' : 'PUT',
       headers: hsHeaders({ 'Content-Type': 'application/json' }),
