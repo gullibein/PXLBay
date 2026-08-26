@@ -1202,6 +1202,37 @@ setTimeout(() => {
       L.mons.length = 0;
     }
 
+    /* A snake has a front and a back, just like the rat.  It should
+       mirror when walking left. */
+    {
+      const snake = cell('mon_S');
+      let spot = null;
+      for (const [dx, dy] of ctx.DIR4) if (ctx.walkable(P.x + dx, P.y + dy)) { spot = [P.x + dx, P.y + dy]; break; }
+      if (spot) {
+        const m = ctx.mkMonster('S', 1, spot[0], spot[1]);
+        m.hp = m.mhp = 10; L.mons.push(m);
+        ctx.computeVis();
+        const snakeBlit = () => {
+          blits = []; fills = [];
+          vm.runInContext('render();', ctx);
+          return blits.find(b => b.tag === 'screen' && b.from === 'atlas' &&
+            b.sx === snake[0] && b.sy === snake[1] && b.dx >= ctx.VIEW_PX);
+        };
+        m.face = 1;
+        const right = snakeBlit();
+        m.face = -1;
+        const left = snakeBlit();
+        console.log('snake facing         : walking right flip=' + (right && right.flip) +
+          ', walking left flip=' + (left && left.flip));
+        if (!right || !left) problems.push('the snake is not drawn at all');
+        else {
+          if (right.flip) problems.push('a snake walking right is drawn mirrored');
+          if (!left.flip) problems.push('a snake walking left is not drawn mirrored');
+        }
+        L.mons.length = 0;
+      }
+    }
+
     /* a hole, with a cracked flagstone on each side of it */
     const hx = P.x, hy = P.y - 2;
     if (hx > 2 && hy > 2 && hx < ctx.MAP_W - 3 && hy < ctx.MAP_H - 3) {

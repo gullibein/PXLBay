@@ -1678,7 +1678,7 @@ var MONS = [
   { c: 'B', n: 'bat', swim: 1, lv: 1, xp: 2, ar: 3, d: [[1, 4]], fly: 1, err: 1, nodrop: 1, hpMul: 0.85 , dmgMul: 0.9, dark: 1 },
   /* sure: four legs and no clumsiness in them.  Everything else that
      runs headlong in a fight can go over; this one cannot. */
-  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]], sure: 1 },
+  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]], sure: 1, faces: 1 },
   { c: 'D', n: 'dragon', smart: 1, lv: 10, xp: 5000, ar: -1, d: [[1, 8], [1, 8], [3, 10]], mean: 1, sp: 'flame' },
   /* weaver: it made the web, or it is at home in one.  A spider walks
      its own silk without sticking to it, and it does not tear it up on
@@ -1702,9 +1702,9 @@ var MONS = [
   { c: 'N', n: 'nymph', smart: 1, lv: 3, xp: 37, ar: 9, d: [[1, 1]], sp: 'stealitem' },
   { c: 'O', n: 'orc', smart: 1, lv: 2, xp: 7, ar: 6, d: [[1, 6]], greedy: 1 },
   { c: 'P', n: 'phantom', swim: 1, lv: 8, xp: 120, ar: 3, d: [[4, 4]], invis: 1 },
-  { c: 'Q', n: 'skeleton', lv: 3, xp: 15, ar: 3, d: [[1, 5]], mean: 1 },
+  { c: 'Q', n: 'skeleton', lv: 3, xp: 15, ar: 3, d: [[1, 5]], mean: 1, faces: 1 },
   { c: 'R', n: 'rattlesnake', swim: 1, lv: 2, xp: 9, ar: 3, d: [[1, 6]], mean: 1, sp: 'weaken' },
-  { c: 'S', n: 'snake', swim: 1, lv: 1, xp: 2, ar: 5, d: [[1, 4]], mean: 1, nodrop: 1, hpMul: 0.85 },
+  { c: 'S', n: 'snake', swim: 1, lv: 1, xp: 2, ar: 5, d: [[1, 4]], mean: 1, nodrop: 1, hpMul: 0.85, faces: 1 },
   { c: 'T', n: 'troll', lv: 6, xp: 120, ar: 4, d: [[1, 8], [1, 8], [2, 6]], mean: 1, regen: 1 },
   { c: 'U', n: 'ur-vile', smart: 1, lv: 7, xp: 190, ar: -2, d: [[1, 3], [1, 3], [1, 3], [4, 6]], mean: 1 },
   { c: 'V', n: 'vampire', smart: 1, lv: 8, xp: 350, ar: 1, d: [[1, 10]], mean: 1, regen: 1, sp: 'drainmax', dark: 1 },
@@ -1722,7 +1722,7 @@ var MONS = [
      the room.  It cannot spit with its feet in water, a flask of water
      puts it out for a while, and cold goes through it like nothing. */
   { c: 'h', n: 'half dragon', smart: 1, lv: 2, xp: 22, ar: 5, d: [[1, 8]],
-    mean: 1, sp: 'fireball', weak: 'cold', minDepth: 3 },
+    mean: 1, sp: 'fireball', weak: 'cold', minDepth: 3, faces: 1 },
   /* A lighter spider that fights at a distance: it spits web rather than
      closing, and what it does not stick to you it leaves on the floor
      for you to walk into later. */
