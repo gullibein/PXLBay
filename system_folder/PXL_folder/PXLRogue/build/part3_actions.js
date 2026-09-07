@@ -1109,41 +1109,90 @@ function quaff(it) {
     return false;
   }
   removeItem(it, 1);
+  /* The mouthful goes down first, so that a flask whose only virtue is
+     that it was wet can say what it was worth.  Whatever was in it you
+     drank it, and on a floor where food is scarce that counts for
+     something - but not a flask of nourishment, which has its own much
+     larger helping below and does not want a sip on top of it, and not
+     one that poisoned you, blinded you or otherwise did you harm going
+     down, which is not a mouthful you keep.
+
+     It used to be credited at the very end, after everything had been
+     said, which left the two potions whose whole worth IS the mouthful
+     with nothing to report. */
+  var foodBefore = P.food;
+  if (n !== 'nourishment' && !POTION_HARMFUL[n])
+    P.food = Math.min(FOOD_MAX, P.food + POTION_SIP);
   switch (n) {
-    case 'confusion': msg("Wait, what's going on? Huh? What? Who?", 'P'); P.conf += rnd(8) + 12; break;
-    case 'hallucination': msg('Oh wow, everything seems so cosmic!', 'P'); P.hallu += rnd(200) + 100; break;
-    case 'poison':
-      msg('You feel very sick now.', 'g');
+    case 'confusion': {
+      var cf = rnd(8) + 12;
+      P.conf += cf;
+      msgGain("Wait, what's going on? Huh? What? Who?", 'P', 'confused ' + cf + ' turns', 'P');
+      break;
+    }
+    case 'hallucination': {
+      var hl = rnd(200) + 100;
+      P.hallu += hl;
+      msgGain('Oh wow, everything seems so cosmic!', 'P', 'dazed ' + hl + ' turns', 'P');
+      break;
+    }
+    case 'poison': {
+      var pStr = P.str;
       if (!hasProp('sustain strength') && !hasPerk('ironblood'))
         P.str = Math.max(3, P.str - (rnd(3) + 1));
-      hurtPlayer(rnd(3), 'a poison potion', 'poison');
+      /* rolled before the line is written rather than inside the blow,
+         so the line can say what the blow is about to cost */
+      var pDam = rnd(3), pLost = pStr - P.str, pSay = [];
+      if (pLost) pSay.push('-' + pLost + ' str');
+      if (pDam) pSay.push(pDam + ' damage');
+      msgGain('You feel very sick now.', 'g',
+        pSay.length ? pSay.join(', ') : 'no harm done', pSay.length ? 'R' : '6');
+      hurtPlayer(pDam, 'a poison potion', 'poison');
       break;
-    case 'gain strength':
+    }
+    case 'gain strength': {
+      var gs = P.str;
       if (P.str < 31) P.str++;
       if (P.str > P.mstr) P.mstr = P.str;
-      msg('You feel stronger. What bulging muscles!', 'G'); break;
-    case 'gain dexterity':
+      msgGain('You feel stronger. What bulging muscles!', 'G',
+        statFx('strength', gs, P.str, 31), P.str > gs ? 'G' : '6');
+      break;
+    }
+    case 'gain dexterity': {
+      var gd = P.dex;
       if (P.dex < 22) P.dex++;
       if (P.dex > P.mdex) P.mdex = P.dex;
-      msg('You feel lighter on your feet.', 'G'); break;
-    case 'gain wisdom':
+      msgGain('You feel lighter on your feet.', 'G',
+        statFx('dexterity', gd, P.dex, 22), P.dex > gd ? 'G' : '6');
+      break;
+    }
+    case 'gain wisdom': {
+      var gw = P.wis;
       if (P.wis < 22) P.wis++;
       if (P.wis > P.mwis) P.mwis = P.wis;
-      msg('The world seems to hold fewer secrets.', 'G'); break;
-    case 'see invisible': msg('This tastes like slime mold juice.', 'c'); P.seeinv += 400; break;
+      msgGain('The world seems to hold fewer secrets.', 'G',
+        statFx('wisdom', gw, P.wis, 22), P.wis > gw ? 'G' : '6');
+      break;
+    }
+    case 'see invisible':
+      P.seeinv += 400;
+      msgGain('This tastes like slime mold juice.', 'c', 'unseen 400 turns', 'c');
+      break;
     case 'fire shield': lightFireShield(); break;
     case 'healing':
       var hb1 = P.hp, hm1 = P.mhp;
       P.hp += roll(P.lv, 4);
       if (P.hp > P.mhp) { P.mhp++; P.hp = P.mhp; }
       holdHp(hb1, hm1);
-      P.blind = 0; msg('You begin to feel better.', 'G'); break;
+      P.blind = 0;
+      msgGain('You begin to feel better.', 'G', healFx(hb1, hm1), 'G'); break;
     case 'extra healing':
       var hb2 = P.hp, hm2 = P.mhp;
       P.hp += roll(P.lv, 8);
       if (P.hp > P.mhp) { P.mhp += 2; P.hp = P.mhp; }
       holdHp(hb2, hm2);
-      P.blind = 0; msg('You begin to feel much better.', 'G'); break;
+      P.blind = 0;
+      msgGain('You begin to feel much better.', 'G', healFx(hb2, hm2), 'G'); break;
     case 'liquid fire': {
       /* it was meant to be thrown */
       var fd = perkElemental(roll(FIRE_DAMAGE[0], FIRE_DAMAGE[1]) + 2, 'fire');
@@ -1158,57 +1207,77 @@ function quaff(it) {
        floor you have not walked. */
     case 'monster sight':
       P.monsight = Math.max(P.monsight || 0, MONSIGHT_TURNS);
-      msg('You feel every living thing that moves nearby.', 'P');
+      msgGain('You feel every living thing that moves nearby.', 'P',
+        MONSIGHT_TURNS + ' turns', 'P');
       break;
     case 'magic detection': {
-      var any = false;
+      var found = 0;
       for (var i = 0; i < L.items.length; i++) {
         var o = L.items[i];
         if (o.t === 'potion' || o.t === 'scroll' || o.t === 'wand' || o.t === 'amulet' || o.t === 'chest') {
           /* this one is about the things themselves, so the square stops
              being a bare line on a map and shows what is on it */
           var mj = o.y * MAP_W + o.x;
-          L.flags[mj] = (L.flags[mj] | F_SEEN) & ~F_MAP; any = true;
+          L.flags[mj] = (L.flags[mj] | F_SEEN) & ~F_MAP; found++;
         }
       }
-      if (any) msg('You sense the presence of magic.', 'P');
+      if (found) msgGain('You sense the presence of magic.', 'P',
+        found + (found === 1 ? ' thing sensed' : ' things sensed'), 'P');
       else { msg('You have a strange feeling for a moment.', '6'); id = 0; }
       break;
     }
     case 'raise level':
       P.exp = E_LEVELS[P.lv - 1] || P.exp;
-      msg('You suddenly feel much more skillful.', 'c');
+      /* said before the level is taken, so it names the level you are
+         about to reach rather than the one you are leaving */
+      msgGain('You suddenly feel much more skillful.', 'c', 'level ' + (P.lv + 1), 'G');
       checkLevelUp(); break;
-    case 'haste self': msg('You feel yourself moving much faster.', 'c'); P.haste += rnd(4) + 11; break;
-    case 'restore ability':
+    case 'haste self': {
+      var ha = rnd(4) + 11;
+      P.haste += ha;
+      msgGain('You feel yourself moving much faster.', 'c', 'haste ' + ha + ' turns', 'c');
+      break;
+    }
+    case 'restore ability': {
+      var back = (P.mstr - P.str) + (P.mdex - P.dex) + (P.mwis - P.wis);
       P.str = P.mstr; P.dex = P.mdex; P.wis = P.mwis;
-      msg('Hey, this tastes great! You feel warm all over.', 'G');
+      msgGain('Hey, this tastes great! You feel warm all over.', 'G',
+        back ? '+' + back + ' ability' : 'nothing to mend', back ? 'G' : '6');
       /* Sight is an ability like any other, and nothing else in the game
          gives it back to you before it wears off on its own. */
       if (P.blind) { P.blind = 0; msg('The darkness lifts from your eyes.', 'G'); }
       break;
-    case 'blindness': msg('A cloak of darkness falls around you.', 'p'); P.blind += rnd(40) + 250; break;
-    case 'thirst quenching': msg('This potion tastes extremely dull.', '6'); break;
+    }
+    case 'blindness': {
+      var bl = rnd(40) + 250;
+      P.blind += bl;
+      msgGain('A cloak of darkness falls around you.', 'p', 'blind ' + bl + ' turns', 'R');
+      break;
+    }
+    /* Nothing in it but water, and the whole of what it is worth is the
+       mouthful - which is exactly why it has to be printed.  This said
+       only that the flask tasted dull, and a player who drank one had no
+       way of telling it from a flask that did nothing whatever. */
+    case 'thirst quenching':
+      msgGain('This potion tastes extremely dull.', '6', hungerFx(foodBefore), 'c'); break;
     case 'nourishment':
       P.food = Math.min(FOOD_MAX, P.food + POTION_FEED[0] + rnd(POTION_FEED[1]));
       if (G.hungerState > 0) G.hungerState--;
-      msg('Thick and filling. That will hold you a while.', 'G'); break;
+      msgGain('Thick and filling. That will hold you a while.', 'G',
+        hungerFx(foodBefore), 'G'); break;
     /* Drinking either of these is a waste of a good flask.  Water is
        water; the blessed sort settles the head a little, which is worth
        something but not what it is really for. */
-    case 'water': msg('It is water. Cold, and nothing else.', '6'); break;
-    case 'holy water':
-      msg('Clear and cold. Your head clears with it.', 'c');
+    case 'water':
+      msgGain('It is water. Cold, and nothing else.', '6', hungerFx(foodBefore), 'c'); break;
+    case 'holy water': {
+      var hwHp = P.hp;
       P.conf = 0; P.hallu = 0; P.blind = 0;
       healPlayer(roll(1, 4));
+      msgGain('Clear and cold. Your head clears with it.', 'c',
+        '+' + (P.hp - hwHp) + ' health', 'G');
       break;
-  }
-  /* A flask is a flask: whatever was in it, you drank it, and on a floor
-     where food is scarce that mouthful counts for something.  The flask
-     of nourishment has its own, much larger, helping and does not want
-     a sip on top of it. */
-  if (n !== 'nourishment') {
-    P.food = Math.min(FOOD_MAX, P.food + POTION_SIP);
+    }
   }
   if (id) KNOWN.pot[k] = 1;
   computeVis();
@@ -1221,7 +1290,7 @@ function lightFireShield() {
   P.fireShield = FIRE_SHIELD_TURNS;
   var lit = fireShieldCells().length;
   fireShieldBurn();                /* whatever is already beside you */
-  msg('A ring of fire shields you!', 'O');
+  msgGain('A ring of fire shields you!', 'O', FIRE_SHIELD_TURNS + ' turns', 'O');
   sound('boom');
   G.splash = { cells: (function () {
     var c = [], d;
@@ -1278,12 +1347,18 @@ function readScroll(it) {
         if (m.ally) continue;                    /* not your own spider */
         m.held = rnd(10) + 8; c++;
       }
-      msg(c ? (c === 1 ? 'It freezes where it stands.' : 'The monsters around you freeze.')
-            : 'You feel a strange sense of loss.', c ? 'c' : '6');
+      msgGain(c ? (c === 1 ? 'It freezes where it stands.' : 'The monsters around you freeze.')
+            : 'You feel a strange sense of loss.', c ? 'c' : '6',
+        c ? c + ' held' : 'nothing in sight', c ? 'c' : '6');
       if (!c) id = 0;
       break;
     }
-    case 'sleep': msg('You fall asleep.', 'p'); P.frozen += rnd(5) + 4; break;
+    case 'sleep': {
+      var sl = rnd(5) + 4;
+      P.frozen += sl;
+      msgGain('You fall asleep.', 'p', 'asleep ' + sl + ' turns', 'R');
+      break;
+    }
     case 'fire shield': lightFireShield(); break;
     case 'charging':
     case 'return':
@@ -1294,7 +1369,13 @@ function readScroll(it) {
       msg('The parchment waits for you to choose something.', 'c');
       G.queuePick = { kind: n, k: k };
       return true;                       /* identified only after the pick */
-    case 'scare monster': msg('You hear maniacal laughter in the distance.', 'p'); P.scare += rnd(10) + 10; break;
+    case 'scare monster': {
+      var sc = rnd(10) + 10;
+      P.scare += sc;
+      msgGain('You hear maniacal laughter in the distance.', 'p',
+        'feared ' + sc + ' turns', 'G');
+      break;
+    }
     case 'teleportation': teleportPlayer(); msg('You feel a wrenching sensation in your gut.', 'P'); break;
     case 'create monster': {
       var spots = [];
@@ -1313,7 +1394,8 @@ function readScroll(it) {
 
     case 'summon aid': {
       var made = summonAid(1 + rnd(3));
-      if (made) msg(made + ' shape' + (made > 1 ? 's step' : ' steps') + ' from the air to fight for you!', 'G');
+      if (made) msgGain(made + ' shape' + (made > 1 ? 's step' : ' steps') + ' from the air to fight for you!', 'G',
+        made + (made === 1 ? ' ally' : ' allies'), 'G');
       else { msg('Something tries to arrive and cannot.', '6'); id = 0; }
       break;
     }
@@ -1449,6 +1531,7 @@ function blastSquare(x, y, dmg) {
       (t === WALL || t === ROCK || t === SDOOR || t === DOOR || t === LOCKED)) {
     L.tiles[j] = FLOOR;
     delete L.locks[j];
+    removeTorchAt(L, j);
   }
   delete L.sealed[j];
   var m = monAt(L, x, y);
@@ -1483,6 +1566,7 @@ function dynamiteAt(bx, by) {
       L.tiles[j] = FLOOR;
       delete L.locks[j];
       delete L.sealed[j];
+      removeTorchAt(L, j);
       broke++;
     } else if (L.sealed[j]) delete L.sealed[j];
     var m = monAt(L, x, y);
@@ -2402,6 +2486,23 @@ function fireAt(best) {
      it eases off with every step of room you have. */
   var gap = Math.max(Math.abs(best.x - P.x), Math.abs(best.y - P.y));
   var crowded = gap < POINT_BLANK ? (POINT_BLANK - gap) * POINT_BLANK_PENALTY : 0;
+  /* Whatever the stone was cut for happens exactly once, wherever it
+     came down - even when the very same throw is the killing blow.  A
+     kill used to return before this ever ran, so a returning stone that
+     finished its target off never counted down (it looked freshly full
+     every time) and no runed stone ever named itself by killing with it.
+     Called after killMonster so a dead target is already out of L.mons:
+     a follow-up rune like fire or ice then finds nothing there to burn
+     or freeze a second time, rather than killing it again for a second
+     helping of experience. */
+  function resolveRune() {
+    if (!W.rune) return;
+    stoneRune(W.rune, landed || best, am, flight);
+    if (W.rune !== 'return' && (chargedRune || rnd(100) < runeKeepPct())) {
+      var where = landed || best;
+      keepRuneStone(am, where.x, where.y, chargedRune ? keepChg : 0);
+    }
+  }
   if (swingP(P.lv, best.ar,
              playerHitBonus() + (thrown ? 0 : lw.hp) + am.hp + sneak - crowded)) {
     /* A spear or a throwing dagger is the same weapon whether it is in
@@ -2433,12 +2534,12 @@ function fireAt(best) {
     if (aflame) {
       /* the square first: it burns whether or not the shot killed it */
       var bx0 = best.x, by0 = best.y;
-      if (best.hp <= 0) { killMonster(best, true, fx, flight); dropEmber(bx0, by0); return true; }
+      if (best.hp <= 0) { killMonster(best, true, fx, flight); dropEmber(bx0, by0); resolveRune(); return true; }
       igniteMon(best, 'The burning shaft sets it alight.');
       dropEmber(bx0, by0);
-      if (best.hp <= 0) { killMonster(best, true, 'burnt', flight); return true; }
+      if (best.hp <= 0) { killMonster(best, true, 'burnt', flight); resolveRune(); return true; }
     }
-    if (best.hp <= 0) { killMonster(best, true, fx, flight); return true; }
+    if (best.hp <= 0) { killMonster(best, true, fx, flight); resolveRune(); return true; }
     msgFight(fightLine(ammoName + ' hits ', name, '.'), 'y', fx, 'O', best);
     if (!best.flee && best.hp * 4 < best.mhp && rnd(100) < 30) best.flee = 1;
   } else {
@@ -2470,19 +2571,9 @@ function fireAt(best) {
       if (wear !== 2) dropNear(fx, fy, likeItem(am));
     }
   }
-  /* and it comes home from where it landed, not from what it missed */
-  if (W.rune) stoneRune(W.rune, landed || best, am, flight);
-  /* It kept its charge, so it is still a stone: it should be there to
-     pick up again.  If there is nowhere clear to put it down - a corner
-     already piled with things - it goes back in your pack rather than
-     being quietly lost, which is the whole point of charging it. */
-  /* Charged, it always survives; uncharged, it survives about a quarter
-     of the time - a rune cut into stone is not always used up by one
-     throw, and a stone you can go and pick up again is worth carrying. */
-  if (W.rune && W.rune !== 'return' && (chargedRune || rnd(100) < runeKeepPct())) {
-    var where = landed || best;
-    keepRuneStone(am, where.x, where.y, chargedRune ? keepChg : 0);
-  }
+  /* and it comes home from where it landed, not from what it missed -
+     whether or not that landing was also the kill */
+  resolveRune();
   return true;
 }
 
@@ -2856,7 +2947,10 @@ function useCrystal(it) {
   P.hp = Math.min(P.mhp, P.hp + heal);
   holdHp(hb3, P.mhp);
   removeItem(it, 1);
-  msg('The crystal warms and crumbles. ' + heal + ' hit points return.', 'G');
+  /* What actually came back, not what was rolled: the roll is capped by
+     how hurt you were, so a crystal crushed one point short of whole
+     used to announce a dozen hit points and give you the one. */
+  msgGain('The crystal warms and crumbles.', 'G', healFx(hb3, P.mhp), 'G');
   return true;
 }
 
@@ -2929,7 +3023,8 @@ function ringSeer(it) {
   if (!keepsCharge(it)) { it.ch--; it.wind = 0; }
   P.seer = Math.max(P.seer || 0, RING_SEER_TURNS);
   P.seeinv = Math.max(P.seeinv || 0, RING_SEER_TURNS);
-  msg('The world sharpens. You see what is there.', 'P');
+  msgGain('The world sharpens. You see what is there.', 'P',
+    RING_SEER_TURNS + ' turns', 'P');
   computeVis();
   seerLook();
   return true;
@@ -2993,7 +3088,8 @@ function useItem(it) {
       if (RINGS[it.k].invis) {
         if (!keepsCharge(it)) { it.ch--; it.wind = 0; }
         P.unseen = Math.max(P.unseen, RING_INVIS_TURNS);
-        msg('The world looks straight through you.', 'P');
+        msgGain('The world looks straight through you.', 'P',
+          RING_INVIS_TURNS + ' turns unseen', 'P');
         return { took: true };
       }
       return { took: false, blink: it };
@@ -3062,7 +3158,13 @@ function itemNotes(it) {
       if (d.launch) out.push(['shoots ' + d.ammo + 's', 'c']);
       if (d.ammoFor)
         out.push([d.ammoText || ('for a ' + d.ammoFor + (d.alsoFor ? ' or ' + d.alsoFor : '')), 'c']);
-      if (d.hurl) out.push(['wield or throw it; never lost', 'c']);
+      /* Nothing is said here about throwing one.  There used to be a
+         line promising the thing was "never lost", which was true of a
+         spear once and has not been true since every landing started
+         rolling against it - and the honest version of it, a figure for
+         how often a throw is the end of it, is not wanted either.  The
+         name already carries "well made" or "worn"; the rest is the
+         dungeon's business and yours to find out. */
       if (numbersKnown(it) && (it.hp || it.dp))
         out.push([sgn(it.hp) + ' to hit, ' + sgn(it.dp) + ' damage',
           (it.hp + it.dp) < 0 ? 'R' : 'G']);
@@ -3226,7 +3328,13 @@ function itemDetail(it) {
   switch (it.t) {
     case 'potion':
       add('drink it, or hurl it at something', 'c');
-      add('a mouthful takes the edge off your hunger', '6');
+      /* Only the ones that do not do you harm going down.  A flask of
+         poison you have already identified feeds you nothing, and
+         saying otherwise here is the pack telling you something the
+         game does not do. */
+      if (KNOWN.pot[it.k] && POTION_HARMFUL[POTIONS[it.k].n])
+        add('what it does to you is not worth the mouthful', '6');
+      else add('a mouthful takes the edge off your hunger', '6');
       break;
     case 'scroll':
       add('read it aloud to use it', 'c');

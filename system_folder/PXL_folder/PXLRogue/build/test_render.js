@@ -126,6 +126,13 @@ function fakeCtx(tag) {
          rather than paint */
       fills.push({ seq: drawSeq++, tag: tag, x, y, w, h, col: this.fillStyle,
         at: this.globalAlpha, op: this.globalCompositeOperation });
+    },
+    /* A gradient is a fillStyle like any other colour, so it is recorded
+       as one - but it carries its stops, so a test can ask what shape the
+       light actually has across a square rather than only where it fell. */
+    createRadialGradient: function (x0, y0, r0, x1, y1, r1) {
+      return { grad: 'radial', x0, y0, r0, x1, y1, r1, stops: [],
+        addColorStop: function (at, col) { this.stops.push([at, col]); } };
     }
   };
 }
@@ -287,6 +294,8 @@ setTimeout(() => {
   /* holding SHIFT: every keydown reports it, and there is a keyup at the end */
   const shiftKey = k => listeners['keydown']({ key: k, shiftKey: true, preventDefault() { } });
   const shiftUp = () => listeners['keyup']({ key: 'Shift' });
+  /* releasing a key that was held with SHIFT down - an arrow, mostly */
+  const keyUp = k => listeners['keyup']({ key: k });
 
   /* A probe that drives the game on a clock of its own has to hand it a
      clock the game will believe.  The world runs on nowMs, which is the
@@ -1226,8 +1235,8 @@ setTimeout(() => {
           ', walking left flip=' + (left && left.flip));
         if (!right || !left) problems.push('the snake is not drawn at all');
         else {
-          if (right.flip) problems.push('a snake walking right is drawn mirrored');
-          if (!left.flip) problems.push('a snake walking left is not drawn mirrored');
+          if (!right.flip) problems.push('a snake walking right is not drawn mirrored');
+          if (left.flip) problems.push('a snake walking left is drawn mirrored');
         }
         L.mons.length = 0;
       }
@@ -1266,6 +1275,49 @@ setTimeout(() => {
       if (lip.length) problems.push(lip.length + ' bright edges drawn round a hole');
       for (let y = hy - 2; y <= hy + 2; y++)
         for (let x = hx - 2; x <= hx + 2; x++) delete L.decor[idx(x, y)];
+    }
+
+    /* Rubble, and a plain square of moss, have nothing to face - so
+       instead of always sitting the same way up, each takes one of the
+       four turns at random.  Stable per square (the same tile turned the
+       same way twice), and not always the same turn as its neighbour. */
+    /* centred on the player rather than run off to one side, so all of
+       it stays inside the view: VIEW_W is only 19 squares wide */
+    const rbx = P.x - 5, rby = P.y + 4;
+    if (rbx > 2 && rby > 2 && rbx + 11 < ctx.MAP_W - 2 && rby < ctx.MAP_H - 3) {
+      const idx3 = (x, y) => y * ctx.MAP_W + x;
+      const turnsFor = name => {
+        const spots = [];
+        for (let x = rbx; x < rbx + 12; x++) {
+          L.tiles[idx3(x, rby)] = ctx.FLOOR; L.decor[idx3(x, rby)] = name; spots.push(x);
+        }
+        const c = cell(name);
+        const render = () => {
+          blits = []; fills = [];
+          vm.runInContext('render();', ctx);
+          return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+            b.sx === c[0] && b.sy === c[1] && b.dx >= ctx.VIEW_PX)
+            .map(b => b.turn).sort((a, b2) => a - b2);
+        };
+        ctx.computeVis();
+        const first = render(), again = render();
+        for (const x of spots) delete L.decor[idx3(x, rby)];
+        return { first, again };
+      };
+      for (const name of ['rubble', 'moss']) {
+        const t = turnsFor(name);
+        console.log((name === 'rubble' ? 'rubble turned      ' : 'plain moss turned ') +
+          '  : 12 laid, turns ' + JSON.stringify(t.first));
+        if (t.first.length !== 12)
+          problems.push(name + ': expected 12 drawn, got ' + t.first.length);
+        else {
+          if (new Set(t.first).size < 2)
+            problems.push(name + ' always turns the same way - twelve in a row should not all match');
+          if (t.first.join(',') !== t.again.join(','))
+            problems.push(name + ' turned differently the second time it was drawn - same square, ' +
+              'should be the same turn: ' + t.first.join(',') + ' vs ' + t.again.join(','));
+        }
+      }
     }
   }
 
@@ -2852,14 +2904,46 @@ setTimeout(() => {
   const compass = blits.filter(b => b.tag === 'screen' && b.dx === 1 && b.dy === 1).length;
   if (!compass) problems.push('no compass in the corner while panning');
 
-  /* the arrows move the view, not the player */
+  /* the arrows move the view, not the player - three separate taps, each
+     one let go before the next, so nothing here is held with anything
+     else and every step is single file */
   const px = P.x, py = P.y, turn = G.turn;
-  shiftKey('ArrowLeft'); shiftKey('ArrowLeft'); shiftKey('ArrowUp');
+  shiftKey('ArrowLeft'); keyUp('ArrowLeft');
+  shiftKey('ArrowLeft'); keyUp('ArrowLeft');
+  shiftKey('ArrowUp'); keyUp('ArrowUp');
   if (P.x !== px || P.y !== py) problems.push('panning moved the player');
   if (G.turn !== turn) problems.push('panning cost a turn');
   if (G.pan.dx !== -2 || G.pan.dy !== -1)
     problems.push('the view went to ' + G.pan.dx + ',' + G.pan.dy + ' instead of -2,-1');
   frame('panned');
+
+  /* held together rather than tapped in turn, two arrows push the view
+     on the diagonal - up and left both, without letting go of either.
+     Reset to a clean 0,0 first so every step below is exact. */
+  const dxBefore = G.pan.dx, dyBefore = G.pan.dy;
+  G.pan.dx = 0; G.pan.dy = 0;
+  shiftKey('ArrowUp');                   /* one key alone is still one axis */
+  if (G.pan.dx !== 0 || G.pan.dy !== -1)
+    problems.push('a single held arrow moved the view to ' + G.pan.dx + ',' + G.pan.dy);
+  shiftKey('ArrowLeft');                 /* held together with the first: the diagonal */
+  if (G.pan.dx !== -1 || G.pan.dy !== -2)
+    problems.push('up and left held together went to ' + G.pan.dx + ',' + G.pan.dy +
+      ' instead of -1,-2');
+  /* the repeat that follows, with both still held, keeps stepping on
+     the diagonal rather than dropping back to a single axis */
+  shiftKey('ArrowLeft');
+  if (G.pan.dx !== -2 || G.pan.dy !== -3)
+    problems.push('holding both did not keep stepping diagonally: ' +
+      G.pan.dx + ',' + G.pan.dy + ' instead of -2,-3');
+  /* and letting go of one leaves the other still steering on its own */
+  keyUp('ArrowLeft');
+  shiftKey('ArrowUp');
+  if (G.pan.dx !== -2 || G.pan.dy !== -4)
+    problems.push('releasing left left the view at ' + G.pan.dx + ',' + G.pan.dy +
+      ' instead of -2,-4');
+  keyUp('ArrowUp');
+  /* back to where the single-file taps above left it, for what follows */
+  G.pan.dx = dxBefore; G.pan.dy = dyBefore;
   /* It stops at the limit rather than running off for ever - but the
      limit is the floor you are standing on, not a number.  It used to be
      a flat 40 squares, which is narrower than a large map: from one end
@@ -2926,6 +3010,8 @@ setTimeout(() => {
   console.log('panning              : slides', ctx.PANEL_W + 'px in', ctx.PAN_SLIDE + 'ms,',
     leftTiles, 'tiles behind it, and the arrows reach ' + limX + 'x' + limY +
     ' squares - every corner of a ' + ctx.MAP_W + 'x' + ctx.MAP_H + ' floor');
+  console.log('             : two held together push it on the diagonal, ' +
+    'and letting go of one leaves the other still steering');
   G.pan = null; G.mode = 'play';
 }
 
@@ -3191,6 +3277,33 @@ setTimeout(() => {
       key('Escape');
       if (ctx.G.mode !== 'pause') problems.push('ESC did not close the hint box');
     }
+    ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null; ctx.G.hint = null;
+
+    /* HIGHSCORE from the pause menu: the same table the title screen
+       shows, read without ending the run - so it must not ask for a
+       name, even when the run in progress would qualify for the board,
+       and leaving it must land back on the pause menu with the run
+       still going, never on the title screen and never a fresh game. */
+    key('Escape');
+    ctx.G.pause.i = names.indexOf('scores'); key('Enter');
+    if (ctx.G.mode !== 'score') problems.push('HIGHSCORE did not open the roll');
+    else {
+      if (!ctx.G.hs || ctx.G.hs.from !== 'pause') problems.push('the roll did not remember it was opened from pause');
+      ctx.G.hsBoard = [{ name: 'aaa', xp: 999999, level: 20 }];
+      ctx.P.exp = 999999999; ctx.P.lv = 21;   /* certainly enough to qualify */
+      vm.runInContext('hsReady(G.hsBoard);', ctx);
+      if (ctx.G.hs.typing) problems.push('the roll asked a still-living rogue for a name');
+      frame('pause-scores');
+      const drawnS = blits.filter(b => b.tag === 'screen').length;
+      if (drawnS < 20) problems.push('the roll was not drawn from the pause menu');
+      const turnBefore = ctx.G.turn, depthBefore = ctx.G.depth;
+      key('Enter');
+      if (ctx.G.mode !== 'pause') problems.push('leaving the roll did not go back to the pause menu');
+      if (ctx.G.dead || ctx.G.turn !== turnBefore || ctx.G.depth !== depthBefore)
+        problems.push('looking at the roll disturbed the run in progress');
+      console.log('highscore from pause :', drawnS, 'marks, no name asked, back to the pause menu, run undisturbed');
+    }
+    ctx.G.hs = null; ctx.G.hsBoard = null;
     ctx.G.mode = 'play'; ctx.G.pause = null; ctx.G.slots = null; ctx.G.hint = null;
   }
 
@@ -5560,11 +5673,589 @@ setTimeout(() => {
       /* a finger has no second button, so a tap must still ask */
       const tap = click(0, 'touch');
       if (!tap.menu) problems.push('a tap on a touch screen opened no menu');
-      console.log('clicking the pack    : left looks, right asks, and a tap asks');
+      /* And a second left click on the thing already picked out asks
+         too: the first press chooses it, the second press acts on it,
+         which is how a list of files behaves everywhere else and was
+         the one thing the left button could not do at all. */
+      ctx.LAST_INPUT = 'mouse';
+      ctx.G.menu = null;
+      ctx.G.cur.r = -1; ctx.G.cur.c = -1;
+      ctx.clickAt(full.x + 2, full.y + 2, 0);
+      if (ctx.G.menu) problems.push('the first left click already opened the menu');
+      ctx.clickAt(full.x + 2, full.y + 2, 0);
+      if (!ctx.G.menu) problems.push('a second left click on the same thing opened no menu');
+      /* and a left click that moves the frame somewhere else still only
+         picks the new thing out */
+      const other = cells.find(c => c.i.r !== full.i.r || c.i.c !== full.i.c);
+      if (other) {
+        ctx.G.menu = null;
+        ctx.clickAt(other.x + 2, other.y + 2, 0);
+        if (ctx.G.menu) problems.push('a left click on a different square opened the menu');
+      }
+      console.log('clicking the pack    : left looks, left again asks, right asks, and a tap asks');
       ctx.G.menu = null;
       ctx.LAST_INPUT = 'mouse';
     }
     ctx.closeInv();
+  }
+
+  /* --- firing a bow without a keyboard --------------------------------
+     ENTER takes aim out in the dungeon, and a phone has no ENTER and no
+     way to press a creature three squares off with any accuracy.  So a
+     bow has to be reachable from the two menus a finger can open: the
+     one over your own square, and the one over the bow in your pack. */
+  {
+    const P = ctx.P, G = ctx.G, L = ctx.L;
+    G.mode = 'play'; G.menu = null; G.ctx = null; G.pouch = null;
+    G.walk = null; G.drag = null; G.throwing = null; G.targets = [];
+    ctx.closeInv();
+    L.mons.length = 0;
+    P.blind = 0; P.hp = P.mhp;
+    const bow = ctx.mkItem('weapon', ctx.weaponIndex('short bow'));
+    bow.known = 1;
+    const arrows = ctx.mkItem('weapon', ctx.weaponIndex('arrow'));
+    arrows.known = 1; arrows.cnt = 9;
+    /* a bow is drawn with the off hand, so that is the slot it lives in */
+    P.eq.lh = bow;
+    let arrowSlot = -1;
+    for (let i = 0; i < P.slots.length; i++) if (!P.slots[i]) { arrowSlot = i; break; }
+    if (arrowSlot >= 0) P.slots[arrowSlot] = arrows;
+    /* something to shoot at, in plain view down a clear line */
+    let mark = null;
+    for (let d = 2; d <= 6 && !mark; d++)
+      for (const dir of ctx.DIR4) {
+        const x = P.x + dir[0] * d, y = P.y + dir[1] * d;
+        if (x < 1 || y < 1 || x >= ctx.MAP_W - 1 || y >= ctx.MAP_H - 1) continue;
+        if (!ctx.walkable(x, y) || !ctx.sightClear(P.x, P.y, x, y)) continue;
+        mark = { x, y }; break;
+      }
+    if (!mark) problems.push('found nowhere to stand a target for the bow');
+    else {
+      const foe = ctx.mkMonster('K', 3, mark.x, mark.y);
+      foe.hp = foe.mhp = 900; foe.state = 2;
+      L.mons.push(foe);
+      ctx.computeVis();
+      L.flags[mark.y * ctx.MAP_W + mark.x] |= ctx.F_VIS | ctx.F_SEEN;
+      if (!ctx.canShoot()) problems.push('a wielded bow with arrows in the pack cannot shoot');
+      if (!ctx.shootableNow()) problems.push('nothing was in the line of fire to shoot at');
+
+      /* the menu over the bow itself */
+      const verbs = ctx.itemActions(bow, { kind: 'eq', key: 'lh' }).map(o => o[0]);
+      if (verbs.indexOf('shoot') < 0)
+        problems.push('the bow in your hands offers no way to shoot it: ' + verbs.join(','));
+      /* and over the arrows, which is the other thing you would reach for */
+      const aVerbs = ctx.itemActions(arrows, { kind: 'slot', i: arrowSlot }).map(o => o[0]);
+      if (aVerbs.indexOf('shoot') < 0)
+        problems.push('the arrows offer no way to shoot them: ' + aVerbs.join(','));
+
+      /* the menu over your own square, which is what a finger can reach */
+      ctx.openCtxMenu(P.x, P.y);
+      const mine = G.ctx.opts.map(o => o[0]);
+      if (mine.indexOf('aim') < 0) {
+        problems.push('pressing your own square offers no way to shoot: ' + mine.join(',') +
+          ' (canShoot ' + !!ctx.canShoot() + ', targets ' + ctx.shotTargets().length + ')');
+        G.ctx = null;
+      } else {
+        /* and choosing it takes aim.  The aiming itself is stubbed out
+           rather than played: firing spends a whole turn, and a turn
+           spent here would move every creature on the floor about under
+           the tests that come after this one. */
+        G.ctx.i = mine.indexOf('aim');
+        let aimed = 0;
+        const realBegin = ctx.beginShooting;
+        ctx.beginShooting = function () { aimed = 1; };
+        ctx.ctxKey('Enter');
+        ctx.beginShooting = realBegin;
+        if (!aimed) problems.push('choosing Shoot from your own square took no aim');
+        console.log('shooting by finger   : the bow, the arrows and your own square all offer ' +
+          'Shoot, and choosing it takes aim');
+      }
+    }
+    G.ctx = null; G.mode = 'play'; G.targets = []; G.msgq = [];
+    P.eq.lh = null; if (arrowSlot >= 0) P.slots[arrowSlot] = null;
+    L.mons.length = 0;
+  }
+
+  /* --- a level gained waits for the thing you killed to finish dying --
+     The dead linger, blinking, so you see what your blow landed on.  A
+     level comes of age on that same blow, and the box that offers the
+     choice waited only PERK_PAUSE - which is shorter than the blink, so
+     the box went up over a creature still flashing on the square in
+     front of you.  Levels two and four are both coming-of-age levels,
+     so this was the first level up anybody ever saw. */
+  {
+    const P = ctx.P, G = ctx.G, L = ctx.L;
+    G.mode = 'play'; G.menu = null; G.ctx = null; G.perkPick = null;
+    G.levelUp = 0; G.beat = 0; G.msgq = [];
+    ctx.closeInv();
+    L.mons.length = 0; L.corpses.length = 0;
+    P.hp = P.mhp = 900; G.dead = 0; P.lv = 1; P.perks = {};
+    P.exp = ctx.E_LEVELS[0] - 1;              /* one point short of level two */
+    const victim = ctx.mkMonster('K', 3, P.x + 1, P.y);
+    victim.hp = 1; L.mons.push(victim);
+    ctx.killMonster(victim, true, 'slain');
+
+    if (P.lv !== 2) problems.push('killing the last thing needed did not raise a level');
+    if (!G.perkPick) problems.push('level two did not come of age');
+    else {
+      /* the bug, stated as a number: the corpse outlives the pause */
+      if (ctx.corpsesDoneAt() <= G.perkPick.at)
+        problems.push('the coming-of-age pause already outlasts the blink, so this proves nothing');
+      /* and the box is not offered while it is still blinking */
+      G.perkPick.at = ctx.nowMs() - 1000;     /* the pause itself, long over */
+      if (ctx.perkReady())
+        problems.push('the level up box was offered over a corpse still blinking');
+      /* nor is the plain note, on a level that does not come of age */
+      const heldPick = G.perkPick;
+      G.perkPick = null; G.levelUp = 2; G.mode = 'play';
+      ctx.resumeMode();
+      if (G.mode === 'note' || G.note)
+        problems.push('the level up note went up over a corpse still blinking');
+      /* and once the dead have gone, both come through */
+      for (const co of L.corpses) co.t = ctx.nowMs() - ctx.CORPSE_MS - 10;
+      ctx.resumeMode();
+      if (!G.note) problems.push('the level up note never came at all');
+      G.note = null; G.levelUp = 0; G.perkPick = heldPick;
+      if (!ctx.perkReady())
+        problems.push('the coming-of-age box never came once the dead had gone');
+      console.log('a level gained       : the box waits out the ' + ctx.CORPSE_MS +
+        'ms the dead spend blinking, which is longer than the ' + ctx.PERK_PAUSE +
+        'ms pause on its own, and comes through once they have gone');
+    }
+    G.perkPick = null; G.levelUp = 0; G.note = null; G.mode = 'play';
+    L.corpses.length = 0; L.mons.length = 0; G.msgq = [];
+  }
+
+  /* --- one bad frame must not be the last one -------------------------
+     The next frame used to be asked for on the last line of the loop,
+     after everything else had gone well - so anything that threw took
+     the game with it: no more frames, the canvas left showing however
+     much of the last one had been painted, and every key after that
+     going into a game that had stopped drawing.  Which from the outside
+     is a frozen tab, showing a dungeon with no man in it, because the
+     map is painted before the man is. */
+  {
+    let asked = 0;
+    const realRaf = ctx.requestAnimationFrame;
+    ctx.requestAnimationFrame = function () { asked++; };
+    const realDrawMap = ctx.drawMap;
+    ctx.drawMap = function () { throw new Error('a square went wrong'); };
+    ctx.FRAME_ERR = null; ctx.FRAME_ERRS = 0;
+    let threw = null;
+    blits = []; fills = []; drawSeq = 0;
+    try { vm.runInContext('loop();', ctx); }
+    catch (e) { threw = e.message; }
+    ctx.drawMap = realDrawMap;
+    if (threw) problems.push('a frame that went wrong threw out of the loop: ' + threw);
+    if (!asked) problems.push('a frame that went wrong never asked for another one');
+    if (!ctx.FRAME_ERR) problems.push('a frame that went wrong was swallowed without a word');
+    /* and the very next frame draws normally again */
+    asked = 0;
+    blits = []; fills = []; drawSeq = 0;
+    try { vm.runInContext('loop();', ctx); }
+    catch (e) { problems.push('the frame after a bad one threw too: ' + e.message); }
+    const drew = blits.filter(b => b.tag === 'screen').length;
+    if (!asked) problems.push('the frame after a bad one asked for no successor');
+    if (drew < 20) problems.push('the frame after a bad one drew almost nothing (' + drew + ')');
+    ctx.requestAnimationFrame = realRaf;
+    ctx.FRAME_ERR = null; ctx.FRAME_ERRS = 0;
+    console.log('one bad frame        : costs that frame and nothing else - the next one is ' +
+      'always asked for first, so the game cannot die of a single throw');
+  }
+
+  /* --- the rim of a pool of torchlight --------------------------------
+     Every other light fills its square with one flat colour, which is
+     right for them.  A torch's pool is meant to read as a circle, and a
+     circle made of flat squares is a staircase: the last ring ends at
+     its own border with all eight pixels at one opacity, and the eye
+     reads the border.  So the torch wash is one round gradient anchored
+     on the flame, and the squares of the pool are filled with whatever
+     part of it falls on them. */
+  {
+    const G = ctx.G, L = ctx.L, P = ctx.P;
+    ctx.closeInv();
+    G.mode = 'play'; G.menu = null; G.sel = null; G.textSel = null;
+    L.mons.length = 0; L.clouds.length = 0; L.temp = {};
+    P.blind = 0; P.hp = P.mhp;
+    /* a torch on the wall of the room the player is standing in */
+    const ri = ctx.roomIndexAt(P.x, P.y);
+    let put = null;
+    if (ri >= 0) {
+      const r = L.rooms[ri];
+      r.lit = 1; r.dark = 0;
+      for (let x = r.x; x < r.x + r.w && !put; x++) {
+        const wy = r.y - 1, j = wy * ctx.MAP_W + x;
+        if (wy < 1 || L.tiles[j] !== ctx.WALL) continue;
+        put = { x: x, y: wy, dir: [0, 1] };
+      }
+    }
+    if (!put) problems.push('found no wall of the room to hang a torch on');
+    else {
+      L.torches = [put];
+      vm.runInContext('buildLitMap(L); buildDarkMap(L, G.depth); computeVis();', ctx);
+      blits = []; fills = []; drawSeq = 0;
+      vm.runInContext('render();', ctx);
+      const washes = fills.filter(f => f.tag === 'screen' && f.op === 'lighter' &&
+        f.w === ctx.TS && f.h === ctx.TS && f.col && f.col.grad === 'radial');
+      if (!washes.length) problems.push('the torch laid no round wash on anything');
+      else {
+        /* one gradient for the whole pool, not one per square */
+        const distinct = new Set(washes.map(f => f.col));
+        if (distinct.size !== 1)
+          problems.push('one flame drew ' + distinct.size + ' different gradients');
+        const grd = washes[0].col;
+        /* it arrives at nothing rather than at a rim */
+        const last = grd.stops[grd.stops.length - 1];
+        if (last[0] !== 1) problems.push('the wash does not reach its own edge');
+        if (!/,0\)$/.test(last[1]))
+          problems.push('the outermost stop is "' + last[1] + '", not transparent');
+        /* and the strength at the middle is the game's own wash, not a
+           new one invented for torches */
+        const first = grd.stops[0][1];
+        const at = parseFloat(first.slice(first.lastIndexOf(',') + 1));
+        if (!(at <= ctx.GLOW_WASH + 0.001))
+          problems.push('the torch wash is laid on at ' + at + ', heavier than the ' +
+            ctx.GLOW_WASH + ' every other light uses');
+        /* The rim has to arrive at nothing INSIDE the squares that are
+           actually drawn.  Only squares within TORCH_LIGHT_HALF of the
+           flame are painted at all, so a gradient that went on fading
+           past them would be cut off with light still in it - a hard
+           edge again, just drawn one ring wider out. */
+        const R = grd.r1;
+        if (!(R > ctx.TS * 1.5))
+          problems.push('the wash is too small to fade across a square');
+        const outer = (ctx.TORCH_LIGHT_HALF + 0.5) * ctx.TS;
+        if (R > outer + 0.001)
+          problems.push('the wash only reaches nothing ' + (R / ctx.TS).toFixed(2) +
+            ' squares out, past the ' + (outer / ctx.TS) + ' where the drawn squares end');
+        /* and read off the stops: nothing left at the outer edge */
+        const val = (d) => {
+          const t = d / R;
+          if (t >= 1) return 0;
+          for (let i = 1; i < grd.stops.length; i++) {
+            if (t > grd.stops[i][0]) continue;
+            const p0 = grd.stops[i - 1], p1 = grd.stops[i];
+            const f = (t - p0[0]) / (p1[0] - p0[0] || 1);
+            const a0 = parseFloat(p0[1].slice(p0[1].lastIndexOf(',') + 1));
+            const a1 = parseFloat(p1[1].slice(p1[1].lastIndexOf(',') + 1));
+            return a0 + (a1 - a0) * f;
+          }
+          return 0;
+        };
+        if (val(outer) > 0.002)
+          problems.push('the pool still has ' + val(outer).toFixed(3) +
+            ' opacity where the drawn squares stop - that edge will read as a step');
+        if (!(val(ctx.TORCH_LIGHT_HALF * ctx.TS) > 0.01))
+          problems.push('the pool is already out before the last ring of squares');
+        console.log('the rim of the pool  : one round gradient for the flame, ' +
+          washes.length + ' squares filled from it, laid on at ' + at + ' like every ' +
+          'other light, and arriving at nothing part way across the last squares');
+      }
+      /* and it keeps to its room: nothing lit outside it */
+      const glow = ctx.lightMap(1);
+      let stray = 0;
+      for (const k in glow) {
+        if (glow[k].col !== ctx.GLOW_TORCH) continue;
+        const j = k | 0;
+        if (!(L.roomAt[j] === ri || ctx.touchesRoom(j, ri))) stray++;
+      }
+      if (stray) problems.push(stray + ' squares outside the room were lit by its torch');
+    }
+    L.torches = [];
+    vm.runInContext('buildLitMap(L); buildDarkMap(L, G.depth); computeVis();', ctx);
+  }
+
+  /* --- firelight on water ---------------------------------------------
+     Water under a torch answers the light back: the ripples take a wash
+     of it, and every so often one pixel of one ripple flares white. */
+  {
+    const P = ctx.P, G = ctx.G, L = ctx.L, MAP_W = ctx.MAP_W;
+    const RealDate = ctx.Date;
+    ctx.closeInv();
+    G.mode = 'play'; G.menu = null; G.sel = null; G.textSel = null;
+    L.mons.length = 0; L.clouds.length = 0; L.temp = {};
+    P.blind = 0; P.hp = P.mhp;
+    ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
+    vm.runInContext('WALK_AT = { x: P.x, y: P.y }; WALK_ON_MAN = 0;', ctx);
+    /* a patch of water right in front of the player, lit by one torch */
+    const wet = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = 1; dx <= 3; dx++) {
+      const x = P.x + dx, y = P.y + dy;
+      if (x < 1 || y < 1 || x >= MAP_W - 1 || y >= ctx.MAP_H - 1) continue;
+      const j = y * MAP_W + x;
+      L.tiles[j] = ctx.WATER;
+      delete L.decor[j];
+      L.darkMap[j] = 0; L.litMap[j] = 1;
+      wet.push({ x, y, j });
+    }
+    L.torches = [{ x: P.x, y: P.y - 2, dir: [0, 1] }];
+    ctx.computeVis();
+    for (const w of wet) L.flags[w.j] |= ctx.F_VIS | ctx.F_SEEN;
+
+    /* the two reflection sprites, as cells of the sheet - the blits the
+       mock records carry where they came from, not what it was called */
+    const reflCells = ['water_refl', 'water2_refl'].map(n => {
+      const i2 = ctx.IX[n];
+      return [(i2 % ctx.ATLAS.cols) * ctx.TS, ((i2 / ctx.ATLAS.cols) | 0) * ctx.TS];
+    });
+    const T0 = RealDate.now();
+    const camx0 = P.x - (ctx.VIEW_W >> 1), camy0 = P.y - (ctx.VIEW_H >> 1);
+    const look = (t) => {
+      ctx.Date = { now: () => t };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
+      blits = []; fills = []; drawSeq = 0;
+      vm.runInContext('render();', ctx);
+      const refl = blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        reflCells.some(c => b.sx === c[0] && b.sy === c[1])).length;
+      /* the twinkle is a single white pixel, not a sprite */
+      const glints = fills.filter(f => f.tag === 'screen' && f.w === 1 && f.h === 1 &&
+        String(f.col).toLowerCase() === ctx.WATER_GLINT_COL);
+      return { refl, glints };
+    };
+    const first = look(T0);
+    if (!first.refl) problems.push('torchlit water showed no reflection at all');
+    /* Wherever the pixels come from - read off the sheet in a browser,
+       or the spread of fallback places when the canvas will not hand
+       them back, as here - every one of them is inside the tile. */
+    for (const n of ['water_refl', 'water2_refl']) {
+      const pix = ctx.shinePixels(n);
+      if (!pix.length) problems.push(n + ' offered nowhere to put a twinkle');
+      for (const p of pix)
+        if (!(p[0] >= 0 && p[0] < ctx.TS && p[1] >= 0 && p[1] < ctx.TS))
+          problems.push(n + ' would twinkle outside its own tile at ' + p);
+    }
+    /* Over a long stretch: twinkles happen, they are rare, and they
+       come and go in the three steps rather than blinking. */
+    const GS = ctx.WATER_GLINT_MS;
+    let lit = 0, frames = 0, most = 0, places = new Set(), alphas = new Set();
+    for (let n = 0; n < ctx.WATER_GLINT_EVERY * 3; n++) {
+      const r = look(T0 + n * GS);
+      frames++;
+      if (r.glints.length) lit++;
+      if (r.glints.length > most) most = r.glints.length;
+      for (const g of r.glints) {
+        places.add(g.x + ',' + g.y);
+        alphas.add(Math.round((g.at / ctx.ALPHA) * 100) / 100);
+      }
+    }
+    if (!places.size) problems.push('the water never twinkled at all');
+    if (most >= wet.length) problems.push('every square of water twinkled at once');
+    /* rare: a square carries one for three steps in WATER_GLINT_EVERY,
+       so nothing like every frame should have one */
+    const share = lit / frames;
+    if (share > 0.6) problems.push('a twinkle was on screen ' +
+      Math.round(share * 100) + '% of the time - that is not rare');
+    /* it fades in and out in three steps, and those are the three */
+    const want = ctx.WATER_GLINT_FADE.slice().sort();
+    const got = [...alphas].sort();
+    for (const w of want)
+      if (!got.some(x => Math.abs(x - w) < 0.03))
+        problems.push('no twinkle was ever drawn at ' + w + ' - saw ' + JSON.stringify(got));
+    for (const x of got)
+      if (!want.some(w => Math.abs(x - w) < 0.03))
+        problems.push('a twinkle was drawn at ' + x + ', which is not one of its three steps');
+    /* and one twinkle stays in one place for all three of its steps */
+    let ran = null;
+    for (let n = 0; n < ctx.WATER_GLINT_EVERY * 3 && !ran; n++) {
+      const a0 = look(T0 + n * GS), a1 = look(T0 + (n + 1) * GS), a2 = look(T0 + (n + 2) * GS);
+      const k = r => r.glints.map(g => g.x + ',' + g.y).join(' ');
+      const v = r => r.glints.map(g => Math.round((g.at / ctx.ALPHA) * 100) / 100);
+      if (a0.glints.length === 1 && k(a0) === k(a1) && k(a1) === k(a2) &&
+          Math.abs(v(a0)[0] - 0.4) < 0.03)
+        ran = [v(a0)[0], v(a1)[0], v(a2)[0]];
+    }
+    if (!ran) problems.push('no twinkle was seen to run its three steps in one place');
+    else if (!(Math.abs(ran[0] - 0.4) < 0.03 && Math.abs(ran[1] - 0.8) < 0.03 &&
+               Math.abs(ran[2] - 0.4) < 0.03))
+      problems.push('a twinkle went ' + JSON.stringify(ran) + ', not 0.4 - 0.8 - 0.4');
+    /* The shine keeps the torch's own beat.  It has to change when the
+       flame changes shape and hold still in between, or the water is
+       rippling to a fire nobody can see. */
+    const TF = ctx.TORCH_FLICKER_MS;
+    const shineAt = (t) => {
+      ctx.Date = { now: () => t };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
+      blits = []; fills = []; drawSeq = 0;
+      vm.runInContext('render();', ctx);
+      return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        reflCells.some(c => b.sx === c[0] && b.sy === c[1]))
+        .map(b => Math.round((b.at || 1) * 1000)).join(',');
+    };
+    const beat = Math.floor(T0 / TF) * TF;
+    const inBeat = [shineAt(beat + 3), shineAt(beat + TF - 3)];
+    if (inBeat[0] !== inBeat[1])
+      problems.push('the shine changed while the flame held still');
+    let moved = 0;
+    for (let n = 0; n < 8; n++)
+      if (shineAt(beat + n * TF + 3) !== shineAt(beat + (n + 1) * TF + 3)) moved++;
+    if (moved < 4)
+      problems.push('the shine barely moved over eight flames (' + moved + ' changes)');
+    /* and the flame it keeps time with is the one that is drawn */
+    const sprAt = (t) => {
+      ctx.Date = { now: () => t };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
+      blits = []; fills = []; drawSeq = 0;
+      vm.runInContext('render();', ctx);
+      const cells = ['torch', 'torch2'].map(n => {
+        const i2 = ctx.IX[n];
+        return (i2 % ctx.ATLAS.cols) * ctx.TS + ',' + ((i2 / ctx.ATLAS.cols) | 0) * ctx.TS;
+      });
+      return blits.filter(b => b.tag === 'screen' && b.from === 'atlas' &&
+        cells.indexOf(b.sx + ',' + b.sy) >= 0).map(b => cells.indexOf(b.sx + ',' + b.sy)).join('');
+    };
+    const s1 = sprAt(beat + 3), s2 = sprAt(beat + TF + 3);
+    if (s1 && s2 && s1 === s2)
+      problems.push('the torch did not change picture on its own beat');
+    /* every glint is close about the flame, not out at the edge */
+    let far = 0;
+    const flame = L.torches.length ? L.torches[0] : null;
+    for (const k of places) {
+      const [gx, gy] = k.split(',').map(Number);
+      const tx = camx0 + Math.floor((gx - ctx.VIEW_PX) / ctx.TS);
+      const ty = camy0 + Math.floor((gy - ctx.VIEW_PY) / ctx.TS);
+      if (flame && Math.max(Math.abs(tx - flame.x), Math.abs(ty - flame.y)) > 2) far++;
+    }
+    if (far) problems.push(far + ' twinkles happened out at the edge of the light');
+    /* dry land never twinkles, and neither does water nobody is lighting */
+    L.torches = [];
+    ctx.computeVis();
+    for (const w of wet) L.flags[w.j] |= ctx.F_VIS | ctx.F_SEEN;
+    let unlit = 0;
+    for (let n = 0; n < 40; n++) unlit += look(T0 + n * GS).glints.length;
+    if (unlit) problems.push('water with no torch on it still twinkled ' + unlit + ' times');
+    ctx.Date = RealDate;
+    ctx.pauseFrom = ctx.pauseOwed = 0;
+    console.log('firelight on water   : the ripples take the wash and one pixel of one of ' +
+      'them flares white - ' + places.size + ' different places, at most ' + most + ' of ' +
+      wet.length + ' squares at once, on screen ' + Math.round(share * 100) + '% of the ' +
+      'time, fading 0.4 - 0.8 - 0.4 without moving, and none at all with the torches out');
+    for (const w of wet) L.tiles[w.j] = ctx.FLOOR;
+    L.torches = [];
+    ctx.computeVis();
+  }
+
+  /* --- two selections, two names --------------------------------------
+     Picking a thing up in the pack to carry it somewhere, and dragging
+     across the words beside it to copy them, are two different
+     selections - and they used to be kept under the same name.  Both
+     can be live at once, and whichever was written second left the
+     other holding a shape it did not understand: the drawing read a box
+     off an item, or an item's slot off a drag, and threw.  A throw in
+     the drawing was the end of the game. */
+  {
+    const G = ctx.G;
+    ctx.closeInv();
+    G.mode = 'play'; G.menu = null; G.textSel = null; G.sel = null;
+    ctx.openInv();
+    blits = []; fills = []; drawSeq = 0;
+    vm.runInContext('render();', ctx);
+    /* something picked up and being carried across the pack */
+    let held = null, heldRef = null;
+    for (let i = 0; i < ctx.P.slots.length && !held; i++)
+      if (ctx.P.slots[i]) { held = ctx.P.slots[i]; heldRef = { kind: 'slot', i: i }; }
+    if (!held) problems.push('the pack was empty, so nothing could be picked up');
+    else {
+      G.sel = { item: held, ref: heldRef };
+      /* and a drag through the words at the same time */
+      G.textSel = { box: { x: 0, y: 0, w: ctx.SW, h: ctx.SH },
+                    ax: 0, ay: 0, bx: ctx.SW, by: ctx.SH };
+      let broke = null;
+      blits = []; fills = []; drawSeq = 0;
+      try { vm.runInContext('render();', ctx); }
+      catch (e) { broke = e.message; }
+      if (broke) problems.push('carrying a thing and dragging through words at once: ' + broke);
+      /* and the other way about: the drag alone, with the pack drawing */
+      G.sel = null;
+      blits = []; fills = []; drawSeq = 0;
+      try { vm.runInContext('render();', ctx); }
+      catch (e) { problems.push('a drag through words with nothing picked up: ' + e.message); }
+      /* and the pack alone */
+      G.textSel = null; G.sel = { item: held, ref: heldRef };
+      blits = []; fills = []; drawSeq = 0;
+      try { vm.runInContext('render();', ctx); }
+      catch (e) { problems.push('carrying a thing with no drag: ' + e.message); }
+      console.log('two selections       : a thing picked up in the pack and a drag through ' +
+        'the words can both be live at once, and neither reads the other');
+    }
+    G.sel = null; G.textSel = null; ctx.closeInv(); G.mode = 'play';
+  }
+
+  /* --- however you die, the stone comes up ----------------------------
+     Dying takes the keyboard away: every key is swallowed while G.dead
+     is set and the mode is not yet 'dead', which is right - a corpse
+     should not be swinging a sword.  But the only thing that turns
+     'dying' into 'dead' is a line in drawFrame, and drawFrame returns
+     early for a whole list of modes before it ever reaches that line.
+     Die on one of those screens and the mode never moves on: the
+     dungeon goes on being drawn, the man blinks out on every other
+     frame, and not one key does anything ever again.  That is not a
+     death, it is a locked tab. */
+  {
+    const P = ctx.P, G = ctx.G, L = ctx.L;
+    const RealDate = ctx.Date;
+    const startModes = ['play', 'inv', 'note', 'room', 'ctx', 'ask', 'perk',
+                        'look', 'target', 'dir', 'help', 'hint', 'story', 'slots'];
+    const stuck = [];
+    for (const start of startModes) {
+      /* a live run, on that screen, about to take a fatal blow */
+      ctx.closeInv();
+      G.dead = 0; G.deadAt = 0; G.deadFrom = 0; G.note = null; G.roomBox = null;
+      G.ctx = null; G.ask = null; G.perkPick = null; G.levelUp = 0; G.walk = null;
+      G.slots = null; G.hint = null; G.story = null; G.targets = []; G.aim = null;
+      G.msgq = []; G.log = []; G.beat = 0;
+      P.hp = P.mhp = 30;
+      L.corpses.length = 0;
+      G.mode = start;
+      if (start === 'note') G.note = { s: ['x'], i: 0, back: 'play' };
+      if (start === 'room') G.roomBox = { kind: 'mint', at: 0 };
+      if (start === 'ctx') G.ctx = { x: P.x, y: P.y, i: 0, opts: [['cancel', 'Cancel']], px: 0, py: 0 };
+      if (start === 'ask') G.ask = { q: 'Well?', i: 0, job: null };
+      if (start === 'perk') G.perkPick = { lv: 2, offer: [], i: 0, at: 0 };
+      if (start === 'slots') G.slots = { i: 0, from: 'pause' };
+      if (start === 'inv') G.invOpen = 1;
+      const T0 = RealDate.now();
+      ctx.Date = { now: () => T0 };
+      ctx.pauseFrom = ctx.pauseOwed = 0;
+      vm.runInContext("die('a test');", ctx);
+      /* now let a comfortable while go by, drawing all the time */
+      let arrived = 0;
+      for (let n = 1; n <= 200 && !arrived; n++) {
+        ctx.Date = { now: () => T0 + n * 40 };      /* 8 seconds of frames */
+        blits = []; fills = []; drawSeq = 0;
+        try { vm.runInContext('render();', ctx); }
+        catch (e) { stuck.push(start + ' crashed: ' + e.message); break; }
+        if (G.mode === 'dead') arrived = 1;
+      }
+      ctx.Date = RealDate;
+      ctx.pauseFrom = ctx.pauseOwed = 0;
+      if (!arrived && !stuck.some(s => s.startsWith(start)))
+        stuck.push('died on the ' + start + ' screen and the stone never came up (mode ' +
+          G.mode + ', deadAt ' + G.deadAt + ')');
+    }
+    if (stuck.length) for (const s of stuck.slice(0, 6)) problems.push('dying: ' + s);
+    console.log('however you die      : all ' + startModes.length +
+      ' screens you can be looking at when it happens end with the stone up' +
+      (stuck.length ? ' - EXCEPT ' + stuck.length : '') +
+      ', so the keyboard always comes back');
+    ctx.G.dead = 0; ctx.G.mode = 'play'; ctx.G.note = null; ctx.G.roomBox = null;
+    ctx.G.ctx = null; ctx.G.ask = null; ctx.G.perkPick = null; ctx.G.slots = null;
+    ctx.P.hp = ctx.P.mhp;
+    vm.runInContext('newGame(false);', ctx);
+    ctx.G.mode = 'play';
+  }
+
+  /* --- what a message is worth, and the column it is drawn in ---------
+     A line that carries a figure draws it on an indented row of its
+     own, and that row is clipped rather than wrapped - so the rules
+     that compose those figures are measured against FX_MAX_PX, and
+     that number has to be the room the renderer actually leaves. */
+  {
+    const want = ctx.LOG_W - 3;
+    if (ctx.FX_MAX_PX !== want)
+      problems.push('an effect row has ' + want + 'px but the rules compose for ' +
+        ctx.FX_MAX_PX + 'px');
+    console.log('the effect column    : ' + ctx.FX_MAX_PX +
+      'px, which is what the panel actually leaves for one');
   }
 
   /* --- a bolt of lightning is drawn, not stamped ----------------------
@@ -5688,6 +6379,9 @@ setTimeout(() => {
     G.drops = null; G.ret = null; G.shot = null;
     ctx.CAM_AT.x = 0; ctx.CAM_AT.y = 0;
     L.mons.length = 0; L.items.length = 0; L.clouds.length = 0;
+    /* a wall torch nearby would wash its own squares the same way a
+       fire does, and this is measuring the fire's shape alone */
+    L.torches = [];
     P.fireShield = 0; P.hp = P.mhp;
     /* nothing in the way of seeing the room: a blind player sees no
        light at all, and an earlier check may have left him that way */
@@ -5808,6 +6502,17 @@ setTimeout(() => {
       for (const k of Object.keys(got1))
         if (String(got1[k].col).toLowerCase() !== ctx.GLOW_FIRE)
           { glowBad.push('a flame is lighting the room ' + got1[k].col); break; }
+
+      /* a blast still on its way: the stone that causes it is scheduled
+         to land on a beat still to come (t in the future, the same way
+         a thrown stone's G.shot is), and there must be nothing to see
+         until it actually gets there - the fire does not start burning
+         before the thing that lights it has arrived. */
+      L.clouds.length = 0;
+      G.splash = { cells: [[spot.x, spot.y]], t: ctx.nowMs() + 120, kind: 'blast' };
+      frame('glow-blast-early');
+      if (Object.keys(litMap()).length)
+        glowBad.push('a blast lit the room before the stone that causes it had landed');
 
       /* a blast */
       L.clouds.length = 0;

@@ -133,6 +133,16 @@ function freshG() {
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
     cur: { r: 0, c: 0 }, pcur: { r: 0, c: 0 }, sel: null, pouch: null,
+    /* Two different selections, and they used to share the one name.
+       `sel` is the thing you have picked up in the pack and are carrying
+       from one square to another; `textSel` is a drag through the words
+       of a dialog.  Both can be live at once - pick a potion up, then
+       drag across the notes beside it - and whichever was written second
+       left the other one holding a shape it did not understand.  The
+       drawing then read `sel.box` off an item, or `sel.ref` off a drag,
+       and threw; and a throw in the drawing used to be the end of the
+       game.  See loop. */
+    textSel: null,
     menu: null, invMode: 'normal', aim: null, invOpen: 0, splash: null,
     slots: null, hint: null, pan: null, wasDark: 0,
     hs: null, hsBoard: null, hsRead: '',
@@ -476,6 +486,36 @@ function newItem(depth) {
   return it;
 }
 
+/* What a thing is worth, written after its name: what the kind is worth
+   before anybody enchanted it, in brackets, and then whatever has been
+   worked into this particular one.
+
+   The plusses used to sit in front of the name on their own - "+4 chain
+   mail" - which tells you what was added and never what it was added
+   to, so the one figure that decides whether to put the thing on was
+   the one figure you could not see without selecting it and reading the
+   notes.  A base is not a secret either: chain mail protects 5, and
+   knowing that is knowing what chain mail is.
+
+   It goes on the end rather than the front so the article still agrees
+   with the name and a pair of boots is still a pair of boots. */
+function baseStat(it) {
+  var d = itemDef(it);
+  if (!d) return '';
+  if (it.t === 'weapon') return d.d ? (d.d[0] + 'd' + d.d[1]) : '';
+  return isGear(it) ? String(d.a || 0) : '';
+}
+function statBlock(it) {
+  var base = baseStat(it);
+  if (!base) return '';
+  var plus = '';
+  if (numbersKnown(it)) {
+    if (it.t === 'weapon') {
+      if (it.hp || it.dp) plus = ' ' + sgn(it.hp) + ',' + sgn(it.dp);
+    } else if (it.ap) plus = ' ' + sgn(it.ap);
+  }
+  return ' (' + base + ')' + plus;
+}
 function artic(s) { return ('aeiou'.indexOf(s[0]) >= 0 ? 'an ' : 'a ') + s; }
 /* Some things are a pair: boots and sandals are not "a boots". */
 function articPl(s, plural) { return plural ? 'a pair of ' + s : artic(s); }
@@ -549,8 +589,8 @@ function itemName(it) {
         /* You can see there is writing on it, not what it says - and the
            name must not give the game away either. */
         var plain = W.rune ? 'stone' : W.n;
-        s = (n > 1) ? (n + ' ' + plain + 's with strange letters')
-                    : artic(plain + ' with strange letters');
+        s = ((n > 1) ? (n + ' ' + plain + 's with strange letters')
+                     : artic(plain + ' with strange letters')) + statBlock(it);
         break;
       }
       /* Nothing to say about a plain blade: "+0,+0" is just noise.  Once
@@ -564,9 +604,10 @@ function itemName(it) {
          gives you one of them.  Its weight in the hand tells you what it
          is worth and whether it will come off again; what it is called
          and what is worked into it are still its own business. */
+      /* The plusses are no longer a prefix: they go after the name with
+         the base damage they are added to - see statBlock. */
       var curse = (curseKnown(it) && it.cursed) ? 'cursed ' : '';
-      var pfx = curse + ((numbersKnown(it) && (it.hp || it.dp))
-        ? (sgn(it.hp) + ',' + sgn(it.dp) + ' ') : '');
+      var pfx = curse;
       /* a blasting stone is already named for what it does */
       var sfx = (it.brKnown && it.br && !W.rune) ? ' of ' + it.br : '';
       /* A stone is a stone.  There used to be a "normal " here for an
@@ -576,7 +617,8 @@ function itemName(it) {
          unknown" against the other, so the word was only ever making
          "normal arrows" out of arrows. */
       pfx += makeWord(it);
-      s = (n > 1) ? (n + ' ' + pfx + W.n + 's' + sfx) : artic(pfx + W.n + sfx);
+      s = ((n > 1) ? (n + ' ' + pfx + W.n + 's' + sfx) : artic(pfx + W.n + sfx)) +
+          statBlock(it);
       break;
     }
     default: {
@@ -584,15 +626,16 @@ function itemName(it) {
         var A = itemDef(it);
         /* Not yet identified: all you can say is what it looks like. */
         if (hidesItsName(it)) { s = articPl(numsPrefix(it) + looksLike(it), A.pl); break; }
-        var pfx2 = ((curseKnown(it) && it.cursed) ? 'cursed ' : '') +
-                   ((numbersKnown(it) && it.ap) ? (sgn(it.ap) + ' ') : '');
+        var pfx2 = (curseKnown(it) && it.cursed) ? 'cursed ' : '';
         var sfx2 = (it.brKnown && it.br) ? ' of ' + it.br : '';
-        /* The total protection used to be tacked on the end in brackets.
-           It is in the notes under the name already, it meant nothing to
-           anybody who had not worked out what it was, and it made long
-           names longer - which pushed the whole right hand column down
-           a line. */
-        s = articPl(pfx2 + A.n + sfx2, A.pl);
+        /* The TOTAL protection used to be tacked on the end in brackets,
+           and was taken out again because it meant nothing to anybody
+           who had not already worked out what the scale was.  What is
+           there now is the other number: what the kind is worth, and
+           what this one has had added to it, kept apart - "a chain mail
+           (5) +4" - so the notes underneath, which say "protection 9",
+           are the sum of two figures you can both see. */
+        s = articPl(pfx2 + A.n + sfx2, A.pl) + statBlock(it);
       }
     }
   }
@@ -1352,9 +1395,30 @@ function stepCost(x, y) {
 /* Dijkstra, since the squares do not all cost the same.  Returns the
    path from where you are to the square asked for, not including the
    square you are standing on, or null if there is no way. */
+/* Is this a square of the floor at all?  Whole numbers, both of them,
+   inside the map.  Written as one predicate because "off the map" has
+   several different shapes - a row past the bottom, a negative, half a
+   square, a number that is not one - and code that checks for some of
+   them and not the rest is code that has not checked. */
+function onMap(x, y) {
+  return x === (x | 0) && y === (y | 0) &&
+         x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
+}
 function findPath(tx, ty, opts) {
   opts = opts || {};
   if (tx === P.x && ty === P.y) return [];
+  /* There is no way to a square that is not on the floor, and saying so
+     here is what stops this hanging the game.
+
+     The arithmetic below turns a square into an index, and the walk back
+     from the goal trusts that index: it steps from `from` to `from`
+     until it reaches the square you are standing on.  An index off the
+     end of a typed array answers `undefined` to everything, and
+     `undefined` is not the start, and `from[undefined]` is `undefined`
+     again - so the walk back never arrives and never stops, pushing a
+     square onto the path every time round.  That is not a slow frame;
+     it is the tab gone, with no console left to ask why. */
+  if (!onMap(tx, ty) || !onMap(P.x, P.y)) return null;
   var n = MAP_W * MAP_H, dist = new Int32Array(n), from = new Int32Array(n), i;
   for (i = 0; i < n; i++) { dist[i] = 2147483647; from[i] = -1; }
   var start = P.y * MAP_W + P.x, goal = ty * MAP_W + tx;
@@ -1414,8 +1478,17 @@ function findPath(tx, ty, opts) {
     }
   }
   if (dist[goal] === 2147483647) return null;
-  var path = [], at = goal;
-  while (at !== start) { path.push({ x: at % MAP_W, y: (at / MAP_W) | 0 }); at = from[at]; }
+  /* The walk back, with the two things that must stay true written down
+     rather than assumed: every square of it is a real square, and no
+     path is longer than the floor has squares.  Belt as well as braces -
+     the check above already refuses the goals that broke it - because
+     the cost of being wrong here is not a wrong path, it is the tab. */
+  var path = [], at = goal, guard = n;
+  while (at !== start) {
+    path.push({ x: at % MAP_W, y: (at / MAP_W) | 0 });
+    at = from[at];
+    if (!(at >= 0 && at < n) || --guard < 0) return null;
+  }
   path.reverse();
   /* Walking up to something rather than onto it: drop the last square. */
   if (opts.stopShort) path.pop();
@@ -1805,7 +1878,17 @@ function packRun() {
                roomBox: 1,
                box: 1, openBox: 1, sel: 1, menu: 1, aim: 1, throwing: 1, note: 1,
                targets: 1, bolt: 1, shot: 1, splash: 1, ret: 1, drops: 1,
-               bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1,
+               /* A walk in progress is a half-finished turn, and it is
+                  dropped for the same reason every other one is - with
+                  one extra reason of its own.  A walk that was going to
+                  end in a blow holds the creature it is walking at, and
+                  that is a live reference into L.mons: written out it
+                  becomes a detached copy carrying the whole monster
+                  table with it, and read back it is a creature that is
+                  not on the floor.  The autosave runs every other turn,
+                  so it caught them in the middle of one routinely. */
+               walk: 1,
+               bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1, textSel: 1,
                queuePick: 1, pickJob: 1, aimSq: 1, slots: 1, hint: 1, pan: 1,
                hs: 1, hsBoard: 1, hsRead: 1, shake: 1 };
   for (k in G) if (!skip[k]) g[k] = G[k];
@@ -2011,8 +2094,7 @@ function hsFetch(cb) {
      yet, which is the one thing you must not have to guess about. */
   setTimeout(function () { finish(hsLocal(), 'offline'); }, HS_TIMEOUT_MS);
   try {
-    var url = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest');
-    fetch(url,
+    fetch('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest',
       { headers: hsHeaders({ 'X-Bin-Meta': 'false' }) })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) {
@@ -2046,9 +2128,7 @@ function hsSubmit(list, entry, cb) {
     /* the proxy is given the one run and works the table out itself,
        since it is the only one of the two that can be trusted to */
     var body = HS_PROXY ? { name: hsName(entry.name) || '-', xp: entry.xp | 0,
-                            level: entry.level | 0,
-                            depth: (entry.depth !== undefined ? entry.depth : (typeof G !== 'undefined' && G ? G.depth : 1)) | 0,
-                            turns: (entry.turns !== undefined ? entry.turns : (typeof G !== 'undefined' && G ? G.turn : 0)) | 0 } : t;
+                            level: entry.level | 0 } : t;
     fetch(url, {
       method: HS_PROXY ? 'POST' : 'PUT',
       headers: hsHeaders({ 'Content-Type': 'application/json' }),
@@ -2177,6 +2257,49 @@ function msgFight(s, col, fx, fxCol, m) {
 function msgTrap(s, col, fx, fxCol) {
   G.msgq.push({ s: s, c: col || 'w', fx: fx || '', fc: fxCol || '6', trap: 1,
                 at: beatNow() });
+}
+
+/* The same two parts, for something that worked on you rather than
+   something that happened to you: a potion, a spell, a scroll read over
+   your own head.
+
+   "You feel stronger" is a sentence about a feeling, and a flask whose
+   whole worth is a mouthful of water said "this potion tastes extremely
+   dull" and left you none the wiser about whether it had done anything
+   at all.  What it was actually worth goes in the second half, in
+   figures, so a brew is a thing you can judge rather than guess at. */
+function msgGain(s, col, fx, fxCol) {
+  G.msgq.push({ s: s, c: col || 'w', fx: fx || '', fc: fxCol || '6', gain: 1,
+                at: beatNow() });
+}
+/* Food is counted in turns of walking, which is a number nobody has any
+   feel for.  The share of a full stomach it moved is the thing a player
+   can weigh a flask by, so that is what is printed. */
+function hungerFx(before) {
+  var got = P.food - before;
+  if (got <= 0) return 'no help at all';
+  return 'hunger -' + Math.max(1, Math.round(got * 100 / FOOD_MAX)) + '%';
+}
+/* What a draught of healing actually mended.  Read off the two figures
+   afterwards rather than off the roll, because the roll is capped by how
+   hurt you were: drinking one at full health is worth a point of maximum
+   health and nothing else, and saying "+21 health" over that would be a
+   lie the player could see through. */
+function healFx(hpBefore, mhpBefore) {
+  var got = P.hp - hpBefore, more = P.mhp - mhpBefore;
+  /* "hp" rather than "health" for the two-part form only.  The panel is
+     78 pixels wide and the effect line is clipped, not wrapped, so the
+     long word and three figures do not fit together at the health a
+     twentieth level character carries. */
+  if (got > 0 && more > 0) return '+' + got + ' hp, +' + more + ' max';
+  if (got > 0) return '+' + got + ' health';
+  if (more > 0) return '+' + more + ' max health';
+  return 'already whole';
+}
+/* A stat that has gone up, or one that was already as high as it goes. */
+function statFx(name, before, now, cap) {
+  if (now > before) return '+' + (now - before) + ' ' + name + ' (' + now + ')';
+  return name + ' ' + cap + ' max';
 }
 
 /* --------------------------------------------------------- edging
@@ -3442,8 +3565,12 @@ function monStumbles(m) {
   var dex = clamp(14 - (m.ar || 5), 3, 20);
   if (rnd(100) >= stumbleChance(dex, m.flee > 0 || P.scare)) return false;
   m.runSteps = 0;
+  /* No badge on this one.  The sentence says the whole of it, and
+     anything in the second half is the same thing said twice - it read
+     "stumble" against "Witch stumbles." for a while, which is the word
+     printed over again for nothing. */
   if (canSeeMon(m))
-    msgFight(fightLine('', cap(monShort(m)), ' stumbles.'), 'O', 'stumble', 'O', m);
+    msgFight(fightLine('', cap(monShort(m)), ' stumbles.'), 'O', '', 'O', m);
   return true;
 }
 
@@ -3555,6 +3682,15 @@ function flameFrame(x, y) {
      three and four alike, so the row breaks up however many tiles the
      fire is given. */
   return Math.floor(nowMs() / FIRE_ANIM_MS) + x * 7 + y * 5;
+}
+/* Which of its two pictures a wall torch is showing.  Everything about
+   one torch keeps this beat - the picture, the light it throws, the
+   shine of it on water - so that when the flame changes shape the light
+   and the water change with it, which is what makes the reflection read
+   as a reflection.  Math.floor and not |0, for the reason written
+   against flameFrame. */
+function torchFlameFrame(x, y) {
+  return Math.floor(nowMs() / TORCH_FLICKER_MS) + x * 7 + y * 5;
 }
 /* and which tile that count comes out as.  One place, so a fire on the
    floor, a lit fuse and a sheet of conjured flame all burn the same. */
@@ -3684,7 +3820,11 @@ function blazeSeen(x, y) {
   if (L.flags[y * MAP_W + x] & F_VIS) return true;
   return sightClear(P.x, P.y, x, y);
 }
-function glowPut(g, x, y, v, col, vary, phase) {
+/* `src` is the flame this light came from, kept only by the torches.
+   Everything else washes its square in one flat colour; a torch draws a
+   round gradient anchored on its own flame instead, and that needs to
+   know where the flame is - see drawTorchWash. */
+function glowPut(g, x, y, v, col, vary, phase, src) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return;
   if (v <= 0) return;
   var j = y * MAP_W + x;
@@ -3694,7 +3834,7 @@ function glowPut(g, x, y, v, col, vary, phase) {
   if (!blazeSeen(x, y)) return;
   var had = g[j];
   if (had && had.v >= v) return;
-  g[j] = { v: v, col: col, vary: vary, phase: phase };
+  g[j] = { v: v, col: col, vary: vary, phase: phase, src: src || null };
 }
 /* and the pass that deals it, once each, over a finished map */
 function glowShades(g) {
@@ -3767,12 +3907,143 @@ function lampLight(g) {
   glowLamp(g, P.x, P.y, GLOW_LAMP, LAMP_FULL, LAMP_HALF);
   return 1;
 }
+/* A wall torch: the same round pool a lamp throws, but the flame is
+   mounted a little proud of its own wall - see torchOffset - and none
+   of it falls behind that wall, wherever the pool would otherwise have
+   reached. */
+/* The two rings the rest of the game's lights use, and nothing else:
+   full out to a square, half out to three.  Stepped on purpose - this
+   is what decides how bright the square is DRAWN, and every other light
+   in the dungeon steps the same way.  The softness the eye actually
+   reads is put on afterwards, by the wash, which is drawn per pixel
+   rather than per square - see drawTorchWash. */
+function torchFall(d) {
+  if (d <= TORCH_LIGHT_FULL + 0.001) return GLOW_FULL;
+  if (d <= TORCH_LIGHT_HALF + 0.001) return GLOW_HALF;
+  return 0;
+}
+/* Where the flame of a wall torch actually hangs, in squares. */
+function torchFlameAt(x, y, fdir) {
+  var off = torchOffset(fdir);
+  return [x + off[0], y + off[1]];
+}
+/* Which room a torch is lighting: the one it faces into.  A torch is
+   mounted on a wall, and a wall belongs to no room, so the room is the
+   one the square in front of it belongs to. */
+function torchRoom(x, y, fdir) {
+  var fx = x + fdir[0], fy = y + fdir[1];
+  if (fx < 0 || fy < 0 || fx >= MAP_W || fy >= MAP_H) return -1;
+  return L.roomAt[fy * MAP_W + fx];
+}
+/* Can the flame of this torch see that square?  Measured from the square
+   in front of the torch rather than from the torch itself, which is
+   inside a wall - and from the torch's own eye, not from yours.  Light
+   is stopped by what stands between it and the floor it falls on; what
+   stands between you and that floor decides whether you see the floor,
+   which is a different question and already asked elsewhere. */
+function torchSees(x, y, fdir, mx, my) {
+  if (mx === x && my === y) return true;
+  var fx = x + fdir[0], fy = y + fdir[1];
+  if (mx === fx && my === fy) return true;
+  if (fx < 0 || fy < 0 || fx >= MAP_W || fy >= MAP_H) return true;
+  return sightClear(fx, fy, mx, my);
+}
+/* Is the torch burning at all?  A room can be put out after the torches
+   went up in it - a wand of darkness does exactly that - and a bracket
+   on the wall of a room somebody has just snuffed is a bracket, not a
+   light.  Answers the room it lights, or -1 if there is nothing lit. */
+function torchBurning(x, y, fdir) {
+  var ri = torchRoom(x, y, fdir);
+  if (ri < 0) return -1;
+  var r = L.rooms[ri];
+  if (!r || r.gone || r.dark || !r.lit) return -1;
+  return ri;
+}
+/* Is this square part of the room the torch is lighting - its floor, or
+   the wall round the outside of it?  A torch lights the room it is in
+   and nothing else: not the hallway through the doorway beside it, and
+   never the far side of the wall it is nailed to. */
+function torchLightsHere(ri, j) {
+  if (ri < 0) return true;                  /* facing no room: no room to keep to */
+  return L.roomAt[j] === ri || touchesRoom(j, ri);
+}
+function glowTorch(g, x, y, fdir) {
+  var ri = torchBurning(x, y, fdir);
+  if (ri < 0 && torchRoom(x, y, fdir) >= 0) return;   /* the room is out */
+  var flame = torchFlameAt(x, y, fdir), ox = flame[0], oy = flame[1];
+  var dx, dy, r = Math.ceil(TORCH_LIGHT_HALF);
+  /* dealt once for the whole pool: every square of one torch's light
+     flickers on the same beat, because it is one flame.  And the flicker
+     is put on the pool rather than on each square of it - a fifth either
+     way per square is itself a set of visible square edges. */
+  var phase = torchFlameFrame(x, y);
+  var src = { x: ox, y: oy, tx: x, ty: y, k: x + ',' + y };
+  for (dy = -r; dy <= r; dy++) for (dx = -r; dx <= r; dx++) {
+    if (dx * fdir[0] + dy * fdir[1] < 0) continue;      /* behind the wall */
+    var tx = x + dx, ty = y + dy;
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) continue;
+    var d = Math.sqrt((tx - ox) * (tx - ox) + (ty - oy) * (ty - oy));
+    var v = torchFall(d);
+    if (v <= 0) continue;
+    if (!torchLightsHere(ri, ty * MAP_W + tx)) continue;
+    if (!torchSees(x, y, fdir, tx, ty)) continue;
+    glowPut(g, tx, ty, v, GLOW_TORCH, 0, phase, src);
+  }
+}
+/* Every torch near enough to matter.  A torch on the far side of the
+   floor can light nothing you are being shown - torchlight is never a
+   reason to see a square, only a thing laid over one you can already
+   see - so the far ones are not worth the line of sight each of their
+   squares would cost. */
+function torchLight(g) {
+  var i, list = L && L.torches, lit = 0;
+  if (!list) return 0;
+  for (i = 0; i < list.length; i++) {
+    var t = list[i];
+    if (Math.abs(t.x - P.x) > TORCH_CULL || Math.abs(t.y - P.y) > TORCH_CULL) continue;
+    glowTorch(g, t.x, t.y, t.dir);
+    lit++;
+  }
+  return lit > 0;
+}
+/* How brightly the torches are lighting a square of water, on AG's own
+   curve: quadratic rather than the wash's straight ramp, so the shine
+   stays close about the flame instead of spreading flatly over the whole
+   pool, and dealt the flame's own flicker square by square so the
+   surface moves. */
+function waterTorchLight(mx, my) {
+  var list = L && L.torches, best = 0, i;
+  if (!list) return 0;
+  for (i = 0; i < list.length; i++) {
+    var t = list[i], fdir = t.dir;
+    if (Math.abs(t.x - mx) > WATER_SHINE_REACH ||
+        Math.abs(t.y - my) > WATER_SHINE_REACH) continue;
+    if ((mx - t.x) * fdir[0] + (my - t.y) * fdir[1] < 0) continue;
+    var wri = torchBurning(t.x, t.y, fdir);
+    if (wri < 0 && torchRoom(t.x, t.y, fdir) >= 0) continue;   /* room is out */
+    if (!torchLightsHere(wri, my * MAP_W + mx)) continue;
+    var flame = torchFlameAt(t.x, t.y, fdir);
+    var dx = mx - flame[0], dy = my - flame[1];
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d >= WATER_SHINE_REACH) continue;
+    if (!torchSees(t.x, t.y, fdir, mx, my)) continue;
+    var ratio = 1 - d / WATER_SHINE_REACH;
+    /* Dealt on the torch's own beat, so the ripples brighten and dim
+       with the flame you can see rather than with a clock of their own,
+       and dealt per square of water so the surface shimmers rather than
+       the whole pool pulsing as one sheet. */
+    var v = ratio * ratio *
+            glowVary(mx, my, WATER_SHINE_VARY, torchFlameFrame(t.x, t.y));
+    if (v > best) best = v;
+  }
+  return best;
+}
 /* Everything alight or crackling this instant.
 
    `standing` asks only for the lasting sort - a fire burning on the
    floor, a sheet of conjured flame, a creature alight, the lamp you are
-   carrying.  Those are lights the dungeon has, so they decide what you
-   can see and what goes on your map.
+   carrying, a torch mounted on a wall.  Those are lights the dungeon
+   has, so they decide what you can see and what goes on your map.
 
    Everything else here is a flash: a bolt of lightning, a sheet of flame
    out of a wand, the instant a barrel goes up.  They light what they
@@ -3780,9 +4051,13 @@ function lampLight(g) {
    leave nothing behind on your map - a corridor lit by lightning is a
    corridor you glimpsed, not a corridor you have walked.
 
-   A flash is counted from the moment it is queued rather than from the
-   moment it starts to draw: a turn is worked out ahead of its playback,
-   so the blast that is about to be seen is already in the world. */
+   A flash is queued for a beat that may still be ahead of the clock - a
+   turn is worked out in one go and played back over the beats that
+   follow, so a blast a stone has not reached yet, or a beam a wand has
+   not fired yet, is already in the world's bookkeeping before it is
+   anything you should see.  It has to wait for its own beat exactly like
+   the sprite that draws it, or the flash of it lights the room before
+   the stone that causes it has landed. */
 function lightMap(standing) {
   var g = {}, i, k;
   if (!L || !L.tiles || typeof P === 'undefined' || !P) return g;
@@ -3805,10 +4080,13 @@ function lightMap(standing) {
     if (L.mons[i].burn > 0) glowFlame(g, L.mons[i].x, L.mons[i].y, GLOW_FIRE);
   /* and whatever you are carrying that glows */
   lampLight(g);
+  /* and whatever is mounted on the walls around you */
+  torchLight(g);
   if (standing) return glowShades(g);
 
   /* ------------------------------------------------------- the flashes */
-  if (G.splash && G.splash.kind === 'blast' && nowMs() <= G.splash.t + BLAST_FLASH_MS)
+  if (G.splash && G.splash.kind === 'blast' &&
+      nowMs() >= G.splash.t && nowMs() <= G.splash.t + BLAST_FLASH_MS)
     for (i = 0; i < G.splash.cells.length; i++) {
       if (G.splash.big) glowBoom(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
       else glowBlast(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
@@ -3817,7 +4095,7 @@ function lightMap(standing) {
      of flame, either way half the light of a fire that is really
      burning, and gone the instant the beam is. */
   if (G.bolt && G.bolt.path && beamDrawn(G.bolt.kind) &&
-      nowMs() <= G.bolt.t + beamLife(G.bolt.kind))
+      nowMs() >= G.bolt.t && nowMs() <= G.bolt.t + beamLife(G.bolt.kind))
     for (i = 0; i < G.bolt.path.length; i++)
       glowFlame(g, G.bolt.path[i][0], G.bolt.path[i][1],
         G.bolt.kind === 'lightning' ? GLOW_BOLT : GLOW_FIRE, GLOW_BEAM,
@@ -3826,7 +4104,8 @@ function lightMap(standing) {
      not reached yet is dark water, and a square blinked off this beat
      throws no light either.  Light that stayed on while the spark it
      came from was not there is a lamp with nothing in it. */
-  if (G.splash && G.splash.kind === 'zap' && nowMs() <= G.splash.t + shockLife(G.splash))
+  if (G.splash && G.splash.kind === 'zap' &&
+      nowMs() >= G.splash.t && nowMs() <= G.splash.t + shockLife(G.splash))
     for (i = 0; i < G.splash.cells.length; i++) {
       if (!shockLit(G.splash, i, nowMs())) continue;
       glowFlame(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BOLT, GLOW_BEAM,
@@ -3907,9 +4186,19 @@ function computeVis() {
      far off that is and however dark the room it is in.  This is the
      whole difference between a dungeon where a fire at the end of a
      black hall is a fire at the end of a black hall, and one where it is
-     nothing at all until you have walked up to it. */
+     nothing at all until you have walked up to it.
+
+     A torch is not this.  It is only ever mounted in a room already
+     lit, so it never has darkness of its own to show you - and it would
+     be a strange thing for it to show you somebody else's: a whole
+     level's worth of wall torches, each visible down any corridor with
+     a clear line to it however far off, would light doorways and dead
+     ends nowhere near what the floor in front of you shows.  A fire
+     earns that reach by being a thing that is not supposed to be there;
+     a torch is furniture. */
   var lit = lightMap(1), lk;
   for (lk in lit) {
+    if (lit[lk].col === GLOW_TORCH) continue;
     var li = lk | 0;
     if (F[li] & F_VIS) continue;
     var lx = li % W, ly = (li / W) | 0;
@@ -4267,6 +4556,11 @@ function enterLevel(depth, how) {
   tidyMossEdges(L);
   /* last of all, with nothing else left to move the stone about */
   sealRock(L);
+  /* And only now the torches: everything above can take a wall away, add
+     one, or turn one into a doorway, and a torch mounted before any of
+     that had happened could end up hanging in mid-air, or over a door
+     that did not exist yet when it went up. */
+  placeWallTorches(L);
 
   if (hasPerk('antiquary')) P.freeIdent = 1;
 
@@ -4674,17 +4968,41 @@ function checkLevelUp() {
   }
 }
 
+/* The instant the last of the dead has finished blinking and gone.
+
+   Asked of the corpses themselves rather than of the list being empty,
+   and the difference matters: the list is only ever pruned while the
+   map is being drawn, and the boxes that ask this question are put up
+   between turns, when a corpse scheduled for a beat that has not
+   arrived yet is sitting in the list looking exactly like one that has
+   already been and gone.  Every corpse carries the beat it appears on,
+   so the answer is simply the last of them plus its blink. */
+function corpsesDoneAt() {
+  var at = 0, i;
+  if (!L || !L.corpses) return 0;
+  for (i = 0; i < L.corpses.length; i++) {
+    var end = L.corpses[i].t + CORPSE_MS;
+    if (end > at) at = end;
+  }
+  return at;
+}
 /* Is the fighting over, and has the dust settled?
 
    A level comes of age on the blow that kills something, and the screen
    used to open on that instant - over the corpse still blinking, with
    the killing line not yet printed and whatever else was in the room
-   still coming for you.  It waits now: nothing hostile in sight, and a
-   moment after the last blow. */
+   still coming for you.  It waits now: nothing hostile in sight, a
+   moment after the last blow, and not until the thing you killed to
+   earn it has finished dying.  That last one is the whole point of the
+   pause and was the one thing it did not wait for: PERK_PAUSE is
+   shorter than a corpse's blink, so the box for coming of age - which
+   is levels two and four, the first two anybody sees - opened over a
+   creature still flashing on the square in front of them. */
 function perkReady() {
   var job = G.perkPick;
   if (!job) return false;
   if (nowMs() < (job.at || 0)) return false;
+  if (nowMs() < corpsesDoneAt()) return false;
   if (battleFoes().length) return false;
   return true;
 }
@@ -7010,6 +7328,10 @@ function lightTheRoom(inRoom, inCorridor) {
     var fk = lr.floors[q][1] * MAP_W + lr.floors[q][0];
     if (L.darkHall) delete L.darkHall[fk];
   }
+  /* A room lit by magic gets the torches a room lit from the start would
+     have had - it was always going to have walls, and now it is lit
+     ones instead of dark ones. */
+  placeRoomTorches(L, lr);
   /* The spill lives in these two maps, so rebuilding them without running
      it again rubs out every opening on the floor that light was coming
      through. */
@@ -7250,7 +7572,9 @@ function escapeIfStranded() {
   if (goal === null) return 0;
   var cur = goal, dug = 0;
   while (cur !== undefined && cur !== P.y * MAP_W + P.x) {
-    if (T[cur] === ROCK || T[cur] === WALL || T[cur] === SDOOR) { T[cur] = CORR; dug++; }
+    if (T[cur] === ROCK || T[cur] === WALL || T[cur] === SDOOR) {
+      T[cur] = CORR; removeTorchAt(L, cur); dug++;
+    }
     cur = from[cur];
   }
   buildCorridorWalls(L);

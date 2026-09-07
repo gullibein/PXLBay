@@ -613,6 +613,18 @@ function trapCensus(){
   }
   return {open:open, hidden:hidden, kinds:Object.keys(kinds).length};
 }
+/* Every trap on the floor: never on a rug, and never sitting under bones,
+   moss or rubble - the square underneath it should be clear the moment
+   it is placed. */
+function trapDecorOK(){
+  var bad=[], i;
+  for(i=0;i<L.traps.length;i++){
+    var tr=L.traps[i], j=tr.y*MAP_W+tr.x, d=L.decor[j];
+    if(isRugName(d)) bad.push('a trap is lying on a rug at '+tr.x+','+tr.y);
+    else if(clearsForTrap(d)) bad.push('a trap still has '+d+' under it at '+tr.x+','+tr.y);
+  }
+  return bad;
+}
 /* a one-shot trap must never fire twice */
 function trapSpendOK(){
   var bad=[], i;
@@ -1435,6 +1447,340 @@ function mossSidesReport(){
     counts[n] = (counts[n] || 0) + 1;
   }
   return counts;
+}
+/* ------------------------------------------- nothing half-finished
+   A save is taken between turns, and everything half-open is left out
+   of it on purpose.  A walk in progress is half a turn like any other -
+   and it carries one thing none of the rest do: the creature it is
+   walking at, which is a live entry of L.mons.  Written out, that
+   becomes a detached copy with the whole monster table hanging off it;
+   read back, it is a creature standing on no floor.  The autosave runs
+   every other turn, so it caught walks in the middle routinely. */
+function saveDropsHalfTurnsOK(){
+  var bad=[];
+  bootTest(52100);
+  L.mons.length=0;
+  var m=mkMonster('K',3,P.x+3,P.y); L.mons.push(m);
+  G.walk={ path:[{x:P.x+1,y:P.y}], at:0, job:{foe:m}, hp:P.hp, hunger:0, known:[m] };
+  var raw=JSON.stringify(packRun());
+  var back=JSON.parse(raw);
+  if(back.g.walk) bad.push('a walk in progress was written into the save');
+  if(raw.indexOf('"def"')>=0) bad.push('the save carries a monster definition table');
+  /* and the run still loads, standing still */
+  unpackRun(back);
+  if(G.walk) bad.push('a run came back with a walk still under way');
+  bootTest(52101);
+  return { bad:bad, bytes:raw.length };
+}
+/* How wide a line is in the game's own font.  The same sum textW does,
+   worked out from the atlas rather than from the renderer, which the
+   rules suite does not load. */
+function fxPx(s){
+  var F=ATLAS.font, w=0, i, c;
+  for(i=0;i<String(s).length;i++){
+    c=String(s).charCodeAt(i)-F.first;
+    if(c>=0&&c<F.count) w+=F.widths?F.widths[c]:F.cw;
+  }
+  return w;
+}
+/* ------------------------------------------- what the flask actually did
+   A potion has to say what it was worth in figures.  "This potion tastes
+   extremely dull" is a sentence about a flavour: the flask of thirst
+   quenching does nothing whatever except take the edge off your hunger,
+   and a player who drank one had no way at all of telling it from a
+   flask that did nothing.  So every brew that goes down leaves a line
+   with a measurement beside it - and the measurement has to fit the
+   column it is drawn in, which is narrow and clips rather than wraps. */
+function potionEffectSaidOK(seeds){
+  var bad=[], k, t, tried=0, tags={}, widest=0, widestS='';
+  for(k=0;k<POTIONS.length;k++){
+    var n=POTIONS[k].n;
+    /* the one flask that will not go down at all: there is no effect to
+       report because nothing was drunk */
+    if(n==='slime') continue;
+    var saidOnce=0;
+    for(t=0;t<(seeds||8);t++){
+      bootTest(31500+k*31+t);
+      L.mons.length=0; G.dead=0; G.msgq=[]; G.beat=0;
+      /* hurt, hungry, and worn down, so that every brew has something to
+         do and nothing reports "you were already whole" */
+      P.mhp=40; P.hp=12; P.food=600;
+      P.str=12; P.mstr=18; P.dex=10; P.mdex=16; P.wis=10; P.mwis=16;
+      P.blind=0; P.conf=0; P.hallu=0; P.haste=0; P.seeinv=0;
+      var it=mkItem('potion',k); addItem(it);
+      quaff(it);
+      tried++;
+      var fx='';
+      for(var i=0;i<G.msgq.length;i++) if(G.msgq[i].fx) fx=G.msgq[i].fx;
+      if(fx){
+        saidOnce=1;
+        tags[fx]=1;
+        if(fxPx(fx)>FX_MAX_PX)
+          bad.push('"'+fx+'" is '+fxPx(fx)+'px in a '+FX_MAX_PX+'px column');
+        if(fxPx(fx)>widest){ widest=fxPx(fx); widestS=fx; }
+      }
+    }
+    if(!saidOnce) bad.push('a potion of '+n+' never said what it did');
+  }
+  return { bad:bad, tried:tried, tags:Object.keys(tags).length,
+           widest:widest, widestS:widestS };
+}
+/* And the two whose whole worth is the mouthful say so as a share of a
+   full stomach, which is a figure anybody can weigh a flask by - food is
+   counted in turns of walking, which is not. */
+function thirstSaysHungerOK(){
+  var bad=[], i, k, want=['thirst quenching','water','nourishment'];
+  for(k=0;k<want.length;k++){
+    var idx=-1;
+    for(i=0;i<POTIONS.length;i++) if(POTIONS[i].n===want[k]) idx=i;
+    if(idx<0){ bad.push('there is no potion of '+want[k]); continue; }
+    bootTest(31900+k);
+    L.mons.length=0; G.dead=0; G.msgq=[]; G.beat=0;
+    P.food=600; P.hp=P.mhp=40;
+    var it=mkItem('potion',idx); addItem(it);
+    var before=P.food;
+    quaff(it);
+    var fx='';
+    for(i=0;i<G.msgq.length;i++) if(G.msgq[i].fx) fx=G.msgq[i].fx;
+    if(fx.indexOf('hunger')<0)
+      bad.push('a potion of '+want[k]+' said "'+fx+'" rather than what it did for your hunger');
+    /* and the figure is the real one, not a fixed word */
+    var pct=Math.max(1,Math.round((P.food-before)*100/FOOD_MAX));
+    if(fx.indexOf(String(pct))<0)
+      bad.push('a potion of '+want[k]+' moved the meter '+pct+'% and said "'+fx+'"');
+  }
+  return { bad:bad };
+}
+/* --------------------------------------------- said once, not twice
+   A message may carry a second half saying what the first half was
+   worth, and a stumble has nothing to put there: the sentence is the
+   whole of it.  It carried the word "stumble" for a while, against
+   "Witch stumbles.", which is the same word printed over again. */
+function stumbleSaysCostOK(){
+  var bad=[], i, said=null;
+  bootTest(32100);
+  L.mons.length=0; P.hp=P.mhp=900; G.dead=0;
+  var m=mkMonster('K',3,P.x+1,P.y);
+  m.hp=m.mhp=900; m.state=2; m.flee=9; m.runSteps=9; m.ar=12; m.bolted=0;
+  L.mons.push(m);
+  L.flags[m.y*MAP_W+m.x]|=F_VIS|F_SEEN;
+  /* it stumbles when the roll says so, so roll until it does */
+  for(i=0;i<400 && !said;i++){
+    G.msgq=[]; m.runSteps=9; m.flee=9;
+    if(monStumbles(m)) said=G.msgq[G.msgq.length-1];
+  }
+  if(!said) return { bad:['nothing ever stumbled'], fx:'' };
+  if(said.fx)
+    bad.push('"'+said.s+'" is tagged "'+said.fx+'", and a stumble has nothing to add');
+  return { bad:bad, line:said.s, fx:said.fx||'' };
+}
+/* --------------------------------------- no promises about a throw
+   A spear was indestructible once and the note under it said so, long
+   after every landing had started rolling against it.  Nothing is said
+   about throwing one now, so the one thing to hold onto is that the
+   pack never promises the thing back. */
+function hurlNoteHonestOK(){
+  var bad=[], i, k, checked=0;
+  bootTest(32200);
+  for(k=0;k<WEAPONS.length;k++){
+    if(!WEAPONS[k].hurl) continue;
+    var it=mkItem('weapon',k); it.known=1;
+    var notes=itemNotes(it), joined=[];
+    for(i=0;i<notes.length;i++) joined.push(notes[i][0]);
+    var text=joined.join(' | ');
+    checked++;
+    if(/never lost|always comes back|cannot be lost/i.test(text))
+      bad.push(WEAPONS[k].n+' promises it comes back: "'+text+'"');
+    /* nor does it hold forth about workmanship.  The name says "well
+       made" or "worn" and that is the whole of what is said about it. */
+    var mk=mkItem('weapon',k); mk.known=1; mk.make=1;
+    var wm=itemNotes(mk).map(function(r){return r[0];}).join(' | ');
+    mk.make=-1;
+    var wn=itemNotes(mk).map(function(r){return r[0];}).join(' | ');
+    if(/well made|first break|worn/i.test(wm+' | '+wn))
+      bad.push(WEAPONS[k].n+' explains its workmanship: "'+wm+'" / "'+wn+'"');
+  }
+  if(!checked) bad.push('there is nothing you can wield and throw');
+  return { bad:bad, checked:checked };
+}
+/* ------------------------------------------------ what a thing is worth
+   The plusses used to sit in front of a name on their own - "+4 chain
+   mail" - which says what was added and never what it was added to, so
+   the one figure that decides whether to put a thing on was the one
+   figure the name would not show you. */
+function baseStatShownOK(){
+  var bad=[], k, i, checked=0;
+  bootTest(32300);
+  for(k=0;k<ARMORS.length;k++){
+    var a=mkItem('armor',k); a.known=1; a.ap=4;
+    var s=itemName(a), base=ARMORS[k].a||0;
+    checked++;
+    if(s.indexOf('('+base+')')<0)
+      bad.push('"'+s+'" does not show that '+ARMORS[k].n+' is worth '+base);
+    if(s.indexOf('+4')<0) bad.push('"'+s+'" lost its enchantment');
+    /* and the notes under it are the sum of the two figures the name shows */
+    var notes=itemNotes(a), prot=null;
+    for(i=0;i<notes.length;i++){
+      var mm=/^protection (-?\d+)$/.exec(notes[i][0]);
+      if(mm) prot=parseInt(mm[1],10);
+    }
+    if(prot===null) bad.push('"'+s+'" has no protection line');
+    else if(prot!==base+4)
+      bad.push('"'+s+'" shows '+base+' and +4 but its notes say protection '+prot);
+  }
+  for(k=0;k<WEAPONS.length;k++){
+    var w=mkItem('weapon',k); w.known=1; w.hp=1; w.dp=2;
+    var ws=itemName(w), d=WEAPONS[k].d;
+    if(!d) continue;
+    checked++;
+    if(ws.indexOf('('+d[0]+'d'+d[1]+')')<0)
+      bad.push('"'+ws+'" does not show that a '+WEAPONS[k].n+' does '+d[0]+'d'+d[1]);
+  }
+  /* what you have not identified keeps its secrets: a thing you cannot
+     put a name to has no base to show either */
+  var un=mkItem('armor',0); un.known=0;
+  if(kindKnown(un)===false && /\(\d/.test(itemName(un)))
+    bad.push('"'+itemName(un)+'" shows figures for a thing you cannot name');
+  return { bad:bad, checked:checked };
+}
+/* Wall torches: each one on a stone wall of a room that is lit and not
+   dark, at least 5 squares (corner to corner) from any other torch on
+   the level, never more than two on a 2x2 pillar of wall, and never on
+   the wall right above or below a door. */
+function torchesOK(){
+  var bad = [], out = { torches: 0 }, list = L.torches || [], i, k;
+  for (i = 0; i < list.length; i++) {
+    var t = list[i], j = t.y * MAP_W + t.x;
+    out.torches++;
+    if (L.tiles[j] !== WALL) bad.push('a torch at ' + t.x + ',' + t.y + ' is not on a wall');
+    if (L.decor[j] !== 'torch') bad.push('a torch at ' + t.x + ',' + t.y + ' has no matching decor');
+    if (!L.decorFacing || !L.decorFacing[j])
+      bad.push('a torch at ' + t.x + ',' + t.y + ' has no facing on record');
+    /* the floor it faces is what it lights, and what has to be lit for
+       it to be standing there at all */
+    var fx = t.x + t.dir[0], fy = t.y + t.dir[1];
+    var ri = (fx >= 0 && fy >= 0 && fx < MAP_W && fy < MAP_H) ? L.roomAt[fy * MAP_W + fx] : -1;
+    var r = ri >= 0 ? L.rooms[ri] : null;
+    if (!r) bad.push('a torch at ' + t.x + ',' + t.y + ' faces no room at all');
+    else {
+      if (!r.lit || r.dark) bad.push('a torch at ' + t.x + ',' + t.y + ' lights a room that is not lit');
+      if (r.special === 'moss') bad.push('a torch at ' + t.x + ',' + t.y + ' stands in a moss cave');
+    }
+    var nt = L.tiles[j - MAP_W], st = L.tiles[j + MAP_W];
+    if (nt === DOOR || nt === SDOOR || nt === LOCKED ||
+        st === DOOR || st === SDOOR || st === LOCKED)
+      bad.push('a torch at ' + t.x + ',' + t.y + ' hangs right over a door');
+    for (k = i + 1; k < list.length; k++) {
+      var u = list[k], dist = Math.max(Math.abs(t.x - u.x), Math.abs(t.y - u.y));
+      if (dist < 5)
+        bad.push('two torches stand ' + dist + ' apart, at ' + t.x + ',' + t.y +
+          ' and ' + u.x + ',' + u.y);
+    }
+  }
+  var pillars = {};
+  for (i = 0; i < list.length; i++) {
+    var t2 = list[i], ox, oy;
+    for (ox = -1; ox <= 0; ox++) for (oy = -1; oy <= 0; oy++) {
+      var px0 = t2.x + ox, py0 = t2.y + oy, solid = 1, dx, dy;
+      for (dy = 0; dy < 2 && solid; dy++) for (dx = 0; dx < 2; dx++) {
+        var wx = px0 + dx, wy = py0 + dy;
+        if (wx < 0 || wy < 0 || wx >= MAP_W || wy >= MAP_H || L.tiles[wy * MAP_W + wx] !== WALL)
+          { solid = 0; break; }
+      }
+      if (solid) pillars[px0 + ',' + py0] = (pillars[px0 + ',' + py0] || 0) + 1;
+    }
+  }
+  for (k in pillars) if (pillars[k] > 2) bad.push('a pillar at ' + k + ' carries ' + pillars[k] + ' torches');
+  return { bad: bad, out: out };
+}
+/* ------------------------------------------- the shape of torchlight
+   Three pools, one inside the next - full to a square, half to three,
+   and a faint wash out to four - with a soft shoulder on each rim so
+   the light does not step from one ring to the next between two
+   touching squares.  Measured out along the way the torch faces. */
+function torchLightShapeOK(){
+  var bad=[], i, s, spot=null;
+  /* somewhere with five clear squares in a row to measure along */
+  for(s=0;s<60 && !spot;s++){
+    bootTest(53200+s);
+    for(i=0;i<L.tiles.length && !spot;i++){
+      var x=i%MAP_W, y=(i/MAP_W)|0, ok=1, k;
+      if(L.tiles[i]!==WALL) continue;
+      for(k=1;k<=6;k++){
+        if(!walkable(x,y+k)||inWater(x,y+k)||L.decor[(y+k)*MAP_W+x]){ ok=0; break; }
+      }
+      if(ok) spot={x:x,y:y};
+    }
+  }
+  if(!spot) return { bad:['nowhere with a wall and six clear squares below it'], v:[] };
+  L.mons.length=0; L.clouds.length=0; L.temp={};
+  P.blind=0; P.hp=P.mhp=900;
+  P.x=spot.x; P.y=spot.y+1;
+  for(i=0;i<N_SLOTS;i++) P.slots[i]=null;
+  P.eq.body=null; P.eq.rh=null; P.eq.lh=null; P.eq.head=null; P.eq.feet=null;
+  /* one torch, on that wall, facing down the row */
+  L.torches=[{x:spot.x,y:spot.y,dir:[0,1]}];
+  L.decor[spot.y*MAP_W+spot.x]='torch';
+  if(!L.decorFacing) L.decorFacing={};
+  L.decorFacing[spot.y*MAP_W+spot.x]=[0,1];
+  computeVis();
+  var lit=lightMap(1), v=[];
+  for(i=0;i<=6;i++){
+    var e=lit[(spot.y+i)*MAP_W+spot.x];
+    v.push(e?e.v:0);
+  }
+  /* The two rings the rest of the game's lights use, and nothing else.
+     No flicker is dealt into these any more - the pool flickers as one
+     flame, in the wash - so these are exact. */
+  if(v[1]!==GLOW_FULL) bad.push('the square at the torch reads '+v[1]+', not full');
+  if(v[2]!==GLOW_HALF) bad.push('two squares out reads '+v[2]+', not half');
+  if(v[3]!==GLOW_HALF) bad.push('three squares out reads '+v[3]+', not half');
+  if(v[4]!==0) bad.push('the light still reaches four squares out ('+v[4]+')');
+  /* And it keeps to its own room: nothing behind the wall it hangs on,
+     and nothing out through the door either. */
+  var ri = torchRoom(spot.x, spot.y, [0,1]), stray = 0, i2;
+  for(i2=0;i2<L.tiles.length;i2++){
+    var e2 = lit[i2];
+    if(!e2 || e2.col !== GLOW_TORCH) continue;
+    if(!(L.roomAt[i2] === ri || touchesRoom(i2, ri))) stray++;
+  }
+  if(stray) bad.push(stray+' squares outside the room were lit by its torch');
+  /* and a room put out takes its torches with it */
+  var r2 = L.rooms[ri];
+  if(r2){
+    var wasLit = r2.lit, wasDark = r2.dark;
+    r2.lit = 0; r2.dark = 1;
+    var outMap = lightMap(1), still = 0, k2;
+    for(k2 in outMap) if(outMap[k2].col === GLOW_TORCH) still++;
+    r2.lit = wasLit; r2.dark = wasDark;
+    if(still) bad.push('a room that was put out still had '+still+' squares of torchlight');
+  }
+  var soft = 0;
+  return { bad:bad, v:v, soft:soft };
+}
+/* Blow the wall out from under a torch and the torch goes with it - not
+   left on the level's own list, still throwing light from a bracket
+   that is lying in the rubble now. */
+function torchOutlivesItsWallOK(seeds){
+  var bad = [], found = 0, s, i;
+  for (s = 0; s < (seeds || 60) && found < 8; s++) {
+    bootTest(83100 + s);
+    var list = L.torches || [];
+    if (!list.length) continue;
+    var t = list[0];
+    found++;
+    L.mons.length = 0; P.hp = P.mhp = 900; G.dead = 0; G.msgq = [];
+    dynamiteAt(t.x, t.y);
+    if (isTorch(L.decor[t.y * MAP_W + t.x]))
+      bad.push('a blasted wall at ' + t.x + ',' + t.y + ' still shows a torch');
+    for (i = 0; i < (L.torches || []).length; i++)
+      if (L.torches[i].x === t.x && L.torches[i].y === t.y)
+        bad.push('the torch at ' + t.x + ',' + t.y + ' is still on the level\'s own list');
+    if (L.tiles[t.y * MAP_W + t.x] === WALL)
+      bad.push('the wall the torch was on at ' + t.x + ',' + t.y + ' did not come down');
+  }
+  if (!found) bad.push('never found a torch to blast');
+  return { bad: bad, found: found };
 }
 /* A thrown thing that lands where another of its kind is lying joins it
    rather than disappearing. */
@@ -2408,13 +2754,21 @@ function layoutOK(seeds){
       for(i=0;i<L.tiles.length;i++){
         if(L.tiles[i]!==SDOOR) continue;
         panel=1;
-        var x=i%MAP_W, y=(i/MAP_W)|0, outer=-1, inner=-1;
+        /* A shortcut panel (see secretsAtDeadEnds) sits between two
+           squares that are BOTH already reachable without opening it -
+           the dead-end tip behind it and the already-reachable square
+           the shortcut leads to ahead of it.  That is two candidate
+           "outer" sides, not one, and which of them is the real
+           approach - the tip a hint is written for - has to be decided
+           by checking every reachable neighbour, not by keeping
+           whichever happened to be looked at last. */
+        var x=i%MAP_W, y=(i/MAP_W)|0, outers=[], inner=-1;
         for(q=0;q<4;q++){
           var j=(y+DIR4[q][1])*MAP_W+(x+DIR4[q][0]), t=L.tiles[j];
           if(t!==FLOOR && t!==CORR) continue;
-          if(seen[j]) outer=j; else inner=j;
+          if(seen[j]) outers.push(j); else inner=j;
         }
-        if(outer<0) continue;
+        if(!outers.length) continue;
         got=1;
         /* Where the panel is matters, and there are two quite different
            places it can be.  A panel in the MIDDLE of a tunnel wall is
@@ -2423,14 +2777,19 @@ function layoutOK(seeds){
            the blank END of a dead end is the opposite: a corridor
            somebody cut that arrives nowhere is the one place in a
            dungeon where a wall is itself a question, and a hint tells
-           you so. */
-        if(L.tiles[outer]!==CORR) fromRoom++;
-        else {
+           you so.  Only if none of its reachable sides is a room or a
+           tip is landing in the middle of a hallway the real story. */
+        var verdict=null;
+        for(var oi=0; oi<outers.length && !verdict; oi++){
+          var outer=outers[oi];
+          if(L.tiles[outer]!==CORR){ verdict='room'; break; }
           var ox=outer%MAP_W, oy=(outer/MAP_W)|0;
           var tp=deadEndTip(L, outer);
-          if(tp && ox+tp.dx===x && oy+tp.dy===y) fromTip++;
-          else fromHall++;
+          if(tp && ox+tp.dx===x && oy+tp.dy===y) verdict='tip';
         }
+        if(verdict==='room') fromRoom++;
+        else if(verdict==='tip') fromTip++;
+        else fromHall++;
         if(inner>=0){ var rid=L.roomAt[inner];
           behind.push(rid>=0?L.rooms[rid].floors.length:1); }
       }
@@ -2595,6 +2954,45 @@ function returnUsesOK(){
   if(flights2 !== RETURN_USES*2 - 1)
     bad.push('a charged stone came home '+flights2+' times, wanted '+(RETURN_USES*2-1));
   return { plain:flights, charged:flights2, bad:bad };
+}
+
+/* The throw above never lets the target die, so it never touches the
+   path a killing throw takes.  A returning stone that finishes its
+   target off has to come home the same as one that only wounds it: it
+   should still name itself and still count that flight against its
+   total, not sit there looking freshly cut forever. */
+function returnKillOK(){
+  var bad=[], i, held=carriedItems(), j;
+  bootTest(9210);
+  P.hp=P.mhp=9000; P.lv=1;
+  for(j=0;j<held.length;j++)
+    if(held[j].t==='weapon' && WEAPONS[held[j].k].grp) removeItem(held[j], held[j].cnt);
+  var st=mkItem('weapon', weaponIndex('returning stone'));
+  st.cnt=1; st.known=0; addItem(st);
+
+  var m=mkMonster('K',1,P.x+2,P.y);
+  m.state=0; m.surprised=1; m.disguise=0; m.hp=m.mhp=1;
+  L.mons.length=0; L.mons.push(m);
+
+  var killed=false;
+  for(i=0;i<15 && !killed;i++){
+    G.throwing=st; G.msgq=[]; G.beat=0;
+    fireAt(m);
+    if(L.mons.indexOf(m) < 0) killed=true;
+  }
+  if(!killed){ bad.push('could not land a single hit in 15 throws to test a kill'); return bad; }
+
+  var again=null, held2=carriedItems();
+  for(j=0;j<held2.length;j++)
+    if(held2[j].t==='weapon' && WEAPONS[held2[j].k].rune==='return') again=held2[j];
+
+  if(!again) bad.push('a returning stone that kills its target does not come back at all');
+  else {
+    if(!again.known) bad.push('a returning stone that kills its target is never identified');
+    if(again.ret === undefined || again.ret >= RETURN_USES)
+      bad.push('a returning stone that kills its target does not count the flight down (ret=' + again.ret + ')');
+  }
+  return bad;
 }
 
 /* Thunder Charge: every third blow, the squares around you - and the
@@ -12496,9 +12894,11 @@ function puddlesOK(seeds){
 /* -------------------------------------------------- something to eat
    Two halves to this.  Every flask is liquid, so drinking anything at
    all is worth a mouthful - except the flask of nourishment, which is a
-   meal in itself and does not get a sip on top.  And a floor has to
-   turn up something to eat often enough that a run can live on what it
-   finds rather than on what it started with. */
+   meal in itself and does not get a sip on top, and except a flask that
+   did you harm going down, which is not a mouthful your stomach keeps
+   whatever else it did to you.  And a floor has to turn up something to
+   eat often enough that a run can live on what it finds rather than on
+   what it started with. */
 function potionSipOK(){
   var bad=[], i, k;
   bootTest(79000);
@@ -12526,6 +12926,8 @@ function potionSipOK(){
     } else if(POTIONS[k].n==='nourishment'){
       if(got<POTION_FEED[0]) bad.push('a flask of nourishment fed you only '+got);
       if(got>POTION_FEED[0]+POTION_FEED[1]) bad.push('nourishment fed you '+got+' - a sip on top of the meal');
+    } else if(POTION_HARMFUL[POTIONS[k].n]){
+      if(got!==0) bad.push(POTIONS[k].n+' did you harm and still fed you '+got);
     } else if(got!==POTION_SIP) bad.push('drinking '+POTIONS[k].n+' was worth '+got+', not '+POTION_SIP);
   }
   /* water and holy water in particular: the two the flask is really for */
@@ -12991,7 +13393,10 @@ function runeOfLightOK(){
     }
   }
   if(!lane) return { bad:bad.concat(['nowhere open enough to try a lamp']) };
-  L.mons.length=0; L.clouds.length=0; L.temp={};
+  /* torches on a wall just outside the open patch would still throw
+     their own light into it - nothing here is meant to measure but the
+     blade */
+  L.mons.length=0; L.clouds.length=0; L.temp={}; L.torches=[];
   P.x=lane.x; P.y=lane.y; P.blind=0; P.hp=P.mhp=900000;
   for(i=0;i<L.tiles.length;i++){ L.darkMap[i]=1; L.litMap[i]=0; }
   for(i=0;i<N_SLOTS;i++) P.slots[i]=null;
@@ -14451,10 +14856,12 @@ function deadEndDoorsOK(seeds){
       }
       withDoor++;
       /* it has to LEAD somewhere: a hidden door onto solid rock is a
-         wall with extra steps */
+         wall with extra steps.  Anywhere you could stand counts,
+         water included - secretsAtDeadEnds says as much: a panel onto
+         the edge of a pool is a perfectly good hidden door. */
       var bx=found[0]+DIR4[found[2]][0], by=found[1]+DIR4[found[2]][1];
       var bt=L.tiles[by*MAP_W+bx];
-      if(bt!==FLOOR && bt!==CORR && bt!==STAIR && bt!==STAIR_UP)
+      if(!walkable(bx,by))
         bad.push('a door at a dead end opens onto '+bt);
       /* and the floor still hangs together with it shut */
       var hid=[], q;
@@ -14523,9 +14930,11 @@ function blownHoleRubbleOK(seeds){
     var n=rubbleRound(P.x,P.y,RUBBLE_REACH);
     heaps.push(n);
     if(!n) bad.push('nothing came down after you at all');
-    /* the square you land on is the middle of it */
+    /* the square you land on is the middle of it - unless it already
+       had a rug or a kerb, which spillRubble tidily leaves alone. */
     var mid=L.decor[P.y*MAP_W+P.x];
-    if(L.tiles[P.y*MAP_W+P.x]===FLOOR || L.tiles[P.y*MAP_W+P.x]===CORR){
+    if((L.tiles[P.y*MAP_W+P.x]===FLOOR || L.tiles[P.y*MAP_W+P.x]===CORR) &&
+       !(mid && (isRugName(mid) || mid==='kerb'))){
       if(mid!=='rubble' && mid!=='rubble2')
         bad.push('the square you landed on has no rubble on it: '+mid);
       else soft++;

@@ -327,6 +327,14 @@ var MOUSE = { x: -99, y: -99, on: 0 };
    and both should follow the hand you actually have on the desk. */
 var LAST_INPUT = 'key';
 
+/* Which arrow keys are down right now, while SHIFT is holding the panel
+   open.  A single keydown only ever names one key, so two held at once -
+   up and left, say - would otherwise only ever push the map one way at
+   a time: whichever key the keyboard happens to repeat.  Tracking both
+   lets the same keydown add up whatever is actually held and move the
+   view on the diagonal. */
+var PAN_KEYS = {};
+
 /* A real mouse, with a pointer that hovers.  Only two things want this:
    the arrow drawn off the sheet, and the highlights that follow it.  A
    finger has nothing to hover with, and a drawn arrow sitting under it
@@ -398,8 +406,8 @@ function onMouseMove(e) {
      used to push the map about instead, which is a strange thing for a
      box of text to do to the room behind it. */
   if (MOUSE.held.sel) {
-    G.sel = G.sel || { box: MOUSE.held.sel, ax: MOUSE.held.x, ay: MOUSE.held.y };
-    G.sel.bx = m.x; G.sel.by = m.y;
+    G.textSel = G.textSel || { box: MOUSE.held.sel, ax: MOUSE.held.x, ay: MOUSE.held.y };
+    G.textSel.bx = m.x; G.textSel.by = m.y;
     return;
   }
   /* and a drag anywhere else while a dialog is up moves nothing at all */
@@ -906,6 +914,12 @@ function openCtxMenu(x, y) {
   opts.push(['look', 'Look']);
   if (foe && canSeeMon(foe) && !foe.ally && !mine && canShoot())
     opts.push(['shoot', 'Shoot']);
+  /* And from your own square it means what ENTER means out in the
+     dungeon: take aim at whatever is in your line of fire.  A finger
+     cannot press a creature three squares off with any accuracy and a
+     phone has no ENTER, so pressing yourself - which is already how the
+     pack is reached - is the way a bow gets fired at all. */
+  else if (mine && shootableNow()) opts.push(['aim', 'Shoot']);
   if (it && it.t === 'chest') opts.push(['open', 'Open']);
   else if (it) opts.push(['get', 'Take']);
   if (mine) opts.push(['inv', 'Inventory']);
@@ -940,6 +954,7 @@ function ctxKey(k) {
     return;
   }
   if (job === 'inv') { openInv(); return; }
+  if (job === 'aim') { beginAction(); beginShooting(); return; }
   if (job === 'shoot') {
     var foe2 = monAt(L, x, y);
     if (!foe2 || !canSeeMon(foe2)) { msg('It is not there now.', '6'); finishMsgs(); return; }
@@ -1005,6 +1020,12 @@ function invClick(h, right) {
   if (h.what === 'cell') {
     var cur = G.pouch ? G.pcur : G.cur;
     G.panelSel = null;
+    /* Pressing the square the frame is already on is a press on the
+       thing itself.  The first click picks it out and says what it is;
+       a second one asks what you want done with it, which is the way a
+       list of files behaves everywhere else and was the one thing the
+       left button could not do at all. */
+    var again = (cur.r === h.i.r && cur.c === h.i.c);
     cur.r = h.i.r; cur.c = h.i.c;
     /* The left button picks the thing out and says what it is; the right
        one asks what you want done with it.  Both used to open the menu,
@@ -1013,7 +1034,7 @@ function invClick(h, right) {
        A finger has no second button, so a tap has to open the menu -
        otherwise a touch screen could look at everything and do nothing
        with any of it. */
-    if (right || !usingMouse()) invSpace();
+    if (right || !usingMouse() || again) invSpace();
     return;
   }
 }
@@ -1087,6 +1108,17 @@ function sprTurn(name, px, py, alpha, quarters) {
   cx.drawImage(atlasImg, (i % ATLAS.cols) * TS, ((i / ATLAS.cols) | 0) * TS, TS, TS,
     -TS / 2, -TS / 2, TS, TS);
   cx.restore();
+  if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA;
+}
+/* The top slice of a sprite, `rows` pixels of it, at the very top of its
+   cell.  A torch mounted facing north is drawn this way: its wall is the
+   near edge of the screen from where it hangs, and the wick has to stop
+   short of the tile below it rather than spill into the floor there. */
+function sprTop(name, px, py, alpha, rows) {
+  var i = IX[name]; if (i === undefined) return;
+  if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA * alpha;
+  cx.drawImage(atlasImg, (i % ATLAS.cols) * TS, ((i / ATLAS.cols) | 0) * TS, TS, rows,
+    px, py, TS, rows);
   if (alpha !== undefined && alpha !== 1) cx.globalAlpha = ALPHA;
 }
 
@@ -1300,8 +1332,17 @@ function resumeMode() {
      there and is offered on the first quiet turn. */
   if (G.perkPick && perkReady()) { G.mode = 'perk'; settleHp(); G.levelUp = 0; return; }
   /* A level gained, said out loud.  A coming of age announces it
-     itself, so this waits to see whether one is coming. */
+     itself, so this waits to see whether one is coming.  It also waits
+     for the corpses to finish blinking and disappear, so the player sees
+     the killing blow land and the enemy vanish before the level up
+     message takes the screen. */
   if (G.levelUp && !G.perkPick) {
+    /* Not while anything is still dying in front of you.  Asked of the
+       corpses' own beats rather than of the list being empty: between
+       turns the list still holds corpses whose moment has not come
+       round yet, and one of those is exactly the creature whose death
+       earned the level. */
+    if (nowMs() < corpsesDoneAt()) return;
     var gained = G.levelUp; G.levelUp = 0;
     settleHp();
     openNote('Welcome to level ' + gained + '!');
@@ -1696,10 +1737,13 @@ function keyDir(k) {
 }
 
 function onKeyUp(e) {
-  if (e.key === 'Shift') panSet(0);
+  if (e.key === 'Shift') { panSet(0); PAN_KEYS = {}; }
+  if (keyDir(e.key)) PAN_KEYS[e.key] = false;
 }
-/* clicking away with SHIFT down would otherwise leave the panel out */
-function onBlur() { panSet(0); }
+/* clicking away with SHIFT down would otherwise leave the panel out -
+   and a key still held when focus goes never gets its keyup, so it would
+   otherwise go on steering the diagonal after the window forgot it. */
+function onBlur() { panSet(0); PAN_KEYS = {}; }
 
 function onKey(e) {
   LAST_INPUT = 'key';
@@ -1712,26 +1756,26 @@ function onKey(e) {
      everything else.  Nothing else in the game answers to it, so it can
      be caught here before the rest of the keyboard is dealt with. */
   if ((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'C')) {
-    if (G.sel) { e.preventDefault(); selCopy(); }
+    if (G.textSel) { e.preventDefault(); selCopy(); }
     return;
   }
   e.preventDefault();
   /* any key at all is the end of a selection: it was made to be read or
      copied, not to sit there while the game goes on underneath it */
-  if (G.sel && !((e.ctrlKey || e.metaKey))) selClear();
+  if (G.textSel && !((e.ctrlKey || e.metaKey))) selClear();
   soundWake();          /* browsers keep audio asleep until you act */
 
   /* SHIFT holds the panel open.  While it is open the arrows push the
      view about instead of pushing you about, and nothing you press
      costs a turn - it is a look, not a move. */
-  if (k === 'Shift') { if (G.mode === 'play' && !G.dead) panSet(1); return; }
+  if (k === 'Shift') { if (G.mode === 'play' && !G.dead) { PAN_KEYS = {}; panSet(1); } return; }
   if (panning()) {
     /* Only the arrows belong to the panning view.  Everything else has
        to go through, because half the punctuation on a keyboard is
        typed with SHIFT held down - ? is SHIFT and / on most of them, so
        swallowing every shifted key meant the look cursor could not be
        opened at all. */
-    if (e.shiftKey && keyDir(k)) { panKey(k); return; }
+    if (e.shiftKey && keyDir(k)) { PAN_KEYS[k] = true; panKey(k); return; }
     panSet(0);
   }
 
@@ -1990,7 +2034,7 @@ function chooseKey(k) {
    this menu must not offer: it would leave two runs sharing a slot and
    the autosave writing over whichever it had last been told about. */
 var PAUSE_OPTS = [['save', 'SAVE AND QUIT'], ['hints', 'HINTS'],
-                  ['restart', 'RESTART'], ['help', 'HELP'],
+                  ['scores', 'HIGHSCORE'], ['restart', 'RESTART'], ['help', 'HELP'],
                   ['crt', 'RETRO MONITOR'], ['exit', 'EXIT']];
 /* Most lines say the same thing every time they are drawn.  The switch
    does not: it has to say which way it is set, or it is not a switch. */
@@ -2032,6 +2076,10 @@ function pauseKey(k) {
     return;
   }
   if (pick === 'hints') { openHints('pause'); return; }
+  /* A look at the roll without ending the run - the same table the
+     title screen shows, read the same way: nothing typed into it,
+     because nothing has ended yet to belong there. */
+  if (pick === 'scores') { openScores('pause'); return; }
   /* A switch is thrown and you stay where you are: closing the menu on
      you would mean opening it again to see what you had done. */
   if (pick === 'crt') { setCrt(!crtOn()); return; }
@@ -2202,13 +2250,7 @@ function drawSlots() {
    rather than sitting blank: waiting, asking for a name, showing.  It is
    never a wall: ENTER goes on from any of them. */
 function hsEntryNow() {
-  return {
-    name: '',
-    xp: P.exp | 0,
-    level: P.lv | 0,
-    depth: (typeof G !== 'undefined' && G ? G.depth : 1) | 0,
-    turns: (typeof G !== 'undefined' && G ? G.turn : 0) | 0
-  };
+  return { name: '', xp: P.exp | 0, level: P.lv | 0 };
 }
 function openScores(from) {
   var e = hsEntryNow();
@@ -2226,11 +2268,13 @@ function openScores(from) {
 /* the table has arrived: either it wants a name or it does not */
 function hsReady(list) {
   if (!G.hs || G.hs.sent) return;
-  /* Read from the title screen it is a table and nothing else.  There is
-     no run to put in it - the rogue standing on the splash has not taken
-     a step - and an empty table would otherwise ask a player who had
-     never played for their name. */
-  if (G.hs.from === 'title') { G.hs.typing = 0; return; }
+  /* Read from the title screen, or read from the pause menu without
+     ending the run, it is a table and nothing else.  There is no run to
+     put in it yet either way - the rogue standing on the splash has not
+     taken a step, and one paused mid-dungeon has not finished - and an
+     empty table would otherwise ask a player who is still playing for
+     their name. */
+  if (G.hs.from === 'title' || G.hs.from === 'pause') { G.hs.typing = 0; return; }
   if (hsQualifies(list, G.hs.entry.xp)) { G.hs.typing = 1; return; }
   G.hs.typing = 0;
   G.hs.place = 0;
@@ -2248,12 +2292,13 @@ function hsSend() {
   });
 }
 /* Away from the table and on with it.  Where that goes depends on what
-   put the table up: the end of a run starts another, and the title
-   screen it was read from goes back to the title screen. */
+   put the table up: the end of a run starts another; the title screen
+   or the pause menu it was read from goes back to whichever it was -
+   a look at the roll mid-run must never be the thing that ends it. */
 function hsLeave() {
   var from = (G.hs && G.hs.from) || 'end';
   G.hs = null;
-  if (from === 'title') { G.mode = 'title'; return; }
+  if (from === 'title' || from === 'pause') { G.mode = from; return; }
   newGame(false);
 }
 function scoreKey(k) {
@@ -2302,7 +2347,7 @@ function drawScores() {
       G.hsRead === 'offline' ? 'C' : '6');
     if (list && !HS_KEY && !HS_PROXY)
       textIn('(no roll set up: this machine only)', x, w, y + 34, '4');
-    textIn(G.hs && G.hs.from === 'title' ? 'ENTER to go back' : 'ENTER to rise again',
+    textIn(G.hs && (G.hs.from === 'title' || G.hs.from === 'pause') ? 'ENTER to go back' : 'ENTER to rise again',
       x, w, y + h - 9, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
     return;
   }
@@ -2355,7 +2400,7 @@ function drawScores() {
       G.hs.where === 'bin' ? 'G' : G.hs.where === 'sending' ? '6' : 'C');
     ty += 8;
   }
-  textIn(G.hs.from === 'title' ? 'ENTER to go back' : 'ENTER to rise again',
+  textIn(G.hs.from === 'title' || G.hs.from === 'pause' ? 'ENTER to go back' : 'ENTER to rise again',
     x, w, ty + 3, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
 }
 
@@ -3074,6 +3119,14 @@ function itemActions(it, ref) {
     else if (key === 'lh') out.push(['equip', it.t === 'shield' ? 'Raise' : 'Ready']);
     else if (key) out.push(['equip', 'Wear']);
   }
+  /* Shooting, from the pack.  Out in the dungeon ENTER does this, and a
+     phone has no ENTER and no way to press a creature three squares off
+     exactly - so without a verb here a bow could be wielded, loaded and
+     never fired at all.  Offered against the bow and against the ammo
+     alike, since both are the thing you would reach for. */
+  var kit = canShoot();
+  if (kit && !kit.thrown && (kit.bow === it || kit.ammo === it))
+    out.push(['shoot', 'Shoot']);
   if (canAppraise(it) && !it.tried) out.push(['study', 'Study it']);
   if (isThrowable(it)) out.push(['throw',
     it.t === 'dynamite' ? 'Light it' : (isFlask(it) || isVial(it)) ? 'Hurl' : 'Throw']);
@@ -3160,6 +3213,7 @@ function doMenuAction(act) {
       finishMsgs(); return;
     }
     case 'throw': beginThrow(it); return;
+    case 'shoot': closeInv(); beginShooting(); return;
     case 'study': appraise(it); finishMsgs(); return;
     case 'unequip': unequipFrom(ref); finishMsgs(); return;
     case 'drop': dropFromPack(it, ref); finishMsgs(); return;
@@ -3324,9 +3378,58 @@ function invEnter() {
 }
 
 /* ---------------------------------------------------------- render */
-function loop() { walkTick(); touchHold(); camEase(); camWalkTo(); camWaiting(); render(); requestAnimationFrame(loop); }
+/* The frame, and the promise that there will be another one.
 
+   The next frame used to be asked for on the last line of this, after
+   everything else had gone well.  So anything at all that threw - one
+   bad square, one sprite that is not on the sheet, one field a save from
+   an older build did not have - took the game with it: no more frames
+   were ever asked for, the canvas kept showing however much of the last
+   one had been painted before the throw, and every key you pressed after
+   that went into a game that had stopped drawing.  From the outside that
+   is a frozen tab, and the half-painted frame is the cruellest part of
+   it: the dungeon is all there and you are not, because the map is drawn
+   before the man is.
+
+   So the next frame is asked for first, whatever happens, and a frame
+   that throws costs you that frame and nothing else.  The fault is kept
+   and shown rather than swallowed - a glitch you can read and report is
+   worth a great deal more than a tab that has died in silence. */
+var FRAME_ERR = null, FRAME_ERRS = 0;
+function loop() {
+  requestAnimationFrame(loop);
+  try {
+    walkTick(); touchHold(); camEase(); camWalkTo(); camWaiting(); render();
+  } catch (e) {
+    FRAME_ERRS++;
+    FRAME_ERR = (e && e.message) ? e.message : String(e);
+    /* Once, with everything the console needs to say where it was.  It
+       is thrown every frame from here on, and a stack a second is not a
+       report, it is a flood. */
+    if (FRAME_ERRS === 1 && typeof console !== 'undefined' && console.error)
+      console.error('PXLRogue: a frame failed to draw -', e);
+    drawFrameErr();
+  }
+}
+/* A line along the bottom of the screen saying the drawing came unstuck.
+   Drawn straight onto the canvas rather than through the usual machinery,
+   because the usual machinery is what has just thrown. */
+function drawFrameErr() {
+  try {
+    var msg2 = 'draw failed: ' + String(FRAME_ERR).slice(0, 40);
+    cx.globalAlpha = 1;
+    cx.globalCompositeOperation = 'source-over';
+    rect(0, SH - LH - 1, SW, LH + 1, '#8a202b');
+    text(msg2, 2, SH - LH, 'w');
+  } catch (e2) { /* nothing left to say it with */ }
+}
+
+/* Which frame this is.  Nothing but a counter, and it is here so that
+   anything worked out once per frame and kept - a torch's gradient, say
+   - knows when what it kept has gone stale. */
+var FRAME_N = 0;
 function render() {
+  FRAME_N++;
   /* The hit list is rebuilt every frame by the things that draw
      themselves, so a click can never act on a button that is no longer
      on the screen. */
@@ -3385,8 +3488,8 @@ function selCharX(run, n) {
    line first and the pen second is what makes a drag from one line to
    the next take everything between, rather than a column. */
 function selRuns() {
-  if (!G.sel) return [];
-  var b = G.sel.box, out = [], i;
+  if (!G.textSel) return [];
+  var b = G.textSel.box, out = [], i;
   for (i = 0; i < TEXTS.length; i++) {
     var t = TEXTS[i];
     if (t.x < b.x || t.y < b.y || t.x + t.w > b.x + b.w + 1 || t.y + t.h > b.y + b.h + 2) continue;
@@ -3399,10 +3502,11 @@ function selRuns() {
    two ends are points on the screen; whichever came first in reading
    order is the start, so dragging backwards selects the same words. */
 function selSegments() {
-  if (!G.sel) return [];
+  if (!G.textSel) return [];
   var runs = selRuns(), i, out = [];
   if (!runs.length) return out;
-  var a = selPoint(runs, G.sel.ax, G.sel.ay), b = selPoint(runs, G.sel.bx, G.sel.by);
+  var a = selPoint(runs, G.textSel.ax, G.textSel.ay),
+      b = selPoint(runs, G.textSel.bx, G.textSel.by);
   if (a.run > b.run || (a.run === b.run && a.ch > b.ch)) { var t = a; a = b; b = t; }
   for (i = a.run; i <= b.run && i < runs.length; i++) {
     var from = (i === a.run) ? a.ch : 0;
@@ -3463,7 +3567,7 @@ function drawSelection() {
   TEXT_REC = 1;
 }
 /* the selection goes when the box it was made in does */
-function selClear() { G.sel = null; }
+function selClear() { G.textSel = null; }
 /* Ctrl+C, or the Mac's own.  A canvas has nothing the browser can copy
    by itself, so the string is handed to the clipboard directly. */
 function selCopy() {
@@ -4024,6 +4128,24 @@ function atEdgeOfSight(mx, my) {
 }
 
 function drawDecor(name, mx, my, px, py, a) {
+  /* A wall torch leans towards the room it lights rather than sitting
+     square in the middle of its tile - torchOffset gives the same lean
+     in tile units that glowTorch lights from, turned into pixels here.
+     Facing north is the one direction that would spill the flame down
+     into the floor tile below it, so that one is drawn as a slice
+     rather than shifted whole. */
+  if (isTorch(name)) {
+    var tspr = (torchFlameFrame(mx, my) & 1) ? 'torch' : 'torch2';
+    var fdir = torchFacing(L, mx, my);
+    var off = torchOffset(fdir), offX = Math.round(off[0] * TS), offY = Math.round(off[1] * TS);
+    /* Facing north - the room lies above this wall, not below it - the
+       flame leans up into that tile if drawn whole, so only its top
+       four pixels are drawn; the rest would sit on top of the room's
+       own floor rather than against the wall it is mounted on. */
+    if (fdir[1] === -1) { sprTop(tspr, px, py + offY, a, 4); return; }
+    spr(tspr, px + offX, py + offY, a);
+    return;
+  }
   /* Two tiles are painted joining something above them and are turned to
      face it: a cracked flagstone faces its hole, an edge of moss faces
      the moss or the wall it grows from.  sprTurn goes clockwise, and the
@@ -4040,14 +4162,26 @@ function drawDecor(name, mx, my, px, py, a) {
     return;
   }
   var faces = isCrack(name) ? holeAt : isMossEdge(name) ? mossAnchorAt : null;
-  if (!faces) { spr(name, px, py, a); return; }
-  var turn = -1;
-  if (faces(mx, my - 1)) turn = 0;             /* above: as painted */
-  else if (faces(mx + 1, my)) turn = 1;        /* to the right: a quarter clockwise */
-  else if (faces(mx, my + 1)) turn = 2;        /* below: half a turn */
-  else if (faces(mx - 1, my)) turn = 3;        /* to the left: a quarter the other way */
-  if (turn < 0) { spr(name, px, py, a); return; }
-  sprTurn(name, px, py, a, turn);
+  if (faces) {
+    var turn = -1;
+    if (faces(mx, my - 1)) turn = 0;             /* above: as painted */
+    else if (faces(mx + 1, my)) turn = 1;        /* to the right: a quarter clockwise */
+    else if (faces(mx, my + 1)) turn = 2;        /* below: half a turn */
+    else if (faces(mx - 1, my)) turn = 3;        /* to the left: a quarter the other way */
+    if (turn < 0) { spr(name, px, py, a); return; }
+    sprTurn(name, px, py, a, turn);
+    return;
+  }
+  /* Rubble and a plain square of moss have nothing to face, but they
+     still should not all sit the same way up - a floor of them turned
+     identically reads as one stamp repeated.  tileHash is the same
+     stable-per-square roll the wall variants and the flagstones already
+     turn to, so the pick does not change from one render to the next. */
+  if (isRubble(name) || (isMoss(name) && !isMossEdge(name))) {
+    sprTurn(name, px, py, a, tileHash(mx, my) % 4);
+    return;
+  }
+  spr(name, px, py, a);
 }
 /* What an edge of moss can be growing out of: a square of moss proper,
    or a wall.  Moss on the wall counts first, so a border between two
@@ -4151,8 +4285,10 @@ function sprHurt(name, px, py, alpha, ent) {
   }
   /* Something with a front and a back is mirrored when it is walking the
      other way.  The red flash over it has to be mirrored with it, or the
-     creature and its own wound face opposite ways for a moment. */
-  var mirror = ent && ent.face === -1 && ent.def && ent.def.faces;
+     creature and its own wound face opposite ways for a moment.
+     faces: 1 (standard) mirrors when face === -1
+     faces: -1 (inverted) mirrors when face === 1 */
+  var mirror = ent && ent.def && ent.def.faces && ent.face === (ent.def.faces * -1);
   if (mirror) sprFlip(name, px, py, alpha);
   else spr(name, px, py, alpha);
   if (ph > 0 && hurtSheet) {
@@ -4214,10 +4350,19 @@ function panSettle() {
   if (G.pan && !G.pan.open && panShift() === 0) G.pan = null;
 }
 function panning() { return !!(G.pan && G.pan.open); }
+/* Every arrow key currently held, added together: left and right cancel,
+   as do up and down, so two keys that fight each other move nothing and
+   two that agree - up and left, say - move on the diagonal. */
+function panHeldDir() {
+  var dx = (PAN_KEYS.ArrowRight ? 1 : 0) - (PAN_KEYS.ArrowLeft ? 1 : 0);
+  var dy = (PAN_KEYS.ArrowDown ? 1 : 0) - (PAN_KEYS.ArrowUp ? 1 : 0);
+  return [dx, dy];
+}
 function panKey(k) {
   if (!G.pan) return false;
-  var d = keyDir(k);
-  if (!d) return false;
+  if (!keyDir(k)) return false;
+  var d = panHeldDir();
+  if (!d[0] && !d[1]) return false;
   G.pan.dx = clamp(G.pan.dx + d[0], -panMaxX(), panMaxX());
   G.pan.dy = clamp(G.pan.dy + d[1], -panMaxY(), panMaxY());
   return true;
@@ -4267,18 +4412,157 @@ function glowLift(g, a, idx) {
   var e = g[idx];
   return e ? a + (1 - a) * e.v : a;
 }
+/* ------------------------------------------------ firelight on water
+   Which pixels of a sprite are painted at all, as [x, y] inside its own
+   eight by eight cell.  Read off the sheet once and kept, so a twinkle
+   lands on a ripple that is really there rather than on a guess - and so
+   it goes on doing that if the ripples are ever repainted.
+
+   A canvas that will not hand its pixels back is not a reason to have no
+   twinkle: a page opened straight off the disk rather than served makes
+   the browser treat the sheet as foreign and refuse, so there is a
+   spread of places to put one when that happens. */
+var SHINE_PIX = {};
+var SHINE_ANYWHERE = [[1, 1], [5, 2], [2, 4], [6, 5], [3, 6], [6, 1], [1, 5], [4, 3]];
+function shinePixels(name) {
+  if (SHINE_PIX[name]) return SHINE_PIX[name];
+  var out = [], i = IX[name];
+  try {
+    if (i !== undefined) {
+      var c = document.createElement('canvas');
+      c.width = TS; c.height = TS;
+      var g2 = c.getContext('2d');
+      g2.imageSmoothingEnabled = false;
+      g2.drawImage(atlasImg, (i % ATLAS.cols) * TS, ((i / ATLAS.cols) | 0) * TS,
+        TS, TS, 0, 0, TS, TS);
+      var d = g2.getImageData(0, 0, TS, TS).data;
+      for (var y = 0; y < TS; y++) for (var x = 0; x < TS; x++)
+        if (d[(y * TS + x) * 4 + 3] > 40) out.push([x, y]);
+    }
+  } catch (e) { out = []; }
+  if (!out.length) out = SHINE_ANYWHERE;
+  SHINE_PIX[name] = out;
+  return out;
+}
+/* Firelight on water.
+
+   The ripples take a wash of whatever the torches are throwing on the
+   square, on a curve of its own: quadratic rather than the straight ramp
+   the floor wash uses, so the shine gathers close about the flame
+   instead of lying flat across the whole pool - see waterTorchLight.
+   That is what makes it read as a reflection rather than as the water
+   having been painted a different colour.
+
+   And then the twinkle: one pixel of one ripple catching the light
+   square on.  Four things keep it from being a field of sequins.  It
+   only happens where the shine is strong, which is close about the
+   flame.  It is rare - a square carries one once in WATER_GLINT_EVERY
+   steps.  It comes and goes over three of those steps rather than
+   blinking on and off.  And it holds its place for all three, so it
+   reads as one point of light brightening and dying rather than three.
+
+   Which step a square is on, and which of its lit pixels the light finds
+   when its turn comes, are dealt off a hash of the square and the clock
+   rather than rolled: a roll would come out different sixty times a
+   second on every square at once, which is a boiling pool. */
+function drawWaterShine(mx, my, px, py, a, alt) {
+  var v = waterTorchLight(mx, my);
+  if (v <= WATER_SHINE_MIN) return 0;
+  var name = alt ? 'water_refl' : 'water2_refl';
+  spr(name, px, py, a * Math.min(WATER_SHINE_MAX, v * WATER_SHINE_MAX));
+  /* A glint is what water does right under a flame.  Out at the edge of
+     the light the ripples take a wash and nothing more, or the whole
+     pool ends up wearing sequins. */
+  if (v < WATER_GLINT_MIN) return 1;
+  /* which step of its own long cycle this square is on */
+  var h0 = tileHash(mx, my) >>> 0;
+  var step = Math.floor(nowMs() / WATER_GLINT_MS) + (h0 % WATER_GLINT_EVERY);
+  var phase = step % WATER_GLINT_EVERY;
+  if (phase >= WATER_GLINT_FADE.length) return 1;
+  /* the same pixel for the whole of one twinkle, so it fades in and out
+     where it is rather than hopping about while it does it */
+  var hp = (h0 ^ (Math.floor(step / WATER_GLINT_EVERY) * 2654435761)) >>> 0;
+  hp = (hp ^ (hp >>> 13)) >>> 0;
+  var pix = shinePixels(name), p = pix[hp % pix.length];
+  cx.globalAlpha = ALPHA * a * WATER_GLINT_FADE[phase];
+  cx.fillStyle = WATER_GLINT_COL;
+  cx.fillRect(px + p[0], py + p[1], 1, 1);
+  cx.globalAlpha = ALPHA;
+  return 1;
+}
 /* and the colour it leaves on the square, laid over everything standing
    on it - the floor, the furniture, and whoever is standing there */
 function drawGlowWash(g, mx, my, px, py) {
   var j = my * MAP_W + mx;
   var e = g[j];
   if (!e) return 0;
-  cx.globalAlpha = ALPHA * GLOW_WASH * e.v;
   cx.globalCompositeOperation = 'lighter';
-  cx.fillStyle = e.col;
-  cx.fillRect(px, py, TS, TS);
+  if (e.src) drawTorchWash(e, mx, my, px, py);
+  else {
+    cx.globalAlpha = ALPHA * GLOW_WASH * e.v;
+    cx.fillStyle = e.col;
+    cx.fillRect(px, py, TS, TS);
+  }
   cx.globalCompositeOperation = 'source-over';
   cx.globalAlpha = ALPHA;
+  return 1;
+}
+/* one colour of the sheet's palette, at a given opacity */
+function rgba(hex, a) {
+  var n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) +
+         ',' + (Math.round(a * 1000) / 1000) + ')';
+}
+/* The wash a torch lays on its square.
+
+   Every other light in the game fills its square with one flat colour,
+   which is right for them: a fire is a thing standing on a square and
+   its light is dealt by the square.  A torch is different only in that
+   its pool is meant to read as a circle, and a circle made of flat
+   squares is a staircase however many shades it is drawn in - the last
+   ring of squares ends at its own border, all eight pixels of it at the
+   same opacity, and the eye reads the border.
+
+   So the torch's wash is one round gradient anchored on the flame
+   itself, in screen pixels, and each square of the pool is filled with
+   whatever part of that gradient falls on it.  The rings are the same
+   two the rest of the game uses and at the same strength; what the
+   gradient adds is that the outer rim arrives at nothing part of the
+   way across the last squares instead of at their edge.
+
+   One gradient per flame per frame, not one per square: they are all the
+   same gradient, so it is made once and kept for as long as the frame
+   lasts. */
+var WASH_GRAD = null, WASH_GRAD_AT = -1;
+function drawTorchWash(e, mx, my, px, py) {
+  var k = e.src.k;
+  if (WASH_GRAD_AT !== FRAME_N) { WASH_GRAD = {}; WASH_GRAD_AT = FRAME_N; }
+  var grd = WASH_GRAD[k];
+  if (!grd) {
+    /* the flame, in screen pixels, worked out from a square we know the
+       place of */
+    var fx = px + (e.src.x - mx) * TS + TS / 2;
+    var fy = py + (e.src.y - my) * TS + TS / 2;
+    var R = (TORCH_LIGHT_HALF + TORCH_RIM_FADE) * TS;
+    /* the whole pool flickers as one, because it is one flame */
+    var flick = glowVary(e.src.tx, e.src.ty, GLOW_VARY, e.phase);
+    var full = GLOW_WASH * GLOW_FULL * flick, half = GLOW_WASH * GLOW_HALF * flick;
+    grd = cx.createRadialGradient(fx, fy, 0, fx, fy, R);
+    /* Each ring holds its own strength up to its rim and then goes over
+       to the next across half a square, so neither edge is a step. */
+    var h = 0.5 / (TORCH_LIGHT_HALF + TORCH_RIM_FADE);
+    var atFull = TORCH_LIGHT_FULL / (TORCH_LIGHT_HALF + TORCH_RIM_FADE);
+    var atHalf = TORCH_LIGHT_HALF / (TORCH_LIGHT_HALF + TORCH_RIM_FADE);
+    grd.addColorStop(0, rgba(e.col, full));
+    grd.addColorStop(Math.max(0, atFull - h), rgba(e.col, full));
+    grd.addColorStop(Math.min(1, atFull + h), rgba(e.col, half));
+    grd.addColorStop(Math.max(0, atHalf - h), rgba(e.col, half));
+    grd.addColorStop(1, rgba(e.col, 0));
+    WASH_GRAD[k] = grd;
+  }
+  cx.globalAlpha = ALPHA;
+  cx.fillStyle = grd;
+  cx.fillRect(px, py, TS, TS);
   return 1;
 }
 function drawMapAt(overX, overY) {
@@ -4329,6 +4613,12 @@ function drawMapAt(overX, overY) {
         case WALL: case SDOOR:
           spr(wallVariant(mx, my), px, py, a);
           drawWallEdging(mx, my, px, py, a);
+          /* A torch is drawn in its own pass below, once the whole floor
+             is down - its offset towards the room it lights would
+             otherwise be painted over by whatever tile is drawn next. */
+          if (L.decor[idx] && !isTorch(L.decor[idx]) &&
+              !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx]))
+            drawDecor(L.decor[idx], mx, my, px, py, a);
           break;
         case FLOOR:
           /* the three flagstones, dealt by the same hash the rest of the
@@ -4342,7 +4632,9 @@ function drawMapAt(overX, overY) {
             drawDecor(L.decor[idx], mx, my, px, py, a);
           break;
         case WATER:
-          spr(((mx + my) & 1) ? 'water' : 'water2', px, py, a);
+          var isAlt = (mx + my) & 1;
+          spr(isAlt ? 'water' : 'water2', px, py, a);
+          drawWaterShine(mx, my, px, py, a, isAlt);
           drawLiquidCorners(mx, my, px, py, a);
           break;
         case HOLY:
@@ -4395,6 +4687,28 @@ function drawMapAt(overX, overY) {
       if (slimeAt(mx, my)) spr('slime', px, py, a * SLIME_ALPHA);
     }
   }
+  /* Wall torches, drawn once the whole floor and every wall is down.
+     Each leans off its own tile towards the room it lights - see
+     drawDecor - and that lean would be painted over by a neighbouring
+     tile drawn later in the loop above if it were drawn there instead. */
+  for (vy = -overY; vy < VIEW_H + overY; vy++) {
+    for (vx = -pcols - overX; vx < VIEW_W + overX; vx++) {
+      var tmx = camx + vx, tmy = camy + vy;
+      if (tmx < 0 || tmy < 0 || tmx >= MAP_W || tmy >= MAP_H) continue;
+      var tidx = tmy * MAP_W + tmx;
+      if (!L.decor[tidx] || !isTorch(L.decor[tidx])) continue;
+      if (L.showAt && L.showAt[tidx] && nowMs() < L.showAt[tidx]) continue;
+      var tf = L.flags[tidx];
+      if (!(tf & F_SEEN) && !glow[tidx]) continue;
+      var ta;
+      if (!(tf & F_VIS)) ta = glow[tidx] ? glowLift(glow, NIGHT_SHADE, tidx) : DIM_A;
+      else {
+        ta = (L.darkMap && L.darkMap[tidx]) ? NIGHT_SHADE : tileLight(tmx, tmy);
+        ta = glowLift(glow, ta, tidx);
+      }
+      drawDecor(L.decor[tidx], tmx, tmy, VIEW_PX + vx * TS, VIEW_PY + vy * TS, ta);
+    }
+  }
   for (i = 0; i < L.items.length; i++) {
     var it = L.items[i];
     var fl = L.flags[it.y * MAP_W + it.x];
@@ -4413,7 +4727,7 @@ function drawMapAt(overX, overY) {
   for (i = L.corpses.length - 1; i >= 0; i--) {
     var co = L.corpses[i];
     var age = nowMs() - co.t;
-    if (age > 620) { L.corpses.splice(i, 1); continue; }
+    if (age > CORPSE_MS) { L.corpses.splice(i, 1); continue; }
     var cvx = co.x - camx, cvy = co.y - camy;
     if (cvx < -pcols - overX || cvy < -overY ||
         cvx >= VIEW_W + overX || cvy >= VIEW_H + overY) continue;
@@ -4594,7 +4908,15 @@ function drawMapAt(overX, overY) {
     /* a current outlives the flash by however long it takes to cross the
        water it was let loose in - see shockLife */
     var splashLife = G.splash.kind === 'zap' ? shockLife(G.splash) : BLAST_FLASH_MS;
-    if (nowMs() - G.splash.t > splashLife) G.splash = null;
+    var splashAge = nowMs() - G.splash.t;
+    if (splashAge > splashLife) G.splash = null;
+    /* Scheduled for a beat still to come - the stone or the bolt that
+       causes it has not landed yet, so there is nothing to show.  Every
+       other thing timed off a beat (G.bolt, G.shot, G.ret, a lunge, a
+       hurt flash) waits the same way; this one used to jump straight to
+       drawing the blast the instant it was set, which put the fire down
+       before the stone that was still in the air had reached it. */
+    else if (splashAge < 0) { /* not yet */ }
     else {
       var sn = G.splash.kind === 'cold' ? 'frost' :
         G.splash.kind === 'blast' ? 'flame' : 'bolt';

@@ -547,8 +547,9 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   check(pud.bad.length === 0, 'thrown water: ' + [...new Set(pud.bad)].slice(0, 4).join('; '));
 
   const sip = ctx.potionSipOK();
-  console.log('a mouthful  : all ' + sip.tried + ' flasks are worth ' + sip.sip +
-    ' on the food clock when you drink them, nourishment its own full helping');
+  console.log('a mouthful  : all but the harmful flasks are worth ' + sip.sip +
+    ' on the food clock when you drink them (' + sip.tried + ' tried), nourishment its ' +
+    'own full helping, and one that poisons or blinds you feeds you nothing');
   check(sip.bad.length === 0, 'a mouthful: ' + [...new Set(sip.bad)].slice(0, 4).join('; '));
 
   const larder = ctx.foodOnFloorsOK(25);
@@ -974,6 +975,124 @@ check(fs2.n > 800, 'the soak barely fought anything: ' + fs2.n);
   check(onWall > 0, 'moss never creeps up a wall');
   check(mossyWall * 3 > onWall, 'a mossy wall is no likelier than a bare one: ' +
     mossyWall + ' of ' + onWall);
+
+  /* wall torches */
+  let tbad = [], torches = 0, floorsSeen = 0;
+  for (let s = 0; s < 20; s++) {
+    ctx.bootTest(7300 + s);
+    for (let d = 1; d <= 8; d++) {
+      ctx.enterLevel(d);
+      floorsSeen++;
+      const t = ctx.torchesOK();
+      tbad = tbad.concat(t.bad);
+      torches += t.out.torches;
+    }
+  }
+  console.log('torches      : ' + torches + ' over ' + floorsSeen +
+    ' floors (' + (torches / floorsSeen).toFixed(1) + ' apiece), each on its own stretch ' +
+    'of wall, at least 5 squares from the next, none over a door and none three deep on a pillar');
+  check(tbad.length === 0, 'torches: ' + [...new Set(tbad)].slice(0, 4).join('; '));
+  check(torches > 0, 'no torch was ever placed');
+
+  /* --- a way to nowhere must not take the tab with it ----------------
+     findPath turns a square into an index and then walks back from the
+     goal, index to index, until it reaches the one you are standing on.
+     A goal that is not a square of the floor - a row past the bottom, a
+     negative, half a square, a number that is not one - gives an index
+     off the end of a typed array, and off the end every answer is
+     `undefined`: not the start, and `from[undefined]` is `undefined`
+     again.  So the walk back never arrived and never stopped, pushing a
+     square onto the path each time round.  That is not a slow frame, it
+     is the whole tab gone with no console left to ask why - which is
+     why this is checked in a process of its own with a clock on it,
+     rather than in here where it would simply hang the suite. */
+  {
+    const cp = require('child_process'), os = require('os');
+    const probe = path.join(os.tmpdir(), 'pxl_path_guard_probe.js');
+    fs.writeFileSync(probe, [
+      "const fs=require('fs'),vm=require('vm'),D=process.argv[2];",
+      "globalThis.ATLAS=JSON.parse(fs.readFileSync(D+'/atlas.json'));",
+      "globalThis.window={localStorage:{getItem:()=>null,setItem:()=>{},removeItem:()=>{}}};",
+      "vm.runInThisContext(['part1_core.js','part2_game.js','part3_actions.js','part5_sound.js']",
+      "  .map(f=>fs.readFileSync(D+'/'+f,'utf8')).join('\\n'));",
+      "vm.runInThisContext(fs.readFileSync(D+'/harness.js','utf8'));",
+      "bootTest(51777);",
+      "const bad=[[P.x,MAP_H],[P.x,MAP_H+2],[P.x,-1],[P.x,-5],[MAP_W,P.y],[-1,P.y],",
+      "           [MAP_W*3,MAP_H*3],[P.x+0.5,P.y],[NaN,P.y],[P.x,NaN],[undefined,P.y]];",
+      "for(const [x,y] of bad){",
+      "  if(findPath(x,y,{})!==null){ console.log('NOTNULL '+x+','+y); process.exit(2); }",
+      "}",
+      /* and it still finds the paths that are really there, so the
+         guard above is not simply refusing everything */
+      "let found=0;",
+      "for(let i=0;i<L.tiles.length;i++){",
+      "  if(!stepCost(i%MAP_W,(i/MAP_W)|0)) continue;",
+      "  const p=findPath(i%MAP_W,(i/MAP_W)|0,{});",
+      "  if(p&&p.length) found++;",
+      "}",
+      "if(found<20){ console.log('FEWPATHS '+found); process.exit(3); }",
+      "console.log('OK '+found);"
+    ].join('\n'));
+    let out = '', why = '';
+    try {
+      out = cp.execFileSync(process.execPath, [probe, D],
+        { timeout: 25000, encoding: 'utf8' }).trim();
+    } catch (e) {
+      why = (e.signal === 'SIGTERM' || e.killed)
+        ? 'it hung - the walk back from the goal never came home'
+        : ((e.stdout || '') + (e.message || '')).trim();
+    }
+    console.log('a way to nowhere: every goal that is not a square of the floor is ' +
+      'answered "no way there" rather than walked back from for ever (' +
+      (out || why) + ')');
+    check(!why && out.indexOf('OK') === 0, 'a way to nowhere: ' + (why || out));
+  }
+
+  const halfTurn = ctx.saveDropsHalfTurnsOK();
+  console.log('nothing half done: a walk in progress is left out of the save - it is half ' +
+    'a turn, and it holds a live creature that has no business being written down');
+  check(halfTurn.bad.length === 0,
+    'nothing half done: ' + [...new Set(halfTurn.bad)].slice(0, 4).join('; '));
+
+  const pfx = ctx.potionEffectSaidOK(8);
+  console.log('what a flask did: all ' + pfx.tried + ' draughts said what they were ' +
+    'worth in figures - ' + pfx.tags + ' different measurements, the widest "' +
+    pfx.widestS + '" at ' + pfx.widest + 'px of ' + ctx.FX_MAX_PX);
+  check(pfx.bad.length === 0, 'what a flask did: ' + [...new Set(pfx.bad)].slice(0, 4).join('; '));
+
+  const thirst = ctx.thirstSaysHungerOK();
+  console.log('a mouthful  : water, thirst quenching and nourishment each report the ' +
+    'share of a full stomach they put back, rather than a word about the taste');
+  check(thirst.bad.length === 0, 'a mouthful: ' + [...new Set(thirst.bad)].slice(0, 4).join('; '));
+
+  const stum = ctx.stumbleSaysCostOK();
+  console.log('a stumble   : "' + stum.line + '" and nothing beside it - the sentence ' +
+    'is the whole of it, said once');
+  check(stum.bad.length === 0, 'a stumble: ' + [...new Set(stum.bad)].slice(0, 4).join('; '));
+
+  const hurl = ctx.hurlNoteHonestOK();
+  console.log('throwing arms: none of the ' + hurl.checked + ' of them promises it comes ' +
+    'back, and none of them explains itself either');
+  check(hurl.bad.length === 0, 'throwing arms: ' + [...new Set(hurl.bad)].slice(0, 4).join('; '));
+
+  const base = ctx.baseStatShownOK();
+  console.log('what it is worth: ' + base.checked + ' names carry the base the kind is ' +
+    'worth beside what has been worked into this one - "a chain mail (5) +4", and the ' +
+    'notes under it say protection 9');
+  check(base.bad.length === 0, 'what it is worth: ' + [...new Set(base.bad)].slice(0, 4).join('; '));
+
+  const tshape = ctx.torchLightShapeOK();
+  console.log('the shape of it: out from a torch - ' +
+    tshape.v.map(n => n.toFixed(2)).join(' ') +
+    ' - the same two rings every other light in the game throws, kept to ' +
+    'the room the torch is in, and out when that room is');
+  check(tshape.bad.length === 0, 'the shape of it: ' + [...new Set(tshape.bad)].slice(0, 4).join('; '));
+
+  const blastedTorch = ctx.torchOutlivesItsWallOK();
+  console.log('a torch blasted out: ' + blastedTorch.found +
+    ' walls with a torch on them, blown open - no light left mounted on the rubble');
+  check(blastedTorch.bad.length === 0,
+    'a torch blasted out: ' + [...new Set(blastedTorch.bad)].slice(0, 4).join('; '));
 }
 
 /* --- a runestone gives nothing away --------------------------------- */

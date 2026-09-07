@@ -18,6 +18,15 @@ var INV_COL_W = SW - INV_TXT_X - 2;
    the map fills everything to the right of it. */
 var PANEL_W = 78;
 var VIEW_W = 19, VIEW_H = 16, VIEW_PX = PANEL_W, VIEW_PY = 0;
+/* How much room an effect tag has.  A message that carries a figure -
+   "+4 health", "hunger -6%" - draws that figure on its own indented row
+   under the sentence, and the row is CLIPPED rather than wrapped, so a
+   tag any wider than this is a tag with its end quietly cut off.  It is
+   the log column (PANEL_W less its left margin and right gutter) less
+   the indent that row is drawn at; written down here so that the rules
+   that compose the tags can be measured against the same figure the
+   renderer works out at boot. */
+var FX_MAX_PX = PANEL_W - 1 - 2 - 3;
 /* Hold SHIFT and the panel gets out of the way so you can see the whole
    floor.  It leaves quickly - long enough to read as a movement, short
    enough that you are not waiting on it. */
@@ -34,6 +43,7 @@ var PAN_SLIDE = 140;               /* milliseconds, out and back */
 function panMaxX() { return MAP_W; }
 function panMaxY() { return MAP_H; }
 var MAP_W = 64, MAP_H = 32;          /* the floor you are on; both vary */
+
 /* A floor is a little larger than it was: the rooms grew with it, so the
    number of chambers is much the same and each one has more room in it. */
 var MAP_MIN_W = 50, MAP_MAX_W = 86;
@@ -399,6 +409,12 @@ var HURT_MS = 150, HURT_PX = 2;
    to move, so the two are never read as one motion */
 var HURT_HOLD = 90;
 var LUNGE_MS = 130, LUNGE_PX = 1;
+/* How long the dead linger, blinking, before they go.  It is a number
+   two different things have to agree on - the drawing, which blinks the
+   corpse for exactly this long, and every box that has to wait until
+   the fighting you can see is over - so it is written down once here
+   rather than kept as a figure inside the renderer. */
+var CORPSE_MS = 620;
 /* how often cursed gear throws you across the floor, per thousand turns */
 var TELEPORT_CURSE_PER_MILLE = 55;
 /* A flask of fire: where it lands catches, and the flames run from square
@@ -614,9 +630,9 @@ var SHOCK_BLINK_MS = 70, SHOCK_ON = 3;
    With neither set the game still reads the table, because the bin's
    public read needs no key, and keeps new scores on the machine they
    were made on. */
-var HS_BIN = '6a8f330fda38895dfe147360';
-var HS_KEY = '';
-var HS_PROXY = 'https://pxlrogue-scores.gundur.workers.dev';
+var HS_BIN = '6a8c44f9da38895dfe0a98c0';
+var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
+var HS_PROXY = '';
 var HS_MAX = 10;              /* how many the table holds */
 var HS_NAME_MAX = 12;         /* and how long a name may be */
 var HS_KEY_HEADER = 'X-Access-Key';
@@ -635,6 +651,61 @@ var GLOW_BEAM = 0.5;
    little past two so that the square two along and one up is inside it
    rather than clipped off, which is what stops it reading as a cross. */
 var GLOW_LAMP = '#ffe9a8', LAMP_FULL = 2.3, LAMP_HALF = 3;
+/* A wall torch: warmer and smaller than a carried lamp, and thrown only
+   into the room it faces - see glowTorch.  Three rings, one inside the
+   next: full to one square, half to three, and the faint wash out to
+   four. */
+var GLOW_TORCH = '#f59e0b';
+/* A wall torch throws the same two rings every other light in the game
+   throws - full out to one square, half out to three - at the same wash
+   as the rest of them.  What is different is only how the OUTER rim is
+   drawn: see drawTorchWash.  A square at the edge of the pool fades
+   across its own eight pixels to nothing instead of stopping dead at
+   its own border, which is what stops a round pool reading as a stack
+   of squares. */
+var TORCH_LIGHT_FULL = 1, TORCH_LIGHT_HALF = 3;
+/* How far past the CENTRE of the last lit square the rim takes to reach
+   nothing.  Half a square, and that is the whole point of the figure:
+   the last ring of squares is drawn and nothing beyond it is, so a rim
+   that only arrived at nothing a square further out would be cut off
+   with light still in it - which is a hard edge again, drawn one ring
+   wider.  At half a square the gradient reaches nothing exactly where
+   the drawn squares stop, so the fade happens across their own pixels. */
+var TORCH_RIM_FADE = 0.5;
+/* How often a wall torch changes shape.  The light it throws, and the
+   shine of it on water, keep this same beat: they used to run on the
+   fire animation while the sprite ran on this, so the water rippled to a
+   flame that was not the one you could see. */
+var TORCH_FLICKER_MS = 320;
+/* how much the shine on water swings between one flame and the next.
+   Wider than the wash's own, because a reflection is the thing that
+   shows a flame is moving. */
+var WATER_SHINE_VARY = 0.45;
+/* and how strong the shine has to be before one of its ripples twinkles.
+   High: a glint is what water does right under a flame, not what it does
+   at the far edge of the light. */
+var WATER_GLINT_MIN = 0.35;
+/* No torch beyond this many squares from you can put light on anything
+   you are being shown, so none of them is worth the walk.  Generous: the
+   view is nineteen squares across and the map can be pushed about. */
+var TORCH_CULL = 24;
+/* ------------------------------------------------ firelight on water
+   Water under a torch is the one surface in the dungeon that answers
+   the light back.  The ripples take a wash of it, at a strength that
+   rises and falls with the flame; and every so often one pixel of one
+   ripple catches it square on and flares white, which is the whole
+   difference between lit water and moving water. */
+var WATER_SHINE_MIN = 0.02;   /* below this the ripples are only water */
+var WATER_SHINE_MAX = 0.75;   /* the most of the reflection ever shown */
+var WATER_SHINE_REACH = 3.8;  /* how far the shine carries, in squares */
+/* The twinkle: one pixel of one ripple, catching the light square on.
+   It is rare on purpose - a pool with a twinkle on every other square is
+   a pool of sequins - and it comes and goes rather than blinking, over
+   these three steps, each of them WATER_GLINT_MS long. */
+var WATER_GLINT_COL = '#ffffff';
+var WATER_GLINT_FADE = [0.4, 0.8, 0.4];
+var WATER_GLINT_MS = 130;     /* how long one step of one twinkle lasts */
+var WATER_GLINT_EVERY = 46;   /* steps between one square's twinkles */
 /* how long the flash of something going up is on the screen */
 var BLAST_FLASH_MS = 320;
 /* A sheet of flame out of a wand is on the screen a little longer than a
@@ -1057,8 +1128,13 @@ var MUSH_POISON = [2, 4];          /* and what a bad one takes off you */
 var POTION_FEED = [520, 200];
 /* Every flask is a mouthful of liquid, whatever the magic in it, and a
    mouthful is worth something when food is this scarce.  A little over
-   a hundred turns of walking - a sip, not a meal. */
+   a hundred turns of walking - a sip, not a meal.  Not if it was bad
+   though: something that poisons you, blinds you, or otherwise does you
+   harm going down is not a mouthful your stomach counts, whatever else
+   it does to the rest of you. */
 var POTION_SIP = 120;
+var POTION_HARMFUL = { confusion: 1, hallucination: 1, poison: 1,
+  blindness: 1, 'liquid fire': 1 };
 /* Something to eat turned up on about one floor in eight, which is not
    enough to live on: a run that found no rations starved however well
    it was played.  A quarter of floors now have a snack lying about on
@@ -1605,15 +1681,56 @@ var MOSS_FIELD = ['moss', 'moss_b', 'moss2'];
 var MOSS_EDGE = ['moss3', 'moss4'];
 var MOSSES = MOSS_FIELD.concat(MOSS_EDGE);
 var CRACKS = ['crack', 'crack2', 'crack3', 'crack4'];
+var RUBBLE = ['rubble', 'rubble2'];
 function isMoss(d) { return !!d && MOSSES.indexOf(d) >= 0; }
 function isMossEdge(d) { return !!d && MOSS_EDGE.indexOf(d) >= 0; }
 function isCrack(d) { return !!d && CRACKS.indexOf(d) >= 0; }
+function isRubble(d) { return !!d && RUBBLE.indexOf(d) >= 0; }
+/* Bones, moss and rubble are the litter a trap has to clear off its own
+   square - loose enough that a trap standing over it is no stranger than
+   a trap standing over bare stone.  A rug is not: nothing goes under a
+   rug, trap included, so that stays a separate, harder rule below. */
+function clearsForTrap(d) { return isMoss(d) || isRubble(d) || d === 'bones'; }
 /* how often moss creeps up an ordinary wall, and up a mossy one */
 var MOSS_WALL_PCT = 2, MOSS_WALL_MOSSY_PCT = 18;
 /* how much bare stone a cave of moss keeps, for the moss to thin against */
 var MOSS_BARE_PCT = 9, MOSS_BARE_MIN = 4;
 
+/* Wall torches: decor like any other, but mounted on a wall square
+   instead of a floor one, and drawn with a lean towards the room they
+   light rather than sitting square in the middle of their tile - see
+   torchFacing and torchOffset. */
+var TORCHES = ['torch', 'torch2'];
+function isTorch(d) { return !!d && TORCHES.indexOf(d) >= 0; }
+/* The direction a wall torch is facing into the room: [dx, dy].  Kept on
+   the level once worked out - see placeRoomTorches - so this is only
+   ever a fallback, for a torch a save from before decorFacing existed
+   still remembers. */
+function torchFacing(level, tx, ty) {
+  var k = ty * MAP_W + tx, d;
+  if (level && level.decorFacing && level.decorFacing[k]) return level.decorFacing[k];
+  if (level && level.tiles) {
+    for (d = 0; d < DIR4.length; d++) {
+      var nx = tx + DIR4[d][0], ny = ty + DIR4[d][1];
+      if (nx >= 0 && ny >= 0 && nx < MAP_W && ny < MAP_H &&
+          walkTile(level.tiles[ny * MAP_W + nx]))
+        return DIR4[d];
+    }
+  }
+  return [0, 1];
+}
+/* Where the flame itself sits, a little proud of the wall it hangs off -
+   a torch painted dead centre on its tile reads as buried in the stone.
+   In tile units, so the light it throws (glowTorch) and the sprite drawn
+   for it (drawDecor) start from the same point. */
+function torchOffset(fdir) {
+  return [fdir[0] === 1 ? 5 / TS : fdir[0] === -1 ? -5 / TS : 0,
+          fdir[1] === 1 ? 3 / TS : fdir[1] === -1 ? -2 / TS : 0];
+}
+
 var DECOR_INFO = {
+  torch:   ['A torch mounted on the stone wall.', 'It flickers with a warm yellow flame.'],
+  torch2:  ['A torch mounted on the stone wall.', 'It flickers with a warm yellow flame.'],
   moss:    ['You see moss on the floor.'],
   moss_b:  ['You see moss on the floor.'],
   moss2:   ['You see moss on the floor.'],
@@ -1678,7 +1795,7 @@ var MONS = [
   { c: 'B', n: 'bat', swim: 1, lv: 1, xp: 2, ar: 3, d: [[1, 4]], fly: 1, err: 1, nodrop: 1, hpMul: 0.85 , dmgMul: 0.9, dark: 1 },
   /* sure: four legs and no clumsiness in them.  Everything else that
      runs headlong in a fight can go over; this one cannot. */
-  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]], sure: 1, faces: 1 },
+  { c: 'C', n: 'centaur', smart: 1, lv: 4, xp: 15, ar: 4, d: [[1, 6]], sure: 1, faces: -1 },
   { c: 'D', n: 'dragon', smart: 1, lv: 10, xp: 5000, ar: -1, d: [[1, 8], [1, 8], [3, 10]], mean: 1, sp: 'flame' },
   /* weaver: it made the web, or it is at home in one.  A spider walks
      its own silk without sticking to it, and it does not tear it up on
@@ -1704,7 +1821,7 @@ var MONS = [
   { c: 'P', n: 'phantom', swim: 1, lv: 8, xp: 120, ar: 3, d: [[4, 4]], invis: 1 },
   { c: 'Q', n: 'skeleton', lv: 3, xp: 15, ar: 3, d: [[1, 5]], mean: 1, faces: 1 },
   { c: 'R', n: 'rattlesnake', swim: 1, lv: 2, xp: 9, ar: 3, d: [[1, 6]], mean: 1, sp: 'weaken' },
-  { c: 'S', n: 'snake', swim: 1, lv: 1, xp: 2, ar: 5, d: [[1, 4]], mean: 1, nodrop: 1, hpMul: 0.85, faces: 1 },
+  { c: 'S', n: 'snake', swim: 1, lv: 1, xp: 2, ar: 5, d: [[1, 4]], mean: 1, nodrop: 1, hpMul: 0.85, faces: -1 },
   { c: 'T', n: 'troll', lv: 6, xp: 120, ar: 4, d: [[1, 8], [1, 8], [2, 6]], mean: 1, regen: 1 },
   { c: 'U', n: 'ur-vile', smart: 1, lv: 7, xp: 190, ar: -2, d: [[1, 3], [1, 3], [1, 3], [4, 6]], mean: 1 },
   { c: 'V', n: 'vampire', smart: 1, lv: 8, xp: 350, ar: 1, d: [[1, 10]], mean: 1, regen: 1, sp: 'drainmax', dark: 1 },
@@ -1722,7 +1839,7 @@ var MONS = [
      the room.  It cannot spit with its feet in water, a flask of water
      puts it out for a while, and cold goes through it like nothing. */
   { c: 'h', n: 'half dragon', smart: 1, lv: 2, xp: 22, ar: 5, d: [[1, 8]],
-    mean: 1, sp: 'fireball', weak: 'cold', minDepth: 3, faces: 1 },
+    mean: 1, sp: 'fireball', weak: 'cold', minDepth: 3, faces: -1 },
   /* A lighter spider that fights at a distance: it spits web rather than
      closing, and what it does not stick to you it leaves on the floor
      for you to walk into later. */
@@ -2139,7 +2256,8 @@ function newLevelObj(depth) {
     tiles: new Uint8Array(MAP_W * MAP_H),
     flags: new Uint8Array(MAP_W * MAP_H),
     roomAt: new Int8Array(MAP_W * MAP_H).fill(-1),
-    rooms: [], items: [], mons: [], traps: [], decor: {},
+    rooms: [], items: [], mons: [], traps: [], decor: {}, decorFacing: {},
+    torches: [],
     locks: {}, doorMat: {}, temp: {}, corpses: [], clouds: [], sealed: {},
     barrels: {}, fuses: {}, burning: {}, webs: {}, webOver: {}, showAt: {}, arch: {}, cornerKept: {}, caged: {}, under: {}, bspan: {}, keyHomes: {}, rugId: {}, rugs: 0,
     darkHall: {}, shrine: null, alchemy: null, special: null,
@@ -3253,6 +3371,7 @@ function edgeTheMoss(L) {
       var ax = gx + DIR4[k][0], ay = gy + DIR4[k][1];
       if (ax < 0 || ay < 0 || ax >= MAP_W || ay >= MAP_H) continue;
       var aj = ay * MAP_W + ax;
+      if (trapAtLevel(L, ax, ay)) continue;      /* nothing grows over a trap */
       if (isMoss(L.decor[aj]) && !isMossEdge(L.decor[aj])) fade[aj] = 1;
     }
   }
@@ -3268,6 +3387,7 @@ function edgeTheMoss(L) {
       if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
       var j = ny * MAP_W + nx;
       if (L.tiles[j] !== FLOOR || L.decor[j]) continue;
+      if (trapAtLevel(L, nx, ny)) continue;      /* nothing grows over a trap */
       bare.push(j);
     }
     shuffle(bare);
@@ -3282,6 +3402,7 @@ function edgeTheMoss(L) {
   for (i = 0; i < L.tiles.length; i++) {
     if (L.tiles[i] !== FLOOR || L.decor[i]) continue;
     var wx = i % MAP_W, wy = (i / MAP_W) | 0, wall = 0, mossy = 0;
+    if (trapAtLevel(L, wx, wy)) continue;        /* nothing grows over a trap */
     for (k = 0; k < DIR4.length; k++) {
       var bx = wx + DIR4[k][0], by = wy + DIR4[k][1];
       if (bx < 0 || by < 0 || bx >= MAP_W || by >= MAP_H) continue;
@@ -3667,32 +3788,46 @@ function genLevelOnce(depth) {
   var placed = 0, tries = 0;
   while (placed < nt && tries++ < nt * 12) {
     var tp = randSpot(L, randRoom(L));
-    if (L.tiles[tp.y * MAP_W + tp.x] !== FLOOR) continue;
+    var tj = tp.y * MAP_W + tp.x;
+    if (L.tiles[tj] !== FLOOR) continue;
     if (tp.x === L.stair.x && tp.y === L.stair.y) continue;
     if (trapAtLevel(L, tp.x, tp.y)) continue;
     /* not in the moss: it is the one room you can stop and rest in, and
        something underfoot makes stopping the mistake */
-    var tri = L.roomAt[tp.y * MAP_W + tp.x];
+    var tri = L.roomAt[tj];
     if (tri >= 0 && L.rooms[tri] && L.rooms[tri].special === 'moss') continue;
+    /* nothing goes under a rug, a trap included - a bump in it would be
+       the one thing giving it away before you ever stepped there */
+    if (isRugName(L.decor[tj])) continue;
     var kind = pick(TRAPS);
     /* plenty of them sit in plain view - a dungeon you can read */
     L.traps.push({ x: tp.x, y: tp.y, k: kind, spent: 0,
                    found: rnd(100) < kind.open ? 1 : 0 });
+    /* and whatever litter was already lying here goes with it - a trap
+       is not something you find buried under a heap of bones */
+    if (clearsForTrap(L.decor[tj])) delete L.decor[tj];
     placed++;
   }
   /* Scattered litter, last of all - so it must not bury anything the
      rest of the floor has already put down.  This ran after the special
-     rooms and was dropping skulls on top of their chests. */
+     rooms and was dropping skulls on top of their chests, and after the
+     traps too, which quietly buried a few of them back under moss. */
   for (i = 0; i < 26; i++) {
     var dp = randSpot(L, randRoom(L));
     var dj = dp.y * MAP_W + dp.x;
     if (L.tiles[dj] !== FLOOR) continue;
     if (L.decor[dj]) continue;
     if (itemAt(L, dp.x, dp.y)) continue;
+    if (trapAtLevel(L, dp.x, dp.y)) continue;
     L.decor[dj] = pick(MOSS_FIELD.concat(['bones', 'skull', 'rubble', 'rubble2']));
   }
   buildLitMap(L);
   pickDarkness(L, depth);
+  /* Torches do not go up here.  A fresh floor still has its secret door
+     and its vault to be cut in, and tidyFloor to run after that - all
+     of which can take a wall a torch just went up on and make it a
+     doorway, or take it away outright.  See placeWallTorches, called
+     once the floor has stopped changing shape, in enterLevel. */
   return L;
 }
 
@@ -4383,6 +4518,17 @@ function secretsAtDeadEnds(L) {
     var wx = tip.x + tip.dx, wy = tip.y + tip.dy;
     var pt = L.tiles[wy * MAP_W + wx];
     if (pt !== WALL && pt !== ROCK) continue;
+    /* tidyFloor already guarantees no two doors touch, for whatever was
+       there when it ran - but both branches below turn this very square
+       into a secret door, which is new, and it must not land beside one
+       that is already there (the plain door a corridor was dug with,
+       say, one step back from this same dead end). */
+    var touchesDoor = false;
+    for (var td = 0; td < DIR4.length && !touchesDoor; td++) {
+      var tt = L.tiles[(wy + DIR4[td][1]) * MAP_W + (wx + DIR4[td][0])];
+      if (tt === DOOR || tt === SDOOR || tt === LOCKED) touchesDoor = true;
+    }
+    if (touchesDoor) continue;
     var bx0 = wx + tip.dx, by0 = wy + tip.dy;
     var bt0 = L.tiles[by0 * MAP_W + bx0];
     var couldOpen = walkable(bx0, by0) &&
@@ -4937,6 +5083,121 @@ function buildDarkMap(L, depth) {
   }
   for (i = 0; i < L.tiles.length; i++) if (L.darkHall && L.darkHall[i]) m[i] = 1;
   L.darkMap = m;
+}
+/* Place wall torches on the stone walls of a lit room.
+   - There should be at least 5 squares between any two torches.
+   - There should be a maximum of 2 torches on a 4-square pillar.
+   - Dark rooms get no torches, so they stay dark. */
+function placeRoomTorches(L, r) {
+  if (!L || !r || r.gone || !r.lit || r.dark || r.special === 'moss' ||
+      !r.floors || !r.floors.length) return 0;
+  if (!L.torches) L.torches = [];
+  if (!L.decorFacing) L.decorFacing = {};
+
+  function torchDist(x1, y1, x2, y2) {
+    return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2));
+  }
+  function tooClose(x, y) {
+    for (var i = 0; i < L.torches.length; i++)
+      if (torchDist(x, y, L.torches[i].x, L.torches[i].y) < 5) return true;
+    return false;
+  }
+  /* how many torches already stand on a 4-square (2x2) pillar of solid
+     wall that (x, y) is a corner of */
+  function pillarTorchCount(x, y) {
+    var count = 0, ox, oy;
+    for (ox = -1; ox <= 0; ox++) for (oy = -1; oy <= 0; oy++) {
+      var px0 = x + ox, py0 = y + oy, isPillar = true, dx, dy;
+      for (dy = 0; dy < 2 && isPillar; dy++) for (dx = 0; dx < 2; dx++) {
+        var wx = px0 + dx, wy = py0 + dy;
+        if (wx < 0 || wy < 0 || wx >= MAP_W || wy >= MAP_H ||
+            L.tiles[wy * MAP_W + wx] !== WALL) { isPillar = false; break; }
+      }
+      if (!isPillar) continue;
+      var pCount = 0, i;
+      for (i = 0; i < L.torches.length; i++) {
+        var tx = L.torches[i].x, ty = L.torches[i].y;
+        if (tx >= px0 && tx < px0 + 2 && ty >= py0 && ty < py0 + 2) pCount++;
+      }
+      if (pCount > count) count = pCount;
+    }
+    return count;
+  }
+
+  var candidateWalls = [], f, d, seen = {};
+  for (f = 0; f < r.floors.length; f++) {
+    var fx = r.floors[f][0], fy = r.floors[f][1];
+    for (d = 0; d < DIR4.length; d++) {
+      var wx = fx + DIR4[d][0], wy = fy + DIR4[d][1];
+      if (wx < 1 || wy < 1 || wx >= MAP_W - 1 || wy >= MAP_H - 1) continue;
+      var k = wy * MAP_W + wx;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      if (L.tiles[k] !== WALL || L.decor[k]) continue;
+      /* never on the wall right above or below a door - it would be
+         mounted in the doorway rather than beside it */
+      var northTile = L.tiles[(wy - 1) * MAP_W + wx];
+      var southTile = L.tiles[(wy + 1) * MAP_W + wx];
+      if (northTile === DOOR || northTile === SDOOR || northTile === LOCKED ||
+          southTile === DOOR || southTile === SDOOR || southTile === LOCKED)
+        continue;
+      candidateWalls.push({ x: wx, y: wy, idx: k, dir: d });
+    }
+  }
+  if (!candidateWalls.length) return 0;
+
+  var placed = 0, bySide = [[], [], [], []], i, side;
+  for (i = 0; i < candidateWalls.length; i++) bySide[candidateWalls[i].dir].push(candidateWalls[i]);
+  for (side = 0; side < 4; side++)
+    bySide[side].sort(function (a, b) {
+      return (Math.abs(a.x - r.cx) + Math.abs(a.y - r.cy)) -
+             (Math.abs(b.x - r.cx) + Math.abs(b.y - r.cy));
+    });
+
+  /* One torch per wall of the room at most, nearest the middle of that
+     wall first - a room gets torches spread round it rather than
+     clustered on whichever side happened first. */
+  function placeOne(list) {
+    for (var j = 0; j < list.length; j++) {
+      var cand = list[j];
+      if (tooClose(cand.x, cand.y) || pillarTorchCount(cand.x, cand.y) >= 2) continue;
+      var dir = [-DIR4[cand.dir][0], -DIR4[cand.dir][1]];
+      L.decor[cand.idx] = 'torch';
+      L.decorFacing[cand.idx] = dir;
+      L.torches.push({ x: cand.x, y: cand.y, dir: dir });
+      return true;
+    }
+    return false;
+  }
+  for (side = 0; side < 4; side++) if (placeOne(bySide[side])) placed++;
+  /* A small or oddly-shaped room can come up with every wall's nearest
+     candidate too close to one already placed, and get nothing at all
+     from the pass above.  One more try, over every candidate rather
+     than one per side, so a lit room is never left with no torch just
+     because of the order the walls happened to be tried in. */
+  if (!placed && placeOne(candidateWalls)) placed++;
+  return placed;
+}
+function placeWallTorches(L) {
+  if (!L || !L.rooms) return 0;
+  var total = 0;
+  for (var i = 0; i < L.rooms.length; i++) total += placeRoomTorches(L, L.rooms[i]);
+  return total;
+}
+/* A wall taken down takes its torch with it - a blast leaves rubble and
+   open air, not a bracket nailed to nothing.  Anything that turns a
+   torch's own wall square into something else should call this rather
+   than only clearing the decor: the light has to stop with the wall,
+   and L.torches is what lightMap actually reads. */
+function removeTorchAt(L, j) {
+  if (!L || !isTorch(L.decor[j])) return;
+  delete L.decor[j];
+  if (L.decorFacing) delete L.decorFacing[j];
+  if (L.torches) {
+    var x = j % MAP_W, y = (j / MAP_W) | 0;
+    for (var i = L.torches.length - 1; i >= 0; i--)
+      if (L.torches[i].x === x && L.torches[i].y === y) L.torches.splice(i, 1);
+  }
 }
 /* Mark some rooms and some runs of hallway as unlit before the map is
    built.  A dark room is dark whether or not it was ever lit. */

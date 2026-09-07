@@ -12,17 +12,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PXLRogue">
 <meta name="theme-color" content="#05060d">
-<title>PXLRogue</title>
-<link rel="icon" href="favicon.ico">
+<title>Rogue-8 playtest</title>
 <style>
   /* dvh is the height that is actually showing once the address bar
      has slid away; the plain percentage is the fallback. */
   html,body{margin:0;padding:0;height:100%;height:100dvh;
             background:#05060d;overflow:hidden;overscroll-behavior:none;}
   body{display:flex;align-items:center;justify-content:center;}
-  /* The canvas backing store is EXACTLY 230x128 device pixels.
-     It is only ever blown up by a whole-number factor, with all
-     smoothing disabled, so every source pixel stays a perfect square. */
   canvas{
     image-rendering:pixelated;
     image-rendering:crisp-edges;
@@ -41,15 +37,7 @@
     -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
-  /* The retro monitor, switched on from the ESC menu.  It is a sheet of
-     glass laid over the picture rather than anything drawn into it, and
-     that is deliberate: the backing store stays exactly 230x128, and
-     scanlines drawn into it would be a whole game pixel thick - four
-     screen pixels at the usual scale, which cuts every sprite in half.
-     Laid over the top they are as fine as the screen showing them,
-     which is what a scanline actually is.  It also costs nothing per
-     frame; the browser composites it and the game never thinks about
-     it again. */
+  /* the retro monitor - see build.py, which has the reasoning */
   #crt{
     position:fixed; display:none; pointer-events:none; z-index:5;
     background:
@@ -59,32 +47,59 @@
       repeating-linear-gradient(to right,
         rgba(255,64,64,0.045) 0px, rgba(64,255,64,0.045) 1px,
         rgba(64,64,255,0.045) 2px, rgba(0,0,0,0.00) 3px);
-    /* the dark curve of the tube at its corners */
     box-shadow:inset 0 0 34px 6px rgba(0,0,0,0.42);
   }
   #crt.on{ display:block; }
-  #nosheet{
+  /* The picker is ordinary HTML over the canvas.  It is scaffolding for
+     testing, not part of the game, so it does not pretend to be pixels. */
+  #pick{
     position:fixed; inset:0; display:none;
-    align-items:center; justify-content:center; text-align:center;
-    color:#c3ccd9; background:#05060d; padding:20px;
-    font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;
+    flex-direction:column; align-items:center; justify-content:center;
+    background:rgba(5,6,13,0.94); color:#c3ccd9;
+    font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;
+    z-index:10;
   }
+  #pickhead{ color:#fad039; margin-bottom:14px; letter-spacing:1px; }
+  #picklist{
+    display:flex; flex-wrap:wrap; gap:8px;
+    max-width:720px; justify-content:center;
+  }
+  #picklist button{
+    font:inherit; color:#c3ccd9; background:#141829;
+    border:1px solid #3f4966; padding:7px 13px; cursor:pointer;
+    letter-spacing:1px;
+  }
+  #picklist button:hover{ background:#2b3352; border-color:#fad039; color:#fff; }
+  /* a bench button for something you already have */
+  #picklist button.on{ background:#2b3352; border-color:#fad039; color:#fad039; }
+  #bench{
+    position:fixed; right:10px; top:10px; z-index:11;
+    display:flex; gap:6px;
+  }
+  #bench button{
+    font:12px ui-monospace,Menlo,Consolas,monospace;
+    color:#86909f; background:#141829; border:1px solid #3f4966;
+    padding:5px 10px; cursor:pointer;
+  }
+  #bench button:hover{ color:#fff; border-color:#fad039; }
 </style>
 </head>
 <body>
 <canvas id="scr" width="320" height="200"></canvas>
 <div id="crt"></div>
-<div id="nosheet">spritesheet.png is not beside this file.<br>
-The graphics live in that PNG - keep the two together.</div>
+<div id="nosheet" style="position:fixed;inset:0;display:none;align-items:center;
+  justify-content:center;color:#c3ccd9;background:#05060d;text-align:center;
+  font:14px/1.6 ui-monospace,Menlo,Consolas,monospace">
+spritesheet.png is not beside this file.<br>The graphics live in that PNG.</div>
+<div id="bench">
+  <button id="perks">perks</button>
+  <button id="items">items</button>
+  <button id="again">pick again</button>
+</div>
+<div id="pick"><div id="pickhead"></div><div id="picklist"></div></div>
 <script>
-var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 14, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "trapdoor": 20, "keyhole": 21, "ice_wall": 22, "fire_wall": 23, "door_wood": 24, "door_bronze": 25, "door_iron": 26, "door_silver": 27, "door_gold": 28, "door_crystal": 29, "moss": 30, "moss_b": 31, "moss2": 32, "moss3": 33, "moss4": 34, "crack": 35, "crack2": 36, "crack3": 37, "crack4": 38, "bones": 39, "skull": 40, "web": 41, "rubble": 42, "table": 43, "chair": 44, "barrel": 45, "shelf": 46, "hearth_a": 47, "hearth_b": 48, "bed_c": 49, "bed_m": 50, "trap": 51, "trap_dart": 52, "trap_gas": 53, "trap_pit": 54, "rug_00": 55, "rug_01": 56, "rug_0c": 57, "rug_10": 58, "rug_11": 59, "rug_1c": 60, "rug_20": 61, "rug_21": 62, "rug_2c": 63, "rug_c1": 64, "chest": 65, "chest_open": 66, "pouch": 67, "chest_wood": 68, "chest_bronze": 69, "chest_iron": 70, "chest_silver": 71, "chest_gold": 72, "chest_crystal": 73, "key_wood": 74, "key_bronze": 75, "key_iron": 76, "key_silver": 77, "key_gold": 78, "key_crystal": 79, "gold": 80, "gold2": 81, "amulet": 82, "crystal": 83, "pin": 84, "dynamite": 85, "food": 86, "fruit": 87, "mushroom": 88, "mush_b": 89, "mush_y": 90, "mush_p": 91, "mush_g": 92, "berries": 93, "scroll": 94, "wand": 95, "wand2": 96, "wand3": 97, "staff": 98, "staff2": 99, "ring_b": 100, "ring_g": 101, "ring_r": 102, "ring_c": 103, "ring_y": 104, "ring_p": 105, "ring_m": 106, "ring_o": 107, "ring_n": 108, "pot_r": 109, "pot_b": 110, "pot_g": 111, "pot_y": 112, "pot_p": 113, "pot_c": 114, "pot_w": 115, "pot_o": 116, "sword": 117, "dagger": 118, "dagger_throw": 119, "mace": 120, "axe": 121, "spear": 122, "bow": 123, "bow_long": 124, "crossbow": 125, "arrow": 126, "bolt": 127, "bolt2": 128, "stone": 129, "stone_blast": 130, "stone_slow": 131, "stone_return": 132, "stone_fire": 133, "stone_ice": 134, "stone_shock": 135, "armor_l": 136, "armor_c": 137, "armor_p": 138, "armor_glass": 139, "shield": 140, "shield2": 141, "shield3": 142, "cap": 143, "helm": 144, "crown": 145, "boots": 146, "sandals": 147, "ironboots": 148, "hero": 149, "hero2": 150, "grave": 151, "mon_A": 152, "mon_B": 153, "mon_C": 154, "mon_D": 155, "mon_E": 156, "mon_F": 157, "mon_G": 158, "mon_H": 159, "mon_I": 160, "mon_J": 161, "mon_K": 162, "mon_L": 163, "mon_M": 164, "mon_N": 165, "mon_O": 166, "mon_P": 167, "mon_Q": 168, "mon_R": 169, "mon_S": 170, "mon_T": 171, "mon_U": 172, "mon_V": 173, "mon_W": 174, "mon_X": 175, "mon_Y": 176, "mon_Z": 177, "mon_h": 178, "mon_w": 179, "mon_k": 180, "flame": 181, "flame2": 182, "frost": 183, "magic": 184, "gas": 185, "icecube": 186, "flash1": 187, "flash2": 188, "flash3": 189, "mouse": 190, "mouse_get": 191, "cursor": 192, "point": 193, "heart": 194, "pan_cross": 195, "mk_z": 196, "mk_q": 197, "mk_x": 198, "mk_ally": 199, "vial_g": 200, "vial_k": 201, "vial_p": 202, "vial_w": 203, "vial_r": 204, "vial_y": 205, "vial_b": 206, "ice": 207, "slime": 208, "rubble2": 209, "torch": 210, "torch2": 211, "water_refl": 212, "water2_refl": 213}, "font": {"x": 0, "y": 112, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 154, "moved": {}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bed", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen", "hearth", "hearth2", "rug_c", "rug_c2", "rug_e", "rug_n", "rug_ne", "rug_nw", "rug_s", "rug_se", "rug_sw", "rug_w"]};
-/* The graphics are the file on disk, not a copy of it welded in here.
-   Repaint spritesheet.png and reload - there is no build step for art. */
-var ATLAS_PNG = "spritesheet.png?v=cb6b0307b2";
-/* The title screen is a picture too, and the same rule applies: it is a
-   file beside this one, not baked in.  If it is missing the title screen
-   simply comes up black and the menu still works. */
-var SPLASH_PNG = "PXLRogue_splash.png?v=4bfe8e2c1e";
+var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 14, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "trapdoor": 20, "keyhole": 21, "ice_wall": 22, "fire_wall": 23, "door_wood": 24, "door_bronze": 25, "door_iron": 26, "door_silver": 27, "door_gold": 28, "door_crystal": 29, "moss": 30, "moss_b": 31, "moss2": 32, "moss3": 33, "moss4": 34, "crack": 35, "crack2": 36, "crack3": 37, "crack4": 38, "bones": 39, "skull": 40, "web": 41, "rubble": 42, "table": 43, "chair": 44, "barrel": 45, "trap": 46, "trap_dart": 47, "trap_gas": 48, "trap_pit": 49, "rug_00": 50, "rug_01": 51, "rug_0c": 52, "rug_10": 53, "rug_11": 54, "rug_1c": 55, "rug_20": 56, "rug_21": 57, "rug_2c": 58, "rug_c1": 59, "chest": 60, "chest_open": 61, "pouch": 62, "chest_wood": 63, "chest_bronze": 64, "chest_iron": 65, "chest_silver": 66, "chest_gold": 67, "chest_crystal": 68, "key_wood": 69, "key_bronze": 70, "key_iron": 71, "key_silver": 72, "key_gold": 73, "key_crystal": 74, "gold": 75, "gold2": 76, "amulet": 77, "crystal": 78, "pin": 79, "dynamite": 80, "food": 81, "fruit": 82, "mushroom": 83, "mush_b": 84, "mush_y": 85, "mush_p": 86, "mush_g": 87, "berries": 88, "scroll": 89, "wand": 90, "wand2": 91, "wand3": 92, "staff": 93, "staff2": 94, "ring_b": 95, "ring_g": 96, "ring_r": 97, "ring_c": 98, "ring_y": 99, "ring_p": 100, "ring_m": 101, "ring_o": 102, "ring_n": 103, "pot_r": 104, "pot_b": 105, "pot_g": 106, "pot_y": 107, "pot_p": 108, "pot_c": 109, "pot_w": 110, "pot_o": 111, "sword": 112, "dagger": 113, "dagger_throw": 114, "mace": 115, "axe": 116, "spear": 117, "bow": 118, "bow_long": 119, "crossbow": 120, "arrow": 121, "bolt": 122, "bolt2": 123, "stone": 124, "stone_blast": 125, "stone_slow": 126, "stone_return": 127, "stone_fire": 128, "stone_ice": 129, "stone_shock": 130, "armor_l": 131, "armor_c": 132, "armor_p": 133, "armor_glass": 134, "shield": 135, "shield2": 136, "shield3": 137, "cap": 138, "helm": 139, "crown": 140, "boots": 141, "sandals": 142, "ironboots": 143, "hero": 144, "hero2": 145, "grave": 146, "mon_A": 147, "mon_B": 148, "mon_C": 149, "mon_D": 150, "mon_E": 151, "mon_F": 152, "mon_G": 153, "mon_H": 154, "mon_I": 155, "mon_J": 156, "mon_K": 157, "mon_L": 158, "mon_M": 159, "mon_N": 160, "mon_O": 161, "mon_P": 162, "mon_Q": 163, "mon_R": 164, "mon_S": 165, "mon_T": 166, "mon_U": 167, "mon_V": 168, "mon_W": 169, "mon_X": 170, "mon_Y": 171, "mon_Z": 172, "mon_h": 173, "mon_w": 174, "mon_k": 175, "flame": 176, "flame2": 177, "frost": 178, "magic": 179, "gas": 180, "icecube": 181, "flash1": 182, "flash2": 183, "flash3": 184, "mouse": 185, "mouse_get": 186, "cursor": 187, "point": 188, "heart": 189, "pan_cross": 190, "mk_z": 191, "mk_q": 192, "mk_x": 193, "mk_ally": 194, "vial_g": 195, "vial_k": 196, "vial_p": 197, "vial_w": 198, "vial_r": 199, "vial_y": 200, "vial_b": 201, "ice": 202, "slime": 203, "rubble2": 204, "torch": 205, "torch2": 206, "water_refl": 207, "water2_refl": 208}, "font": {"x": 0, "y": 112, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 154, "moved": {}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen", "rug_c", "rug_c2", "rug_e", "rug_n", "rug_ne", "rug_nw", "rug_s", "rug_se", "rug_sw", "rug_w"]};
+var ATLAS_PNG = "spritesheet.png?v=eea097ddac";
 /* ============================================================ ROGUE-8
    Part 1 : constants, RNG, data tables, dungeon generation.
    The whole game renders into a 230x128 pixel buffer, nothing else.
@@ -355,9 +370,6 @@ var PERKS = [
   { id: 'dash',   n: 'Dashing rogue',
     txt: 'you bound two squares, and strike hard off the run',
     s: 'dash every ' + DASH_EVERY + ' turns' },
-  { id: 'trapsmith', n: 'Trapsmith',
-    txt: 'you spot traps, lift them and lay them again',
-    s: 'disarm and re-lay traps' },
   { id: 'torchbearer', n: 'Torchbearer',
     txt: 'you can lift a torch from its bracket and carry it',
     s: 'carry a lit torch' }
@@ -376,15 +388,6 @@ var PERK_RESIST = 0.5;             /* ember skin, frostborn, ironblood */
 var PERK_MELEE_DAM = 2, PERK_SHOT_DAM = 4, PERK_SHOT_RANGE = 1;
 var PERK_RIPOSTE_PCT = 20, PERK_EXECUTE_PCT = 12, PERK_EXECUTE_FRAC = 4;
 var PERK_SEARCH = 35, PERK_APPRAISE = 40;
-/* THE TRAPSMITH.  What he is better at is traps and nothing else - so
-   the bonus is dealt where traps are looked for rather than folded into
-   the general search, which would make him better at secret doors too.
-
-   TRAP_TAKE is the chance of getting one up whole.  Fail it and it goes
-   off in your hands, which is the price of the trick and the reason it
-   is a decision rather than free money. */
-var PERK_TRAPS = 30;
-var TRAP_TAKE = 55, TRAP_TAKE_PERK = 30;
 var PERK_GOLD_MULT = 1.5;
 /* Dexterous: how often a scroll survives the reading, and how often a
    wand or a stone keeps the charge you just spent. */
@@ -1234,27 +1237,12 @@ var CELLAR_GOLD_MIN = 60, CELLAR_GOLD_MAX = 240;
    of these than it does over bare stone, and then the thing is gone.
    Barrels are not in the list - they have a fuse of their own - and
    neither is anything made of stone or bone. */
-/* A BED is six squares out of two cells - the lower left corner and the
-   lower middle - with the other four mirrored off them: left to right
-   for the right hand end, top to bottom for the head.  The square's name
-   carries which piece it is and which way round, exactly as a rug's
-   does: 'h' mirrored left to right, 'v' top to bottom.
-
-   A FIREPLACE is two squares wide out of one cell, the right half the
-   mirror of the left, and burns on the wall torch's two-frame beat. */
-var BED_NAMES = ['bed', 'bed_h', 'bed_v', 'bed_hv', 'bed_m', 'bed_mv'];
-function isBedName(d) { return !!d && BED_NAMES.indexOf(d) >= 0; }
-function isHearthName(d) { return d === 'hearth' || d === 'hearth_h'; }
 var BURNS = { table: 'table', chair: 'chair', moss: 'moss', moss_b: 'moss',
-              moss2: 'moss', moss3: 'moss', moss4: 'moss', web: 'web',
-              /* a case of dry books and a straw mattress: both go up */
-              shelf: 'shelf', bed: 'bed', bed_h: 'bed', bed_v: 'bed',
-              bed_hv: 'bed', bed_m: 'bed', bed_mv: 'bed' };
+              moss2: 'moss', moss3: 'moss', moss4: 'moss', web: 'web' };
 var BURNS_PLURAL = { table: 'tables', chair: 'chairs', rug: 'rugs', moss: 'moss',
-                    shelf: 'shelves', bed: 'beds',
                      web: 'webs', bridge: 'bridges' };
 /* the order to name them in when several go at once */
-var BURNS_ORDER = ['shelf', 'bed', 'table', 'chair', 'rug', 'moss', 'web', 'bridge'];
+var BURNS_ORDER = ['table', 'chair', 'rug', 'moss', 'web', 'bridge'];
 /* Web is the one thing fire jumps to on its own.  Everything else has to
    be standing in the flame; a patch of web catches from the square
    beside it and is gone in a turn or two, so a fire in a nest of it runs
@@ -1277,17 +1265,7 @@ var PUDDLE_TURNS_MIN = 12, PUDDLE_TURNS_MAX = 20;
    the second: a stone kerb round a pool and cracked flagstones round a
    chasm are the floor itself, and lifting them leaves a drawing with a
    piece missing. */
-var FURNISHINGS = { table: 1, chair: 1, barrel: 1, shelf: 1,
-                    bed: 1, bed_h: 1, bed_v: 1, bed_hv: 1, bed_m: 1, bed_mv: 1 };
-/* TINDER.  Most furniture has to be standing IN a fire to catch: a table
-   with a flame beside it is a table beside a fire.  These do not - they
-   go up from the next square, the way powder does, because a case of dry
-   books is not furniture with a fire near it, it is kindling stacked to
-   the ceiling.
-
-   Anything else that should catch from beside it is one more row here
-   and nothing else - see lightTinder. */
-var TINDER = { shelf: 1 };
+var FURNISHINGS = { table: 1, chair: 1, barrel: 1 };
 /* The flame handed on from one square of a rug to the next: one turn of
    it, and then that square's own clock starts.  Not the whole of what
    the first square had left, or twenty squares of rug each handing the
@@ -1546,17 +1524,6 @@ var GAS_GROW = 5;                   /* rings it puts out, one a turn */
 var GAS_LIFE = [5, 7];              /* turns a square of it hangs about */
 var GAS_BURN_TURNS = [2, 3];        /* and how long it burns once it goes up */
 var GAS_CATCH_REACH = 2;            /* how far the fire jumps through it */
-/* A torch is a flame in a holder, and it takes a moment to set gas off.
-   Loose fire does not: a torch thrown on the floor, a burning table, a
-   creature alight, a lit fuse - anything actually burning in the open
-   goes off the instant the gas reaches it.
-
-   The difference is not fussiness, it is what makes the vial usable.
-   Wall torches are everywhere, so gas that went up the moment it touched
-   one could never be thrown anywhere indoors; a turn of grace is what
-   turns "you cannot use this here" into "you have one turn to get out of
-   the room". */
-var GAS_TORCH_TURNS = 1;
 var GAS_DAMAGE = [2, 4];            /* standing in it unlit */
 var GAS_MAX = 120;                  /* squares, so a long hall does not fill the floor */
 var VIAL_FUME_REACH = 5;
@@ -2088,15 +2055,6 @@ var DECOR_INFO = {
   rubble2: ['A heap of broken stone.'],
   table:   ['A table. You can walk round it,', 'not over it.'],
   chair:   ['A chair, long since abandoned.'],
-  shelf:   ['Shelves of books. ENTER to go', 'through them. A flame beside it', 'is enough.'],
-  bed:     ['A bed. Somebody slept here once.'],
-  bed_h:   ['A bed. Somebody slept here once.'],
-  bed_v:   ['A bed. Somebody slept here once.'],
-  bed_hv:  ['A bed. Somebody slept here once.'],
-  bed_m:   ['A bed. Somebody slept here once.'],
-  bed_mv:  ['A bed. Somebody slept here once.'],
-  hearth:  ['A fireplace, still burning.', 'It lights the room.'],
-  hearth_h:['A fireplace, still burning.', 'It lights the room.'],
   kerb:    ['Dressed stone round the spring.'],
   barrel:  ['A barrel of black powder.', 'Fire or a blast sets it off.'],
   web:     ['Sticky web across the floor.', 'Whatever steps in it stops.']
@@ -2647,8 +2605,6 @@ function newLevelObj(depth) {
     torches: [], torchSeen: {},
     locks: {}, doorMat: {}, temp: {}, corpses: [], clouds: [], sealed: {},
     barrels: {}, fuses: {}, dyn: {}, burning: {}, webs: {}, webOver: {}, showAt: {}, arch: {}, cornerKept: {}, caged: {}, under: {}, bspan: {}, keyHomes: {}, rugId: {}, rugs: 0,
-    /* which shelves of a library have already been gone through */
-    shelved: {},
     darkHall: {}, shrine: null, alchemy: null, special: null,
     wanderLeft: WANDER_BUDGET + ((depth / WANDER_BUDGET_PER_DEPTH) | 0),
     stair: { x: 0, y: 0 }
@@ -3467,406 +3423,6 @@ function furnishRoom(L, r) {
   return placed > 1;
 }
 
-/* ======================================================== room types
-   NOT special rooms.  A special room announces itself: the game stops,
-   a box comes up and tells you what you have walked into.  A room TYPE
-   says nothing at all.  It is an ordinary room that happens to have
-   been used for something once, and the only thing that tells you is
-   the furniture in it.
-
-   So there is no dialog, no entry in SPECIAL_ROOMS, and no shape or
-   size of its own: a library is a library because of the shelves round
-   its walls, whatever the room happens to look like.  One a floor at
-   most, and not on every floor - see ROOM_KIND_PCT. */
-var ROOM_KIND_PCT = 38;
-/* ------------------------------------------------------------- books
-   A shelf of a library is a thing to go through rather than a thing to
-   look at, and what is in it is mostly paper.  Now and then it is one of
-   these.
-
-   A big book is not carried and never goes in the pack: you find it, you
-   stand there and read it, and what you get is KNOWING - every wand in
-   the dungeon named from that moment, every flask, every blade.  It is
-   the identify scroll's whole job done once and for good, for one kind
-   of thing, and it is worth walking a library for.
-
-   `learn` says which drawer of KNOWN it opens.  A new book is one row
-   here and one case in bookLearn - nothing else. */
-var BOOKS = [
-  { learn: 'swords',  n: 'The big book of swords',
-    txt: 'Every blade in the dungeon, drawn and named.' },
-  { learn: 'bows',    n: 'The big book of bows',
-    txt: 'Staves, strings and shafts, with the draw weight of each.' },
-  { learn: 'stones',  n: 'The big book of rune stones',
-    txt: 'The carvings, and what each one is cut to do.' },
-  { learn: 'armor',   n: 'The big book of armors',
-    txt: 'Plate, mail, leather, and what turns a blow.' },
-  { learn: 'scroll',  n: 'The big book of scrolls',
-    txt: 'The titles nobody can read, and what they say.' },
-  { learn: 'wand',    n: 'The big book of wands',
-    txt: 'Woods, metals, and what comes out of the end.' },
-  { learn: 'potion',  n: 'The big book of potions',
-    txt: 'Every colour of glass, and what is behind it.' },
-  { learn: 'vial',    n: 'The big book of vials',
-    txt: 'The heavy glass, and what not to be standing in.' },
-  /* the one kind left that a run can go by without ever learning */
-  { learn: 'mush',    n: 'The big book of mushrooms',
-    txt: 'Which caps feed you and which ones do not.' }
-];
-/* How a shelf pays out.  Most of what is in one is paper nobody wants,
-   and that is the point: a library is a room to spend turns in, and
-   turns are the thing the dungeon charges you. */
-var SHELF_SCROLL_PCT = 26;      /* a scroll, of whatever kind */
-var SHELF_BOOK_PCT = 9;         /* and now and then, one of the books */
-/* A floor square with stone directly behind it, and the way that stone
-   lies - which is where a bookshelf or a bed goes.  Comes back with the
-   direction pointing OUT of the room, so a thing standing here has its
-   back to the wall. */
-function backsOntoWall(L, x, y) {
-  var d;
-  for (d = 0; d < DIR4.length; d++) {
-    var wx = x + DIR4[d][0], wy = y + DIR4[d][1];
-    if (wx < 0 || wy < 0 || wx >= MAP_W || wy >= MAP_H) continue;
-    if (walkTile(L.tiles[wy * MAP_W + wx])) continue;
-    return DIR4[d];
-  }
-  return null;
-}
-/* Is this square somewhere furniture may stand?  Plain floor of this
-   room, nothing on it, nothing under it, and not in a doorway or on a
-   stair - a bookshelf across the only way out is not charming. */
-function freeForFurniture(L, r, x, y) {
-  var j = y * MAP_W + x, d;
-  if (L.tiles[j] !== FLOOR) return false;
-  if (L.roomAt[j] !== r.idx) return false;
-  if (L.decor[j]) return false;
-  if (x === L.stair.x && y === L.stair.y) return false;
-  if (L.up && x === L.up.x && y === L.up.y) return false;
-  if (itemAt(L, x, y) || trapAtLevel(L, x, y)) return false;
-  /* and never in front of a door */
-  for (d = 0; d < DIR8.length; d++) {
-    var t = L.tiles[(y + DIR8[d][1]) * MAP_W + (x + DIR8[d][0])];
-    if (t === DOOR || t === SDOOR || t === LOCKED) return false;
-  }
-  return true;
-}
-/* Everything lying on the floor of this room, lifted.  clearDecor takes
-   the furniture and the rugs; a room somebody actually lived in has been
-   swept, so the bones and the rubble and the tufts of moss go too.  A
-   solar is furnished on purpose, and it cannot be furnished on purpose
-   on top of whatever the litter pass happened to scatter there. */
-function sweepRoom(L, r) {
-  var i, lifted = 0;
-  for (i = 0; i < r.floors.length; i++) {
-    var j = r.floors[i][1] * MAP_W + r.floors[i][0];
-    if (!L.decor[j]) continue;
-    delete L.decor[j];
-    if (L.rugId) delete L.rugId[j];
-    if (L.barrels) delete L.barrels[j];
-    lifted++;
-  }
-  return lifted;
-}
-/* The traps in this room, MOVED somewhere else on the floor rather than
-   thrown away.  Every floor is meant to have something underfoot on it
-   somewhere, and a floor whose only trap happened to be laid in the room
-   that later became a library came out with none at all - a rule quietly
-   broken by a room being furnished.
-
-   Hallways count as somewhere to put one.  A trap in a corridor is an
-   ordinary thing, and taking them puts the pool up from a handful of
-   squares to hundreds, which is the difference between a trap that finds
-   somewhere else to be and one that is lost. */
-function moveTrapsOut(L, r) {
-  var spots = [], j, i;
-  for (j = 0; j < L.tiles.length; j++) {
-    if (L.tiles[j] !== FLOOR && L.tiles[j] !== CORR) continue;
-    if (L.roomAt[j] === r.idx) continue;
-    var sx = j % MAP_W, sy = (j / MAP_W) | 0;
-    if (sx === L.stair.x && sy === L.stair.y) continue;
-    if (L.up && sx === L.up.x && sy === L.up.y) continue;
-    if (isRugName(L.decor[j])) continue;
-    var ri = L.roomAt[j];
-    if (ri >= 0 && L.rooms[ri] && L.rooms[ri].special === 'moss') continue;
-    spots.push(j);
-  }
-  shuffle(spots);
-  var next = 0;
-  for (i = L.traps.length - 1; i >= 0; i--) {
-    var tp = L.traps[i];
-    if (L.roomAt[tp.y * MAP_W + tp.x] !== r.idx) continue;
-    var moved = 0;
-    while (next < spots.length && !moved) {
-      var sj = spots[next++], nx = sj % MAP_W, ny = (sj / MAP_W) | 0;
-      if (trapAtLevel(L, nx, ny)) continue;
-      tp.x = nx; tp.y = ny;
-      if (clearsForTrap(L.decor[sj])) delete L.decor[sj];
-      moved = 1;
-    }
-    if (!moved) L.traps.splice(i, 1);
-  }
-}
-
-/* A LIBRARY.  Shelves stood along the walls wherever there is stone to
-   put their backs against, and a reading table or two out on the floor
-   with chairs drawn up to it. */
-function makeLibrary(L, r) {
-  var i, put = 0, edge = [], mid = [];
-  for (i = 0; i < r.floors.length; i++) {
-    var x = r.floors[i][0], y = r.floors[i][1];
-    if (!freeForFurniture(L, r, x, y)) continue;
-    if (backsOntoWall(L, x, y)) edge.push([x, y]); else mid.push([x, y]);
-  }
-  if (edge.length < 4) return false;
-  shuffle(edge);
-  /* Not every foot of wall: a room shelved solidly all the way round
-     reads as a corridor with a pattern on it.  Two in three, shuffled,
-     which leaves gaps in no order anybody can see. */
-  for (i = 0; i < edge.length; i++) {
-    if (rnd(100) < 34) continue;
-    L.decor[edge[i][1] * MAP_W + edge[i][0]] = 'shelf';
-    put++;
-  }
-  if (!put) return false;
-  /* A room somebody kept books in is a room somebody kept a light in.
-     Said here, not left to pickDarkness: the furnishing happens after
-     the lamps are decided (it has to - see addRoomKind), so a library
-     could come out pitch dark, and a dark room is one you cannot see
-     anything happen in.  A rug burning away in one announced nothing at
-     all, because nothing announces what you cannot see. */
-  r.lit = 1; r.dark = 0;
-  /* NOTHING UNDERFOOT AND NOTHING TO BLOW UP.  A library is a room you
-     stand still in - every shelf is a turn spent going through it - and
-     a room you have to stand still in is the worst possible place for a
-     trap.  Powder is worse again: the one room in the dungeon made of
-     dry paper is not where a barrel belongs. */
-  moveTrapsOut(L, r);
-  for (i = 0; i < r.floors.length; i++) {
-    var bj = r.floors[i][1] * MAP_W + r.floors[i][0];
-    if (L.barrels && L.barrels[bj]) delete L.barrels[bj];
-    if (L.decor[bj] === 'barrel') delete L.decor[bj];
-  }
-  /* and the tables, out where you would actually sit to read */
-  shuffle(mid);
-  var tables = mid.length >= 9 ? 2 : 1, t;
-  for (t = 0; t < tables && mid.length; t++) {
-    var spot = mid.shift();
-    if (!freeForFurniture(L, r, spot[0], spot[1])) continue;
-    L.decor[spot[1] * MAP_W + spot[0]] = 'table';
-    var d;
-    for (d = 0; d < DIR4.length; d++) {
-      if (rnd(100) < 40) continue;
-      var cx = spot[0] + DIR4[d][0], cy = spot[1] + DIR4[d][1];
-      if (!freeForFurniture(L, r, cx, cy)) continue;
-      L.decor[cy * MAP_W + cx] = 'chair';
-    }
-  }
-  r.kind = 'library';
-  return true;
-}
-/* A SOLAR - the room somebody actually lived in.  A fireplace set into
-   one wall, a rug on the floor and a bed against another wall.  All
-   three, every time: a solar with no rug is a room with a fire in it,
-   and a solar with no bed is a hall.  If any of them will not fit, the
-   room is put back exactly as it was and another one is tried.
-
-   No pillars, either.  A lump of stone in the middle of somebody's
-   bedroom is a hall that was never finished, and a fireplace has to be
-   in a WALL - a hearth built into a pillar is a chimney going nowhere.
-
-   The fireplace is a light like a torch is a light: it goes in the
-   stone, it lights the room, it shines on water and gas standing in
-   front of it catches after a turn.  It is registered in L.torches for
-   all of that, and drawn as a hearth because the drawing asks the decor
-   rather than the light - so it cannot be lifted out of a bracket by a
-   torchbearer, there being no bracket. */
-function roomHasPillar(L, r) {
-  var x, y, i;
-  if (!r.floors || !r.floors.length) return false;
-  var x0 = MAP_W, y0 = MAP_H, x1 = 0, y1 = 0;
-  for (i = 0; i < r.floors.length; i++) {
-    if (r.floors[i][0] < x0) x0 = r.floors[i][0];
-    if (r.floors[i][0] > x1) x1 = r.floors[i][0];
-    if (r.floors[i][1] < y0) y0 = r.floors[i][1];
-    if (r.floors[i][1] > y1) y1 = r.floors[i][1];
-  }
-  /* A PILLAR is stone with the room on BOTH sides of it - floor above
-     and below, or floor left and right.  Not simply "stone inside the
-     room's box": rooms here are not all rectangles, and a room with a
-     corner off it has its own outside wall inside its own box.  Asked
-     that way round, every wall on the edge of the room read as a pillar
-     and no solar could ever be built. */
-  for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
-    if (walkTile(L.tiles[y * MAP_W + x])) continue;
-    var up = L.roomAt[(y - 1) * MAP_W + x] === r.idx;
-    var dn = L.roomAt[(y + 1) * MAP_W + x] === r.idx;
-    var lf = L.roomAt[y * MAP_W + x - 1] === r.idx;
-    var rt = L.roomAt[y * MAP_W + x + 1] === r.idx;
-    if ((up && dn) || (lf && rt)) return true;
-  }
-  return false;
-}
-/* A wall square with room floor in front of it and solid stone behind -
-   which is the difference between a wall and a pillar.  `face` points
-   out of the room into the stone. */
-function outerWall(L, r, wx, wy, face) {
-  if (wx < 1 || wy < 1 || wx >= MAP_W - 1 || wy >= MAP_H - 1) return false;
-  var wj = wy * MAP_W + wx;
-  if (L.tiles[wj] !== WALL) return false;
-  if (L.decor[wj]) return false;
-  var fx = wx - face[0], fy = wy - face[1];          /* the floor in front */
-  if (L.roomAt[fy * MAP_W + fx] !== r.idx) return false;
-  if (L.tiles[fy * MAP_W + fx] !== FLOOR) return false;
-  if (L.decor[fy * MAP_W + fx]) return false;
-  /* and stone behind it: a pillar has floor on both sides */
-  var bx = wx + face[0], by = wy + face[1];
-  if (walkTile(L.tiles[by * MAP_W + bx])) return false;
-  return true;
-}
-function makeSolar(L, r) {
-  var i, d;
-  if (roomHasPillar(L, r)) return false;
-  /* What the room looked like before any of this, so it can be put back.
-     All three of the fireplace, the rug and the bed have to fit or the
-     room is not a solar, and a room half furnished and then abandoned is
-     worse than a room nobody furnished at all. */
-  var was = {}, wasRugs = L.rugs, wasRugId = {}, wasTraps = [];
-  function remember(j) {
-    if (was[j] === undefined) {
-      was[j] = L.decor[j] === undefined ? null : L.decor[j];
-      wasRugId[j] = (L.rugId && L.rugId[j] !== undefined) ? L.rugId[j] : null;
-    }
-  }
-  for (i = 0; i < L.traps.length; i++)
-    wasTraps.push([L.traps[i], L.traps[i].x, L.traps[i].y]);
-  function undo() {
-    var k;
-    for (k in was) {
-      if (was[k] === null) delete L.decor[k]; else L.decor[k] = was[k];
-      if (L.rugId) { if (wasRugId[k] === null) delete L.rugId[k]; else L.rugId[k] = wasRugId[k]; }
-    }
-    L.rugs = wasRugs;
-    L.traps.length = 0;
-    for (k = 0; k < wasTraps.length; k++) {
-      wasTraps[k][0].x = wasTraps[k][1];
-      wasTraps[k][0].y = wasTraps[k][2];
-      L.traps.push(wasTraps[k][0]);
-    }
-  }
-  /* Swept first.  The room is furnished, littered and trapped by the
-     time this runs - see addRoomKind, which waits for the floor to stop
-     changing shape - and a rug will not go down over a heap of bones or
-     a trap.  The rug went down nowhere at all before this: eight solars
-     out of eight were given up on for want of a clear middle. */
-  for (i = 0; i < r.floors.length; i++)
-    remember(r.floors[i][1] * MAP_W + r.floors[i][0]);
-  sweepRoom(L, r);
-  moveTrapsOut(L, r);
-
-  /* --- the fireplace: two squares of one wall, side by side ---------
-     Along a wall that runs left to right, so it is two squares WIDE.  A
-     wall that runs up and down would want the art turned on its side,
-     and a fireplace on its side is a fireplace nobody painted. */
-  var pairs = [], faces = [[0, -1], [0, 1]];     /* the room below, the room above */
-  for (i = 0; i < r.floors.length; i++) {
-    var fx0 = r.floors[i][0], fy0 = r.floors[i][1];
-    for (d = 0; d < faces.length; d++) {
-      var face = faces[d];
-      var wx = fx0 + face[0], wy = fy0 + face[1];
-      if (!outerWall(L, r, wx, wy, face)) continue;
-      if (!outerWall(L, r, wx + 1, wy, face)) continue;
-      pairs.push({ x: wx, y: wy, dir: [-face[0], -face[1]] });
-    }
-  }
-  if (!pairs.length) return false;
-  shuffle(pairs);
-  var h = pairs[0], hj = h.y * MAP_W + h.x, hj2 = hj + 1;
-  remember(hj); remember(hj2);
-  L.decor[hj] = 'hearth';
-  L.decor[hj2] = 'hearth_h';
-  if (!L.decorFacing) L.decorFacing = {};
-  L.decorFacing[hj] = h.dir;
-  L.decorFacing[hj2] = h.dir;
-
-  /* --- the rug, laid the ordinary way so it is cut and turned like any
-     other rug in the game.  It goes down first and it goes in the MIDDLE
-     of the room, which is where a rug goes; the bed then takes a wall,
-     which is where a bed goes.  The two want different parts of the
-     floor, and letting them fight over the middle is what made a solar
-     fail on rooms that would have held both. --- */
-  if (!addRug(L, r)) { undo(); return false; }
-  var beds = [];
-  for (i = 0; i < r.floors.length; i++) {
-    var bx0 = r.floors[i][0], by0 = r.floors[i][1], ok = 1, q, w;
-    for (q = 0; q < 2 && ok; q++) for (w = 0; w < 3; w++)
-      if (!freeForFurniture(L, r, bx0 + w, by0 + q)) { ok = 0; break; }
-    if (!ok) continue;
-    /* not against the fireplace, and not in the doorway of anything */
-    if (Math.abs(by0 - h.y) <= 1 && bx0 <= h.x + 2 && bx0 + 2 >= h.x - 1) continue;
-    /* a bed with its head to a wall is a bed somebody slept in */
-    var snug = 0;
-    for (w = 0; w < 3; w++) if (!walkTile(L.tiles[(by0 - 1) * MAP_W + bx0 + w])) snug = 1;
-    beds.push({ x: bx0, y: by0, snug: snug });
-  }
-  if (!beds.length) { undo(); return false; }
-  shuffle(beds);
-  beds.sort(function (a, b) { return b.snug - a.snug; });
-  var bd = beds[0];
-  /* the lower row as painted, the upper row the same two cells turned
-     top to bottom - see isBedName */
-  L.decor[(bd.y + 1) * MAP_W + bd.x] = 'bed';
-  L.decor[(bd.y + 1) * MAP_W + bd.x + 1] = 'bed_m';
-  L.decor[(bd.y + 1) * MAP_W + bd.x + 2] = 'bed_h';
-  L.decor[bd.y * MAP_W + bd.x] = 'bed_v';
-  L.decor[bd.y * MAP_W + bd.x + 1] = 'bed_mv';
-  L.decor[bd.y * MAP_W + bd.x + 2] = 'bed_hv';
-
-  if (!L.torches) L.torches = [];
-  /* L.torches is the list of lights MOUNTED IN WALLS, which a torch is
-     one kind of.  The tag says which: everything that reads the list for
-     light, for the shine on water or for what the gas is touching wants
-     all of them, and only the rules about how torches are spaced want
-     torches alone.  `span` says the fire is two squares of wall wide. */
-  L.torches.push({ x: h.x, y: h.y, dir: h.dir, kind: 'hearth', span: 1 });
-  /* A room with a fire burning in it is a lit room.  Said here rather
-     than left to chance, because a hearth in a room the lamps have gone
-     out in is a fireplace drawn cold - torchBurning asks the room, not
-     the flame. */
-  r.lit = 1; r.dark = 0;
-  r.kind = 'solar';
-  return true;
-}
-var ROOM_KINDS = [
-  { n: 'library', f: makeLibrary, min: 18 },
-  { n: 'solar',   f: makeSolar,   min: 22 }
-];
-/* One room on some floors, and one at most.  A room already spoken for -
-   a shrine, a powder store, a sealed vault - is left alone: those rooms
-   are about one thing, and furnishing them as somebody's bedroom on top
-   would be two answers to the same question. */
-function addRoomKind(L, depth) {
-  if (rnd(100) >= ROOM_KIND_PCT) return null;
-  var pool = [], i;
-  for (i = 0; i < L.rooms.length; i++) {
-    var r = L.rooms[i];
-    if (r.gone || r.special || r.sealed || r.kind) continue;
-    if (!r.floors || r.floors.length < 12) continue;
-    if (roomHasStair(L, r) || roomIsCut(L, r)) continue;
-    pool.push(r);
-  }
-  if (!pool.length) return null;
-  shuffle(pool);
-  var kinds = ROOM_KINDS.slice();
-  shuffle(kinds);
-  var p, k;
-  for (p = 0; p < pool.length; p++)
-    for (k = 0; k < kinds.length; k++) {
-      if (pool[p].floors.length < kinds[k].min) continue;
-      if (kinds[k].f(L, pool[p])) return kinds[k].n;
-    }
-  return null;
-}
-
 /* Can you still walk to every square you could walk to before? */
 /* Is every square you could walk on still connected to every other?  A
    secret door counts as a way through, since searching will find it.
@@ -4150,34 +3706,18 @@ function edgeTheMoss(L) {
     return ri >= 0 && garden[ri];
   }
 
-  /* --- a cave: the moss beside a clear spot fades to an edge --------
-     Walked from the MOSS outward, not from the clear spot inward.  It
-     used to go the other way: every clear square INSIDE the garden
-     faded the moss beside it.  That misses the whole rim - a square of
-     bare floor at the mouth of the cave belongs to no room, so it was
-     never a clear spot to start from, and the moss met it whole.  Asked
-     this way round the question is the invariant itself: no square of
-     whole moss may stand against bare stone.
-
-     There is no trap guard here, and there used to be one.  "Nothing
-     grows over a trap" is a rule about laying moss on BARE floor, which
-     is what the tuft loop below does and where the guard belongs; this
-     loop thins moss that is already down, and an edge tile hides
-     exactly as much as the whole one it replaces. */
+  /* --- a cave: the moss beside a clear spot fades to an edge -------- */
   var fade = {};
   for (i = 0; i < L.tiles.length; i++) {
-    if (!inGarden(i)) continue;
-    var gd = L.decor[i];
-    if (!isMoss(gd) || isMossEdge(gd)) continue;
+    if (L.tiles[i] !== FLOOR || !inGarden(i)) continue;
+    if (isMoss(L.decor[i])) continue;            /* mossy, so not a clear spot */
     var gx = i % MAP_W, gy = (i / MAP_W) | 0;
     for (k = 0; k < DIR4.length; k++) {
       var ax = gx + DIR4[k][0], ay = gy + DIR4[k][1];
       if (ax < 0 || ay < 0 || ax >= MAP_W || ay >= MAP_H) continue;
       var aj = ay * MAP_W + ax;
-      if (L.tiles[aj] !== FLOOR) continue;
-      if (L.decor[aj]) continue;                 /* not a clear spot */
-      fade[i] = 1;
-      break;
+      if (trapAtLevel(L, ax, ay)) continue;      /* nothing grows over a trap */
+      if (isMoss(L.decor[aj]) && !isMossEdge(L.decor[aj])) fade[aj] = 1;
     }
   }
   for (k in fade) { L.decor[k] = pick(MOSS_EDGE); laid++; }
@@ -4652,12 +4192,6 @@ function genLevelOnce(depth) {
 
   /* one room on some floors is worth walking into for its own sake */
   L.special = addSpecialRoom(L, depth);
-  /* The FURNISHED room does not go in here.  Everything below this can
-     still take a wall away, add one, or turn one into a doorway - and a
-     bookshelf wants stone at its back and a fireplace wants a wall to be
-     set into.  So it waits with the torches, which learned the same
-     lesson: see addRoomKind, called from enterLevel once the floor has
-     stopped changing shape. */
   /* The rooms know their own shape again by now, and a moss garden is
      mossy: anything the tidying opened up came out bare, so top it up
      once the floor has stopped changing. */
@@ -4670,53 +4204,29 @@ function genLevelOnce(depth) {
   if (typeof addTrapdoor === 'function') addTrapdoor(L, depth);
 
   /* every floor has something to step on */
-  /* Every floor has something underfoot on it somewhere.  The darts are
-     thrown exactly as they always were - a dozen a trap, at random spots
-     in random rooms - because that is what gives a floor its scatter,
-     and dealing them from a list instead changes every floor the game
-     has ever dealt.
-
-     What is new is the last few lines: if every dart missed, one is
-     placed by looking rather than by throwing.  A cramped floor can turn
-     all twelve away, and a floor came out with nothing underfoot at all
-     - which is a rule the game means to keep and had no way of keeping. */
   var nt = 1 + rnd(2 + Math.min(depth, 5));
   var placed = 0, tries = 0;
-  function trapTakes(tj) {
-    if (L.tiles[tj] !== FLOOR) return false;
-    var tx2 = tj % MAP_W, ty2 = (tj / MAP_W) | 0;
-    if (tx2 === L.stair.x && ty2 === L.stair.y) return false;
-    if (L.up && tx2 === L.up.x && ty2 === L.up.y) return false;
-    if (trapAtLevel(L, tx2, ty2)) return false;
+  while (placed < nt && tries++ < nt * 12) {
+    var tp = randSpot(L, randRoom(L));
+    var tj = tp.y * MAP_W + tp.x;
+    if (L.tiles[tj] !== FLOOR) continue;
+    if (tp.x === L.stair.x && tp.y === L.stair.y) continue;
+    if (trapAtLevel(L, tp.x, tp.y)) continue;
     /* not in the moss: it is the one room you can stop and rest in, and
        something underfoot makes stopping the mistake */
     var tri = L.roomAt[tj];
-    if (tri >= 0 && L.rooms[tri] && L.rooms[tri].special === 'moss') return false;
+    if (tri >= 0 && L.rooms[tri] && L.rooms[tri].special === 'moss') continue;
     /* nothing goes under a rug, a trap included - a bump in it would be
        the one thing giving it away before you ever stepped there */
-    if (isRugName(L.decor[tj])) return false;
-    return true;
-  }
-  function layTrap(tj) {
+    if (isRugName(L.decor[tj])) continue;
     var kind = pick(TRAPS);
     /* plenty of them sit in plain view - a dungeon you can read */
-    L.traps.push({ x: tj % MAP_W, y: (tj / MAP_W) | 0, k: kind, spent: 0,
+    L.traps.push({ x: tp.x, y: tp.y, k: kind, spent: 0,
                    found: rnd(100) < kind.open ? 1 : 0 });
     /* and whatever litter was already lying here goes with it - a trap
        is not something you find buried under a heap of bones */
     if (clearsForTrap(L.decor[tj])) delete L.decor[tj];
-  }
-  while (placed < nt && tries++ < nt * 12) {
-    var tp = randSpot(L, randRoom(L));
-    var tj = tp.y * MAP_W + tp.x;
-    if (!trapTakes(tj)) continue;
-    layTrap(tj);
     placed++;
-  }
-  if (!placed) {
-    var last = [];
-    for (i = 0; i < L.tiles.length; i++) if (trapTakes(i)) last.push(i);
-    if (last.length) layTrap(last[rnd(last.length)]);
   }
   /* Scattered litter, last of all - so it must not bury anything the
      rest of the floor has already put down.  This ran after the special
@@ -5793,12 +5303,6 @@ function tidyFloor(L) {
   /* after all of that, anything left standing in a wall with stone
      behind it is masonry, not a doorway */
   brickUpBlindDoors(L);
-  /* And the corners AGAIN, because everything between the first pass and
-     here can make one: walling a door up, or bricking up a blind one,
-     leaves the door beside it standing in a corner that was not a corner
-     when the corners were last looked at.  Doors left in corners came
-     through exactly that gap. */
-  fixCornerDoors(L);
   /* Anything that changes the shape of the floor has to leave the stone
      round it right.  This runs again after the vault and the hidden room
      are sealed, and that sealing digs fresh corridors - which were left
@@ -6105,9 +5609,8 @@ function placeWallTorches(L) {
    torch's own wall square into something else should call this rather
    than only clearing the decor: the light has to stop with the wall,
    and L.torches is what lightMap actually reads. */
-function isWallLight(d) { return isTorch(d) || isHearthName(d); }
 function removeTorchAt(L, j) {
-  if (!L || !isWallLight(L.decor[j])) return;
+  if (!L || !isTorch(L.decor[j])) return;
   delete L.decor[j];
   if (L.decorFacing) delete L.decorFacing[j];
   if (L.torchSeen) delete L.torchSeen[j];
@@ -6125,9 +5628,6 @@ function pickDarkness(L, depth) {
   if (depth < DARK_MIN_DEPTH) { buildDarkMap(L, depth); return; }
   for (i = 0; i < L.rooms.length; i++) {
     var r = L.rooms[i];
-    /* r.kind is not asked about here and cannot be: the furnishing runs
-       after this, once the floor has stopped changing shape.  Both
-       makers light their own room instead - see makeLibrary. */
     if (r.gone || r.special || r.sealed) continue;
     if (rnd(100) < DARK_ROOM_PCT) { r.dark = 1; r.lit = 0; }
   }
@@ -6394,7 +5894,7 @@ function freshG() {
     titleMenu: null, walk: null, ctx: null, drag: null, waiting: null,
     roomBox: null, note: null, levelUp: 0,
     saidWaterCurse: 0, slot: null, deadFrom: 0, inspect: null,
-    floorKey: null, books: {},
+    floorKey: null,
     panelSel: null,
     openBox: null, box: null,
     deadAt: 0, pouchT: 0, pouchLast: null,
@@ -6470,7 +5970,6 @@ function itemDef(it) {
     case 'scroll': return SCROLLS[it.k];
     case 'wand': return WANDS[it.k];
     case 'ring': return RINGS[it.k];
-    case 'trap': return TRAPS[it.k];
   }
   return null;
 }
@@ -6808,10 +6307,6 @@ function itemName(it) {
     case 'crystal': s = (n > 1) ? (n + ' healing crystals') : 'a healing crystal'; break;
     case 'pin': s = (n > 1) ? (n + ' magical pins') : 'a magical pin'; break;
     case 'dynamite': s = (n > 1) ? (n + ' sticks of dynamite') : 'a stick of dynamite'; break;
-    /* Sprung, sprung again and carried in a sack: a trap out of the
-       floor is a thing like any other, and it says which kind it is
-       because you were the one who took it up. */
-    case 'trap': s = (n > 1) ? (n + ' ' + TRAPS[it.k].n + 's') : artic(TRAPS[it.k].n); break;
     case 'chest': s = it.lock ? artic(MATS[it.lock] + ' chest (locked)') : 'a wooden chest'; break;
     case 'food': {
       /* A mushroom you have not eaten is a colour and nothing else */
@@ -6940,8 +6435,6 @@ function itemSprite(it) {
     case 'wand': return APPEAR.wandSpr[it.k] ||
       (APPEAR.wandType[it.k] === 'staff' ? 'staff' : 'wand');
     case 'ring': return RINGS[it.k].s;
-    /* a trap you have taken up, drawn as the trap it is */
-    case 'trap': return TRAPS[it.k].spr;
   }
   /* A runed stone wears whichever carving this run dealt it. */
   if (isRuneStone(it) && APPEAR.stone && APPEAR.stone[it.k])
@@ -7301,18 +6794,6 @@ function searchSkill() {
   if (hasPerk('keeneye')) s += PERK_SEARCH;
   return clamp(s, 2, 85);
 }
-/* How good you are at SPOTTING A TRAP, which is not the same question as
-   how good you are at reading a room.  A trapsmith knows what he is
-   looking at: he has laid enough of them to see where one goes. */
-function trapSkill() {
-  return clamp(25 + (effWis() - 10) * 5 + (hasPerk('trapsmith') ? PERK_TRAPS : 0), 2, 92);
-}
-/* And at getting one up whole once he has found it.  Nobody else can do
-   this at all, so there is no roll for them to make. */
-function trapTakeSkill() {
-  if (!hasPerk('trapsmith')) return 0;
-  return clamp(TRAP_TAKE + TRAP_TAKE_PERK + (effDex() - 12) * 3, 10, 95);
-}
 function apprSkill() {
   return clamp((effWis() - 8) * 6 + (hasPerk('antiquary') ? PERK_APPRAISE : 0), 0, 95);
 }
@@ -7356,81 +6837,6 @@ function hidesItsName(it) {
 /* You have handled one of these.  Every other one you meet this run is
    recognisable on sight - though what any particular one is worth is
    still its own business. */
-/* ============================================================== books
-   What a big book actually does when it is read: opens one drawer of
-   KNOWN all the way, and names everything of that kind you are already
-   carrying.  One case a book, and the table in BOOKS says which.
-
-   The knowledge is the run's, not the item's - there is no book in your
-   pack afterwards, and nothing to lose. */
-function bookKinds(learn) {
-  var out = [], i, W;
-  if (learn === 'swords')
-    for (i = 0; i < WEAPONS.length; i++) {
-      W = WEAPONS[i];
-      if (W.launch || W.ammoFor || W.rune) continue;
-      out.push(i);
-    }
-  if (learn === 'bows')
-    for (i = 0; i < WEAPONS.length; i++) {
-      W = WEAPONS[i];
-      if (W.launch || W.ammoFor) out.push(i);
-    }
-  if (learn === 'stones')
-    for (i = 0; i < WEAPONS.length; i++) if (WEAPONS[i].rune) out.push(i);
-  return out;
-}
-function bookLearn(learn) {
-  var i, k, n = 0, all = carriedItems();
-  function say(list, k2) { if (!list[k2]) { list[k2] = 1; n++; } }
-  if (learn === 'swords' || learn === 'bows' || learn === 'stones') {
-    var ks = bookKinds(learn);
-    for (i = 0; i < ks.length; i++) say(KNOWN.weap, ks[i]);
-    for (i = 0; i < all.length; i++)
-      if (all[i].t === 'weapon' && ks.indexOf(all[i].k) >= 0) all[i].known = 1;
-    return n;
-  }
-  if (learn === 'armor') {
-    var slots = ['armor', 'shield', 'head', 'feet'], t;
-    for (t = 0; t < slots.length; t++) {
-      var tab = KNOWN.gear[slots[t]];
-      var src = slots[t] === 'armor' ? ARMORS : slots[t] === 'shield' ? SHIELDS
-              : slots[t] === 'head' ? HEADS : FEET;
-      for (k = 0; k < src.length; k++) say(tab, k);
-    }
-    for (i = 0; i < all.length; i++)
-      if (slots.indexOf(all[i].t) >= 0) all[i].known = 1;
-    return n;
-  }
-  var table = learn === 'scroll' ? [KNOWN.scr, SCROLLS, 'scroll']
-            : learn === 'wand'   ? [KNOWN.wand, WANDS, 'wand']
-            : learn === 'potion' ? [KNOWN.pot, POTIONS, 'potion']
-            : learn === 'vial'   ? [KNOWN.vial, VIALS, 'vial']
-            : learn === 'mush'   ? [KNOWN.mush, FOODS, 'food'] : null;
-  if (!table) return 0;
-  for (k = 0; k < table[1].length; k++) {
-    if (learn === 'mush' && !isMushroom(k)) continue;
-    say(table[0], k);
-  }
-  for (i = 0; i < all.length; i++) if (all[i].t === table[2]) all[i].known = 1;
-  return n;
-}
-/* Reading one where it lies.  Books are never carried: this is the whole
-   of what happens to one. */
-function readBook(b) {
-  if (!G.books) G.books = {};
-  if (G.books[b.learn]) {
-    msg('You have read this one. ' + b.n + '.', '6');
-    return 0;
-  }
-  G.books[b.learn] = 1;
-  var n = bookLearn(b.learn);
-  msg(b.n + '!', 'y');
-  msg(b.txt, 'c');
-  msg(n ? 'You will know every one of them on sight now.'
-        : 'You knew all of it already.', n ? 'G' : '6');
-  return n;
-}
 function learnGear(it) {
   if (!it || !KNOWN || !KNOWN.gear || !KNOWN.gear[it.t]) return 0;
   if (KNOWN.gear[it.t][it.k]) return 0;
@@ -11468,30 +10874,10 @@ function enterLevel(depth, how) {
   tidyMossEdges(L);
   /* last of all, with nothing else left to move the stone about */
   sealRock(L);
-  /* And the corners once more.  doorAtCorner reads the ROOMS round a
-     door as well as the stone, and every pass above can change either -
-     so a door that was not in a corner when tidyFloor last looked can be
-     standing in one by the time the floor is finished. */
-  fixCornerDoors(L);
   /* And only now the torches: everything above can take a wall away, add
      one, or turn one into a doorway, and a torch mounted before any of
      that had happened could end up hanging in mid-air, or over a door
      that did not exist yet when it went up. */
-  /* The furnished room goes up BEFORE the torches, not after.  Its
-     fireplace is a light mounted in a wall exactly as a bracket is, and
-     everything that places and shades wall torches works off the same
-     list - so it has to be in that list before any of it runs, or the
-     torches are spaced as though the fire were not there and the wall it
-     is set into is lit as though nothing were burning in it. */
-  if (L.kind === undefined) {
-    L.kind = addRoomKind(L, depth);
-    /* Both makers light their own room, and the light maps were worked
-       out before either ran - so they have to be worked out again or the
-       room is lit in the rules and dark on the screen.  A rug burning
-       away in one announced nothing at all, because nothing announces
-       what you cannot see. */
-    if (L.kind) { buildLitMap(L); buildDarkMap(L, depth); spillLight(L); }
-  }
   placeWallTorches(L);
 
   if (hasPerk('antiquary')) P.freeIdent = 1;
@@ -14226,66 +13612,24 @@ function lightDamp(c, at) {
   c.at = at || c.at || 0;
   return 1;
 }
-/* WHERE THE TORCHES ARE, as the gas feels them.
-
-   A torch is nailed to a wall and its flame stands out in front of it,
-   so the square it touches is the one square the bracket faces: beneath
-   a torch on the ceiling-side wall, to the left of one on a wall facing
-   left, and so on.  `dir` already points away from the stone, so that
-   square is simply one step along it.  A torch in a room whose light has
-   gone out is not burning and touches nothing.
-
-   The torch in your own hand is the same kind of flame in the same kind
-   of holder - it is just that the holder is you - so it touches the
-   square you are standing on. */
-function torchFlameSquares() {
-  /* Wall torches AND the fireplace in a solar, which is registered as a
-     light for exactly this reason: it is a flame in the stone, and gas
-     standing in front of it gets the same turn of grace. */
-  var out = [], i, list = L && L.torches;
-  for (i = 0; list && i < list.length; i++) {
-    var t = list[i], fdir = t.dir;
-    if (!fdir) continue;
-    if (torchBurning(t.x, t.y, fdir) < 0 && torchRoom(t.x, t.y, fdir) >= 0) continue;
-    out.push([t.x + fdir[0], t.y + fdir[1]]);
-    /* a fireplace is two squares of wall wide, and the fire in it
-       touches the floor in front of both of them */
-    if (t.span) out.push([t.x + t.span + fdir[0], t.y + fdir[1]]);
-  }
-  if (typeof torchInHand === 'function' && torchInHand()) out.push([P.x, P.y]);
-  return out;
-}
-/* The gas is touching fire.  Two answers, because there are two kinds.
-
-   `now`: LOOSE fire - a torch thrown down on the floor, a burning table,
-   a creature alight, a lit fuse, gas that has already gone up.  The gas
-   only has to come NEAR one of these: the square itself or any of the
-   eight round it, because a fire in the open is bigger than the square
-   it is drawn on.  These go off at once.
-
-   `soon`: a torch in its bracket, or the one in your hand.  Contact is
-   the one square the flame occupies and nothing round it, and it takes a
-   turn of standing there - see GAS_TORCH_TURNS. */
+/* The gas is standing in a flame, or next to one.  "Contact with fire"
+   means the square itself or one beside it: a torch carried into the
+   edge of a cloud sets it off, which is the whole danger of the thing. */
 function dampTouchesFire() {
-  var flames = flameSquares(), torches = torchFlameSquares();
-  var i, d, now = [], soon = [];
+  var flames = flameSquares(), i, d, out = [];
+  /* the torch in your own hand is an open flame like any other, and it
+     is the one nobody expects to set the gas off */
+  if (typeof torchInHand === 'function' && torchInHand()) flames.push([P.x, P.y, 0]);
   for (i = 0; i < L.clouds.length; i++) {
     var c = L.clouds[i];
     if (c.kind !== 'damp' || c.lit > 0) continue;
-    var loose = 0;
     for (d = 0; d < flames.length; d++) {
       if (Math.abs(flames[d][0] - c.x) > 1 || Math.abs(flames[d][1] - c.y) > 1) continue;
-      loose = 1;
-      break;
-    }
-    if (loose) { now.push(c); continue; }
-    for (d = 0; d < torches.length; d++) {
-      if (torches[d][0] !== c.x || torches[d][1] !== c.y) continue;
-      soon.push(c);
+      out.push(c);
       break;
     }
   }
-  return { now: now, soon: soon };
+  return out;
 }
 /* Once a turn: what catches, what the fire jumps to, and where the
    cloud has crept to.  Called from ageClouds, before the damage, so a
@@ -14303,42 +13647,18 @@ function ageDamp() {
     if (c.lit > 0 || !c.catchIn) continue;
     if (--c.catchIn <= 0) { c.catchIn = 0; lightDamp(c); went++; }
   }
-  /* --- 2. fire touching the cloud from outside ---------------------
-     Loose fire at once; a torch in a bracket after a turn of it.  The
-     count is kept on the square and cleared the moment the flame is not
-     there any more, so carrying a torch THROUGH the edge of a cloud
-     without stopping does not set it off - standing beside it does. */
+  /* --- 2. fire touching the cloud from outside --------------------- */
   var touched = dampTouchesFire();
-  for (i = 0; i < touched.now.length; i++) {
-    touched.now[i].near = 0;
-    lightDamp(touched.now[i]);
-    went++;
-  }
-  var waiting = {};
-  for (i = 0; i < touched.soon.length; i++) {
-    c = touched.soon[i];
-    waiting[c.y * MAP_W + c.x] = 1;
-    c.near = (c.near || 0) + 1;
-    if (c.near > GAS_TORCH_TURNS) { lightDamp(c); went++; }
-  }
-  for (i = 0; i < damp.length; i++)
-    if (damp[i].near && !waiting[damp[i].y * MAP_W + damp[i].x]) damp[i].near = 0;
+  for (i = 0; i < touched.length; i++) { lightDamp(touched[i]); went++; }
 
   /* --- 3. and the wave through the rest of it ----------------------
      A square that is alight lights the gas beside it now and the gas two
      squares out a turn later.  The delay is what makes it a wave: the
      cloud does not all go at once, and there is a beat in which to get
      out of the far side of it. */
-  /* Which squares were ALREADY alight when the turn began.  Taken as a
-     list first, because lighting one inside the loop would otherwise let
-     it light the next in the same pass and the next after that - the
-     whole cloud would go up in a single turn however big it was, which
-     is a bang and not a wave.  The fire moves one step a turn because
-     this list does not grow while it is being walked. */
-  var burning = [];
-  for (i = 0; i < damp.length; i++) if (damp[i].lit > 0) burning.push(damp[i]);
-  for (i = 0; i < burning.length; i++) {
-    c = burning[i];
+  for (i = 0; i < damp.length; i++) {
+    c = damp[i];
+    if (!(c.lit > 0)) continue;
     for (j = 0; j < damp.length; j++) {
       var o = damp[j];
       if (o === c || o.lit > 0 || o.catchIn) continue;
@@ -14394,34 +13714,8 @@ function dampCount() {
    table it blundered into.  What is BESIDE it catches only if it is
    powder - a barrel or a stick of dynamite, which does not need to be
    touched by a flame to go, only to be near one. */
-/* Kindling: it catches from the square NEXT to a flame, not only from
-   standing in one.  Powder has always worked this way; a shelf of dry
-   books works this way too and for the same reason.
-
-   The ember is what actually lights it - the flame appears on the square
-   this turn, and catchScenery takes the shelf itself on the next, the
-   same road every other burning thing goes down. */
-function lightTinder(x, y) {
-  if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return 0;
-  var j = y * MAP_W + x;
-  if (!TINDER[L.decor[j]]) return 0;
-  if (iceAt(x, y)) return 0;                    /* frost over it, and it does not */
-  if (L.burning && L.burning[j]) return 0;      /* already going */
-  if (inWater(x, y)) return 0;
-  for (var c = 0; c < L.clouds.length; c++)
-    if (L.clouds[c].kind === 'fire' && L.clouds[c].x === x && L.clouds[c].y === y) return 0;
-  dropEmber(x, y);
-  return 1;
-}
 function spreadFire() {
   var src = flameSquares(), i, dx, dy, lit = 0;
-  /* AND THE TORCH IN YOUR OWN HAND.  Standing on a shelf holding a naked
-     flame is the plainest way in the world to set a library alight, and
-     it is the one flame the fire has never known about - flameSquares is
-     about what is burning on the floor, and a torch you are carrying is
-     not.  It counts for the kindling and for nothing else: a carried
-     torch has never set a table or a rug going and should not start. */
-  if (typeof torchInHand === 'function' && torchInHand()) lit += lightTinder(P.x, P.y);
   for (i = 0; i < src.length; i++) {
     var x = src[i][0], y = src[i][1];
     if (src[i][2] && burnableAt(x, y) && !iceAt(x, y) &&
@@ -14432,7 +13726,6 @@ function spreadFire() {
         if (bx < 0 || by < 0 || bx >= MAP_W || by >= MAP_H) continue;
         if (typeof lightBarrel === 'function') lit += lightBarrel(bx, by);
         if (typeof lightDynamite === 'function') lit += lightDynamite(bx, by);
-        lit += lightTinder(bx, by);
       }
   }
   return lit;
@@ -15028,7 +14321,7 @@ function doSearch(silent) {
       msg('You found a secret door!', 'y');
     }
     var tr = trapAt(x, y);
-    if (tr && !tr.found && rnd(100) < trapSkill()) {
+    if (tr && !tr.found && rnd(100) < keen) {
       tr.found = 1; found = 1;
       msg('You found ' + artic(tr.k.n) + '.', 'y');
     }
@@ -17658,14 +16951,11 @@ function dampVial(tx, ty) {
   L.clouds.push({ x: tx, y: ty, kind: 'damp', turns: dampLife(),
                   gen: 0, gx: tx, gy: ty, lit: 0, catchIn: 0,
                   seed: rnd(1000), at: beatNow() });
-  /* And if it broke in LOOSE fire it does not wait for the turn to tick.
-     A bracket is different: the vial thrown at the square under a torch
-     gives you your turn of grace like any other square does. */
+  /* and if it broke in a flame it does not wait for the turn to tick */
   if (typeof dampTouchesFire === 'function') {
     var lit = dampTouchesFire(), q;
-    for (q = 0; q < lit.now.length; q++) lightDamp(lit.now[q], beatNow());
-    if (lit.now.length) msg('It goes up as it leaves the glass!', 'R');
-    else if (lit.soon.length) msg('It is welling up under a torch.', 'y');
+    for (q = 0; q < lit.length; q++) lightDamp(lit[q], beatNow());
+    if (lit.length) msg('It goes up as it leaves the glass!', 'R');
   }
   return 1;
 }
@@ -17871,135 +17161,6 @@ function throwValid(x, y, it) {
 /* ------------------------------------------------------ lobbing things
    A stone or a flask, at any square in range.  Whether something is
    standing there only changes what happens when it arrives. */
-/* ====================================================== searching shelves
-   A shelf is a thing to go THROUGH, not a thing to look at: you stand in
-   front of it, you press ENTER, and that is a turn gone.  Most of what
-   is on it is paper nobody wants; some of it is a scroll; and now and
-   then it is one of the big books, which is worth the whole library.
-
-   Once gone through, a shelf is done - the books are still on it and it
-   is still drawn, but you have had what was in it.  L.shelved remembers
-   which, so walking back along the wall pressing ENTER is not a way of
-   milking one shelf for ever. */
-/* The square you are standing on, if it is a shelf nobody has been
-   through yet.  -1 for no, because square 0 is a real index and "0 means
-   no" is how a shelf in the corner of the map goes missing. */
-function shelfHere() {
-  var j = P.y * MAP_W + P.x;
-  if (L.decor[j] !== 'shelf') return -1;
-  if (L.shelved && L.shelved[j]) return -1;
-  return j;
-}
-function searchShelf() {
-  var j = shelfHere();
-  if (j < 0) return false;
-  L.shelved = L.shelved || {};
-  L.shelved[j] = 1;
-  G.msgq = [];
-  /* the book first: it is the rare thing, and it is what the room is for */
-  if (rnd(100) < SHELF_BOOK_PCT) {
-    var left = [], i;
-    for (i = 0; i < BOOKS.length; i++)
-      if (!(G.books && G.books[BOOKS[i].learn])) left.push(BOOKS[i]);
-    if (left.length) {
-      msg('Something heavy at the back of the shelf.', 'c');
-      readBook(left[rnd(left.length)]);
-      return true;
-    }
-  }
-  if (rnd(100) < SHELF_SCROLL_PCT) {
-    var sc = mkItem('scroll', weightedPick(SCROLLS));
-    if (freeSlot() < 0) {
-      msg('A scroll, tucked between the covers - and no room for it.', '6');
-      dropNear(P.x, P.y, sc);
-    } else {
-      addItem(sc);
-      msg('A scroll, tucked between the covers: ' + itemName(sc) + '.', 'y');
-    }
-    return true;
-  }
-  msg('Ledgers, tide tables, somebody\'s accounts. Nothing.', '6');
-  return true;
-}
-
-/* ======================================================= the trapsmith
-   Taking a trap up out of the floor and putting it back down somewhere
-   better.  Nobody but a trapsmith can do either: the perk is not a bonus
-   to a thing everybody does, it is the only way in.
-
-   Getting one up is a roll.  Fail it and it goes off with your hands on
-   it, which is what stops this being free money - a dart trap you have
-   found and left alone costs nothing, and one you have tried to lift
-   costs whatever it was loaded with. */
-function canDisarm(x, y) {
-  if (!hasPerk('trapsmith')) return null;
-  var tr = trapAtLevel(L, x, y);
-  if (!tr || !tr.found || tr.spent) return null;
-  /* Only what is under your hand: a trap across the room is a thing to
-     walk to, not a thing to reach for. */
-  if (Math.max(Math.abs(x - P.x), Math.abs(y - P.y)) > 1) return null;
-  return tr;
-}
-function disarmTrap(x, y) {
-  var tr = canDisarm(x, y);
-  if (!tr) return false;
-  if (freeSlot() < 0) {
-    msg('There is no room in your pack for it.', '6');
-    return false;
-  }
-  G.msgq = [];
-  msg('You get your fingers under ' + artic(tr.k.n) + '.', 'c');
-  if (rnd(100) >= trapTakeSkill()) {
-    /* It goes off in your hands.  Springing it where it lies is exactly
-       what walking onto it would have done, so it goes through the same
-       door and nothing about it has to be written twice. */
-    msg('It goes off in your hands!', 'R');
-    springTrap(tr);
-    return true;
-  }
-  var it = mkItem('trap', TRAPS.indexOf(tr.k));
-  it.known = 1;
-  removeTrapAt(L, x, y);
-  if (!addItem(it)) {
-    /* the pack filled up between the two checks - put it back rather
-       than losing it */
-    L.traps.push({ x: x, y: y, k: TRAPS[it.k], found: 1, seen: 1 });
-    msg('There is no room in your pack for it.', '6');
-    return true;
-  }
-  msg('You lift ' + itemName(it) + ' clear of the floor.', 'y');
-  computeVis();
-  return true;
-}
-function removeTrapAt(L2, x, y) {
-  for (var i = L2.traps.length - 1; i >= 0; i--)
-    if (L2.traps[i].x === x && L2.traps[i].y === y) L2.traps.splice(i, 1);
-}
-/* And laying one again.  Bare floor and nothing else: not on a rug, not
-   under a table, not in the water, not on the stair and not on top of
-   another trap.  It goes down where you are standing, because that is
-   where your hands are - walk to the square you want it on and lay it. */
-function layTrapHere(it) {
-  if (!it || it.t !== 'trap') return false;
-  var x = P.x, y = P.y, j = y * MAP_W + x;
-  var why = null;
-  if (L.tiles[j] !== FLOOR && L.tiles[j] !== CORR) why = 'It wants bare floor.';
-  else if (L.decor[j]) why = 'Not on top of that.';
-  else if (inWater(x, y)) why = 'Not in the water.';
-  else if (iceAt(x, y)) why = 'The ice will not hold it.';
-  else if (trapAtLevel(L, x, y)) why = 'There is already one here.';
-  else if (itemAt(L, x, y)) why = 'There is something lying here.';
-  else if (L.up && x === L.up.x && y === L.up.y) why = 'Not on the stair.';
-  else if (x === L.stair.x && y === L.stair.y) why = 'Not on the stair.';
-  if (why) { msg(why, '6'); return false; }
-  L.traps.push({ x: x, y: y, k: TRAPS[it.k], found: 1, seen: 1, mine: 1 });
-  removeItem(it, 1);
-  msg('You set ' + artic(TRAPS[it.k].n) + ' into the floor.', 'y');
-  msg('You know it is there. Nothing else does.', '6');
-  computeVis();
-  return true;
-}
-
 /* --------------------------------------------------- a torch let go of
    It goes out as a thing you are carrying and comes down as an open
    flame - which is the whole reason for throwing one.  But WHAT it comes
@@ -19484,6 +18645,7 @@ function boot() {
     fitBars();
     ready = true;
     newGame(true);
+    playtestMenu();   /* ask, rather than open on the title */
     requestAnimationFrame(loop);
   };
   atlasImg.src = ATLAS_PNG;
@@ -20384,10 +19546,6 @@ function openCtxMenu(x, y) {
   else if (mine && shootableNow()) opts.push(['aim', 'Shoot']);
   if (it && it.t === 'chest') opts.push(['open', 'Open']);
   else if (it) opts.push(['get', 'Take']);
-  /* A trapsmith can get his fingers under one.  Only offered where the
-     offer means something: a trap you have found, within reach, and not
-     already sprung. */
-  if (typeof canDisarm === 'function' && canDisarm(x, y)) opts.push(['disarm', 'Disarm']);
   if (mine) opts.push(['inv', 'Inventory']);
   opts.push(['cancel', 'Cancel']);
   /* Where the pointer was when it was asked.  The menu used to be
@@ -20420,7 +19578,6 @@ function ctxKey(k) {
     return;
   }
   if (job === 'inv') { openInv(); return; }
-  if (job === 'disarm') { beginAction(); tick(disarmTrap(x, y)); return; }
   if (job === 'aim') { beginAction(); beginShooting(); return; }
   if (job === 'shoot') {
     var foe2 = monAt(L, x, y);
@@ -21396,14 +20553,9 @@ function playKey(k) {
        picking it up is the answer once there is. */
     var laid = takeableHere();
     if (laid && wearable && freeSlot() < 0) laid = null;
-    /* A shelf comes last of the four: picking a thing up off the floor
-       or putting it on is what you meant if either was possible, and the
-       shelf will still be there next turn. */
-    var shelf = (typeof shelfHere === 'function') && shelfHere() >= 0;
     var underfoot = (here === STAIR) ? 'down' :
                     (here === STAIR_UP) ? 'up' : (box ? 'look' :
-                    (laid ? 'take' : (wearable ? 'wear' :
-                    (shelf ? 'shelf' : null))));
+                    (laid ? 'take' : (wearable ? 'wear' : null)));
     if (underfoot && shootableNow()) {
       G.choice = { what: underfoot, box: box, wear: wearable, i: 0 };
       G.mode = 'choose';
@@ -21417,10 +20569,6 @@ function playKey(k) {
     if (underfoot === 'wear') {
       G.msgq = [];
       if (equipFromFloor(wearable)) { tick(true); return; }
-      finishMsgs(); return;
-    }
-    if (underfoot === 'shelf') {
-      if (searchShelf()) { tick(true); return; }
       finishMsgs(); return;
     }
     if (useStairs()) { tick(true); return; }
@@ -22767,9 +21915,6 @@ function itemActions(it, ref) {
     case 'ring': out.push(['use', 'Press it']); break;
     case 'pouch': out.push(['use', 'Open']); break;
     case 'pin': out.push(['use', 'Pin it on']); break;
-    /* it goes down where you are standing, so the verb is the whole of
-       the instruction: walk to the square you want it on and lay it */
-    case 'trap': out.push(['lay', 'Lay it here']); break;
     case 'amulet': out.push(['use', 'Look at it']); break;
   }
   /* Moving things between the pack and a chest by carrying them across
@@ -22842,14 +21987,6 @@ function doMenuAction(act) {
     case 'study': appraise(it); finishMsgs(); return;
     case 'unequip': unequipFrom(ref); finishMsgs(); return;
     case 'drop': dropFromPack(it, ref); finishMsgs(); return;
-    /* Laying a trap is a turn's work out in the dungeon, not something
-       done inside the pack - so the pack shuts and the turn is taken. */
-    case 'lay': {
-      closeInv();
-      beginAction();
-      tick(layTrapHere(it));
-      return;
-    }
     case 'use': {
       var res = useItem(it);
       if (res.pouch) { setPouch(res.pouch); G.pcur.r = 0; G.pcur.c = 0; return; }
@@ -23827,28 +22964,6 @@ function drawDecor(name, mx, my, px, py, a, still) {
        own floor rather than against the wall it is mounted on. */
     if (fdir[1] === -1) { sprTop(tspr, px, py + offY, a, 4); return; }
     spr(tspr, px + offX, py + offY, a);
-    return;
-  }
-  /* A FIREPLACE is two squares of wall out of one cell, the right half
-     the mirror of the left, and the fire in it moves: two shapes on the
-     wall torch's own beat, so the fire in the hearth and the fire in the
-     bracket are plainly the same fire.  Not while you are only
-     remembering the room - a picture does not move. */
-  if (isHearthName(name)) {
-    var hspr = still ? 'hearth_a'
-             : (torchFlameFrame(mx - (name === 'hearth_h' ? 1 : 0), my) & 1)
-               ? 'hearth_a' : 'hearth_b';
-    sprMirror(hspr, px, py, a, name === 'hearth_h' ? 1 : 0, 0);
-    return;
-  }
-  /* A BED is six squares out of two cells - the lower left corner and
-     the lower middle - and the name says which piece and which way
-     round, the same way a rug's does: 'h' mirrored left to right for the
-     far end, 'v' top to bottom for the head. */
-  if (isBedName(name)) {
-    var bt = name.slice(3);                     /* what is after 'bed' */
-    sprMirror(bt.charAt(0) === '_' && bt.charAt(1) === 'm' ? 'bed_m' : 'bed_c',
-      px, py, a, bt.indexOf('h') >= 0 ? 1 : 0, bt.indexOf('v') >= 0 ? 1 : 0);
     return;
   }
   /* Two tiles are painted joining something above them and are turned to
@@ -26398,6 +25513,564 @@ function sound(what) {
   return false;
 }
 
+/* ============================================================ playtest
+   The game, with a way in that skips the walking.
+
+   This file is only in playtest.html.  It adds nothing to the rules: it
+   picks a floor that has the thing you asked for on it, stands you next
+   to it, and hands you a pack full of gear so you can get straight to
+   whatever you meant to look at.  Everything after that is the game.
+
+   Two questions, in order.  What sort of thing - a room, or a creature -
+   and then which one.  The menu is ordinary HTML over the canvas rather
+   than pixels on it: it is scaffolding, and scaffolding should not have
+   to be drawn twice. */
+
+/* --------------------------------------------------------- a full pack
+   One of everything worth carrying, so nothing has to be searched for.
+   Weapons and armour come identified: you are here to test how a thing
+   fights, not to work out what it is. */
+function playtestKit() {
+  var i, it;
+  P.slots = new Array(N_SLOTS).fill(null);
+  P.eq = { rh: null, body: null, lh: null, head: null, feet: null };
+
+  var sword = mkItem('weapon', weaponIndex('long sword'));
+  sword.known = 1; sword.hp = 2; sword.dp = 2;
+  var mail = mkItem('armor', ARMORS.length - 2);
+  mail.known = 1; mail.ap = 2;
+  var bow = mkItem('weapon', weaponIndex('short bow')); bow.known = 1;
+  var helm = mkItem('head', 1); helm.known = 1;
+  var boots = mkItem('feet', 1); boots.known = 1;
+  P.eq.rh = sword; P.eq.body = mail; P.eq.lh = bow;
+  P.eq.head = helm; P.eq.feet = boots;
+  learnGear(sword); learnGear(mail); learnGear(bow);
+  learnGear(helm); learnGear(boots);
+
+  /* The pouch goes in first.  Filled last it never found a slot, and
+     everything meant to be in it ended up in an object nobody was
+     carrying. */
+  var pouch = mkItem('pouch', 0);
+  addItem(pouch);
+
+  /* what goes in the pack: something of every kind you might reach for */
+  var arrows = mkItem('weapon', weaponIndex('arrow'));
+  arrows.cnt = 30; arrows.known = 1; addItem(arrows);
+
+  var stones = mkItem('weapon', weaponIndex('stone'));
+  stones.cnt = 8; stones.known = 1; addItem(stones);
+
+  /* one of each runed stone, named, three apiece */
+  for (i = 0; i < WEAPONS.length; i++) {
+    if (!WEAPONS[i].rune) continue;
+    it = mkItem('weapon', i); it.cnt = 3; it.known = 1;
+    learnWeapon(i);
+    addItem(it);
+  }
+
+  var dyn = mkItem('dynamite', 0); dyn.cnt = 5; addItem(dyn);
+  var pins = mkItem('pin', 0); pins.cnt = 3; addItem(pins);
+  var crystals = mkItem('crystal', 0); crystals.cnt = 5; addItem(crystals);
+
+  /* --- and then a handful of whatever ------------------------------
+     What is left of the pack is dealt rather than laid out.  A kit with
+     one of everything in it is a fine way to test a thing you already
+     know about and a poor way to notice one you do not: it looks the
+     same every time, so nothing in it ever looks odd.
+
+     It was never one of everything anyway - there are 19 wands and 20
+     slots, so the old loop simply filled the pack with wands in table
+     order and stopped, and half of what it meant to hand you never fit.
+
+     Unidentified, on purpose.  Half of what a vial or a mushroom or a
+     ring IS lives in not knowing which one you are holding, and a
+     playtest that hands you the answer cannot show you that half.
+     Wands are the exception: they are the tool you reach for while
+     testing something else, so the ones dealt come charged and named. */
+  function ofKind(kind) {
+    var out = [], q;
+    if (kind === 'vial') for (q = 0; q < VIALS.length; q++) out.push(q);
+    if (kind === 'food') for (q = 0; q < FOODS.length; q++) if (isMushroom(q)) out.push(q);
+    if (kind === 'ring') for (q = 0; q < RINGS.length; q++) if (RINGS[q].p) out.push(q);
+    if (kind === 'wand') for (q = 0; q < WANDS.length; q++) out.push(q);
+    if (kind === 'potion') for (q = 0; q < POTIONS.length; q++) out.push(q);
+    if (kind === 'scroll') for (q = 0; q < SCROLLS.length; q++) out.push(q);
+    return out;
+  }
+  /* The KIND is drawn first and the thing second, so nineteen wands do
+     not crowd out four vials simply by being nineteen. */
+  var kinds = ['vial', 'food', 'ring', 'wand', 'potion', 'scroll'];
+  function deal(kind, k) {
+    var thing = mkItem(kind, k);
+    if (kind === 'wand') { thing.ch = 9; KNOWN.wand[k] = 1; }
+    if (kind === 'ring') thing.ch = RINGS[k].charges === undefined
+      ? RING_CHARGES : RINGS[k].charges;
+    if (kind === 'vial' || kind === 'food') thing.cnt = 1 + rnd(2);
+    return addItem(thing);
+  }
+  function dealOne(kind) {
+    var list = ofKind(kind);
+    if (!list.length) return null;
+    return deal(kind, list[rnd(list.length)]);
+  }
+  /* one of each of the three that are worth seeing and easy to miss */
+  dealOne('vial'); dealOne('food'); dealOne('ring');
+  var guard = 0;
+  while (freeSlot() >= 0 && guard++ < 60) dealOne(kinds[rnd(kinds.length)]);
+
+  /* and the pouch, likewise: a mix of glass rather than the same ten
+     flasks every time.  addItem puts potions and vials in it by itself,
+     so this is only about filling what is left of it. */
+  var glass = [];
+  for (i = 0; i < POTIONS.length; i++) glass.push(['potion', i]);
+  for (i = 0; i < VIALS.length; i++) glass.push(['vial', i]);
+  for (var s = 0; s < POUCH_CAP && glass.length; s++) {
+    if (pouch.items[s]) continue;
+    var g = glass[rnd(glass.length)];
+    var gi = mkItem(g[0], g[1]);
+    gi.cnt = 1 + rnd(2);
+    pouch.items[s] = gi;
+  }
+  /* Scrolls stay known: they are the one kind you read to make something
+     else happen, and hunting for the identify scroll in a list of made-up
+     titles is not what anybody opened this file to do. */
+  for (i = 0; i < SCROLLS.length; i++) KNOWN.scr[i] = 1;
+
+  P.food = FOOD_MAX;
+  P.gold = 500;
+}
+
+/* --------------------------------------------- a floor with that on it
+   Roll floors until one has what was asked for, then stand the player
+   beside it.  Rolling is simpler than building a floor by hand and it
+   gives you a real one - the room you get is the room the game makes. */
+var PLAYTEST_TRIES = 400;
+
+function playtestRoom(kind) {
+  var depth, tries;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    depth = 1;
+    for (var i = 0; i < SPECIAL_ROOMS.length; i++)
+      if (SPECIAL_ROOMS[i].n === kind) depth = Math.max(1, SPECIAL_ROOMS[i].min);
+    /* A floor you have already been on is remembered, so asking for it
+       again hands back the same one.  Forget it, and get a new floor. */
+    G.floors = {};
+    enterLevel(depth);
+    var r = null;
+    for (i = 0; i < L.rooms.length; i++)
+      if (!L.rooms[i].gone && L.rooms[i].special === kind) r = L.rooms[i];
+    if (!r) continue;
+    /* stand in the doorway of it, or in the middle if it has none */
+    standIn(r);
+    return true;
+  }
+  return false;
+}
+
+/* ------------------------------------------------------ a way down
+   A trapdoor turns up on about one floor in four and is hidden until it
+   is found, which makes it the one thing in the game you cannot go and
+   look at when you want to.  So: a floor that has one, standing beside
+   it with it already found, and the cellar underneath it left exactly
+   as the dungeon built it. */
+function playtestCellar(rugged) {
+  var tries, i;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    G.floors = {};
+    enterLevel(2 + rnd(6));
+    if (!L.tdoor) continue;
+    var keys = [], k;
+    for (k in L.tdoor) keys.push(k | 0);
+    if (!keys.length) continue;
+    var j = keys[0];
+    var tx = j % MAP_W, ty = (j / MAP_W) | 0;
+    /* under a rug, or in plain sight - both are worth being able to ask
+       for, since the rug is the whole reason one can be missed */
+    if (rugged && !isRugName(L.decor[j])) continue;
+    if (!rugged && isRugName(L.decor[j])) continue;
+    /* found, so it can be used - a rug over it still hides it, which is
+       the point of asking for that one */
+    L.tdoor[j].found = 1;
+    /* stand beside it, or on it if there is nowhere beside it */
+    var spot = null;
+    for (i = 0; i < DIR8.length; i++) {
+      var nx = tx + DIR8[i][0], ny = ty + DIR8[i][1];
+      if (walkable(nx, ny) && !monAt(L, nx, ny) && tileAt(nx, ny) !== TRAPDOOR) { spot = [nx, ny]; break; }
+    }
+    P.x = spot ? spot[0] : tx; P.y = spot ? spot[1] : ty;
+    L.mons.length = 0;
+    computeVis();
+    return true;
+  }
+  return false;
+}
+
+/* A plain room, with one of these in it and nothing else alive. */
+function playtestMonster(c) {
+  var D = MON_BY_C[c];
+  var depth = Math.max(1, D && D.minDepth ? D.minDepth : 1);
+  var tries;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    G.floors = {};
+    enterLevel(depth);
+    var r = biggestPlainRoom();
+    if (!r) continue;
+    standIn(r);
+    L.mons.length = 0;
+    /* far enough off to see it coming, near enough to reach it */
+    var spot = spotInRoom(r, 4, 8);
+    if (!spot) spot = spotInRoom(r, 2, 12);
+    if (!spot) continue;
+    var m = mkMonster(c, Math.max(depth, 6), spot.x, spot.y);
+    m.state = 2; m.disguise = 0;
+    L.mons.push(m);
+    computeVis();
+    return true;
+  }
+  return false;
+}
+
+/* the biggest room with nothing special about it */
+function biggestPlainRoom() {
+  var best = null, i;
+  for (i = 0; i < L.rooms.length; i++) {
+    var r = L.rooms[i];
+    if (r.gone || r.special || r.sealed || r.dark) continue;
+    if (r.floors.length < 14) continue;
+    if (!best || r.floors.length > best.floors.length) best = r;
+  }
+  return best;
+}
+function standIn(r) {
+  P.x = r.cx; P.y = r.cy;
+  if (!walkable(P.x, P.y) && r.floors.length) { P.x = r.floors[0][0]; P.y = r.floors[0][1]; }
+  computeVis();
+}
+function spotInRoom(r, lo, hi) {
+  var out = [], i;
+  for (i = 0; i < r.floors.length; i++) {
+    var f = r.floors[i];
+    var d = Math.abs(f[0] - P.x) + Math.abs(f[1] - P.y);
+    if (d < lo || d > hi) continue;
+    if (!walkable(f[0], f[1]) || monAt(L, f[0], f[1])) continue;
+    out.push({ x: f[0], y: f[1] });
+  }
+  return out.length ? out[rnd(out.length)] : null;
+}
+
+/* ---------------------------------------------------------- the start
+   Set a run up the way newGame does, then put the asked-for thing in
+   front of you. */
+function playtestStart(what, which) {
+  srand((Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0);
+  makeAppearances();
+  G = freshG();
+  P = newPlayer();
+  P.lv = 6; P.exp = E_LEVELS[4];
+  P.mhp = 60; P.hp = 60;
+  P.str = P.mstr = 18; P.dex = P.mdex = 16; P.wis = P.mwis = 16;
+  PT_TAKEN = {};                 /* a new run, a new pack, nothing taken yet */
+  playtestKit();
+
+  var ok = (what === 'room') ? playtestRoom(which) :
+           (what === 'cellar') ? playtestCellar(which === 'rug') :
+           playtestMonster(which);
+  G.msgq = [];
+  G.mode = 'play';
+  if (!ok) msg('Could not find one. Reload and try again.', 'R');
+  else if (what === 'room') msg('A ' + which + ' room. Have a look round.', 'c');
+  else if (what === 'cellar')
+    msg(which === 'rug' ? 'A trapdoor under that rug. Burn it off to find it.'
+                        : 'A trapdoor, found. ENTER on it goes down.', 'c');
+  else msg('One ' + MON_BY_C[which].n + ', waiting for you.', 'c');
+  msg('TAB for the pack. ESC for the menu.', '6');
+  finishMsgs();
+}
+
+
+/* ========================================================== the picker
+   One list of buttons over the canvas, used by every menu here.  A row
+   is [value, label] and may carry two more: 1 if the thing is already
+   taken or held, which draws the button lit, and a line of hover text.
+
+   The screens form a STACK.  BACK goes up one of them and, at the top,
+   back to the first question; START puts the whole thing away and leaves
+   you in the dungeon.  Those two used to be one button, which is why
+   BACK out of the item list dropped you into the game. */
+var PT_STACK = [];
+var PT_TAKEN = {};
+
+function playtestPick(rows, title, pick, stay) {
+  var box = document.getElementById('pick');
+  var head = document.getElementById('pickhead');
+  var list = document.getElementById('picklist');
+  head.textContent = title;
+  list.innerHTML = '';
+  rows.forEach(function (row) {
+    var b = document.createElement('button');
+    b.textContent = row[1];
+    if (row[2]) b.className = 'on';
+    if (row[3]) b.title = row[3];
+    b.onclick = function () {
+      if (!stay) box.style.display = 'none';
+      pick(row[0]);
+    };
+    list.appendChild(b);
+  });
+  box.style.display = 'flex';
+}
+function playtestClose() {
+  PT_STACK = [];
+  document.getElementById('pick').style.display = 'none';
+}
+/* Go to a screen, remembering the one you came from. */
+function playtestGo(fn) {
+  PT_STACK.push(fn);
+  fn();
+}
+/* Opening a bench from the button in the corner: whatever screen you
+   were on before is forgotten, so BACK from it goes to the first
+   question rather than somewhere you have already left. */
+function playtestOpen(fn) { PT_STACK = []; playtestGo(fn); }
+/* And come back off it.  The screen below is drawn again, so whatever
+   changed while you were away - a perk taken, an item handed over -
+   shows when you get there. */
+function playtestBack() {
+  PT_STACK.pop();
+  if (!PT_STACK.length) { playtestMenu(); return; }
+  PT_STACK[PT_STACK.length - 1]();
+}
+/* The two rows every bench screen ends with. */
+function playtestFoot() {
+  return [['-back', 'BACK', 0, 'up one screen'],
+          ['-start', 'START', 0, 'put this away and play']];
+}
+/* true if the press was one of those, and it has been dealt with */
+function playtestFooted(v) {
+  if (v === '-back') { playtestBack(); return 1; }
+  if (v === '-start') { playtestClose(); return 1; }
+  return 0;
+}
+
+/* ====================================================== the perk bench
+   Every perk in the game, on or off with a press, at any moment of a
+   run.  Perks are handed out three at a time at five levels, so trying
+   one used to mean playing up to it and hoping it was offered; here they
+   are all just there.
+
+   It goes through the game's own takePerk, so a perk that does something
+   the moment it is taken does that here too. */
+function playtestPerks() {
+  var rows = PERKS.map(function (pk) {
+    return [pk.id, pk.n.toUpperCase() + (hasPerk(pk.id) ? ' *' : ''),
+            hasPerk(pk.id) ? 1 : 0, pk.txt];
+  }).concat(playtestFoot());
+  playtestPick(rows, 'Perks - press to take or drop one', function (id) {
+    if (playtestFooted(id)) return;
+    if (hasPerk(id)) {
+      delete P.perks[id];
+      msg('You put down ' + perkById(id).n + '.', '6');
+    } else takePerk(id);
+    finishMsgs();
+    playtestPerks();               /* drawn again, so the mark is right */
+  }, 1);
+}
+function perkById(id) { return PERK_BY_ID[id] || { n: id }; }
+
+/* ====================================================== the item bench
+   Everything the dungeon can hand you, by kind and then by name, put
+   straight into the pack and identified.  A great bow does not show up
+   before the fifth floor and a wand of fire is one of nineteen wands, so
+   the only honest way to try either is to be given one.
+
+   A weapon or a piece of gear asks one more question: which enchantment
+   is worked into it.  That is the only way to reach a bow of fire, which
+   needs a bow AND the fire rune to land on it - about four weapons in a
+   thousand - and which is why one can be played for without ever
+   turning up.
+
+   What has been taken is marked, because one of each is enough. */
+function playtestKinds() {
+  var out = [];
+  function some(t, list, pick) {
+    var rows = [], q;
+    for (q = 0; q < list.length; q++)
+      if (!pick || pick(list[q], q)) rows.push([t, q, list[q].n]);
+    return rows;
+  }
+  out.push(['weapon', 'WEAPONS', some('weapon', WEAPONS)]);
+  out.push(['wand', 'WANDS', some('wand', WANDS)]);
+  out.push(['ring', 'RINGS', some('ring', RINGS, function (r) { return !!r.p; })]);
+  out.push(['potion', 'POTIONS', some('potion', POTIONS)]);
+  out.push(['scroll', 'SCROLLS', some('scroll', SCROLLS)]);
+  out.push(['vial', 'VIALS', some('vial', VIALS)]);
+  out.push(['armor', 'ARMOUR', some('armor', ARMORS)]);
+  out.push(['shield', 'SHIELDS', some('shield', SHIELDS)]);
+  out.push(['head', 'HELMS', some('head', HEADS)]);
+  out.push(['feet', 'BOOTS', some('feet', FEET)]);
+  out.push(['other', 'THE REST', [['dynamite', 0, 'dynamite'],
+    ['pin', 0, 'lock pin'], ['crystal', 0, 'crystal'], ['pouch', 0, 'pouch']]]);
+  return out;
+}
+/* Which enchantments will go into this thing, asked the way the dungeon
+   asks: a bow says 'wb' and so is offered the bow's own rune as well as
+   every weapon rune, a cap says 'gh', and a potion says nothing at all. */
+function playtestRuneKind(t, k) {
+  if (t === 'weapon') {
+    if (WEAPONS[k].grp) return '';           /* arrows and stones take none */
+    return WEAPONS[k].launch ? 'wb' : 'w';
+  }
+  if (t === 'armor' || t === 'shield') return 'g';
+  if (t === 'head') return 'gh';
+  if (t === 'feet') return 'gf';
+  return '';
+}
+function playtestRunesFor(t, k) {
+  var kind = playtestRuneKind(t, k), out = [], i, c;
+  if (!kind) return out;
+  for (i = 0; i < RUNES.length; i++) {
+    for (c = 0; c < RUNES[i].t.length; c++)
+      if (kind.indexOf(RUNES[i].t.charAt(c)) >= 0) { out.push(RUNES[i]); break; }
+  }
+  return out;
+}
+function playtestTakenKey(t, k, br) { return t + '|' + k + '|' + (br || ''); }
+/* One of that thing, known, in the pack.  Charges and counts are set the
+   way the dungeon sets them, so what you are handed behaves like one you
+   found rather than like an empty shell. */
+function playtestGive(t, k, br) {
+  var it = mkItem(t, k);
+  it.known = 1;
+  if (br) { it.br = br; learnRune(it); }
+  if (t === 'wand') { it.ch = 9; KNOWN.wand[k] = 1; }
+  if (t === 'ring') it.ch = RINGS[k].charges === undefined ? RING_CHARGES : RINGS[k].charges;
+  if (t === 'weapon') {
+    learnWeapon(k);
+    if (WEAPONS[k].grp) it.cnt = WEAPONS[k].rune ? 3 : 20;
+  }
+  if (t === 'potion') KNOWN.pot[k] = 1;
+  if (t === 'scroll') KNOWN.scr[k] = 1;
+  if (t === 'dynamite' || t === 'pin' || t === 'crystal') it.cnt = 5;
+  if (isGear(it) || t === 'weapon') learnGear(it);
+  if (!addItem(it)) {
+    msg('Your pack is full.', 'R');
+    finishMsgs();
+    return 0;
+  }
+  PT_TAKEN[playtestTakenKey(t, k, br)] = 1;
+  msg('Given: ' + itemName(it) + '.', 'y');
+  finishMsgs();
+  return 1;
+}
+function playtestItems() {
+  playtestGo(playtestItemKinds);
+}
+function playtestItemKinds() {
+  var kinds = playtestKinds();
+  var rows = kinds.map(function (kk) { return [kk[0], kk[1], 0, '']; })
+    .concat(playtestFoot());
+  playtestPick(rows, 'Items - which kind?', function (which) {
+    if (playtestFooted(which)) return;
+    playtestGo(function () { playtestItemList(which); });
+  }, 1);
+}
+function playtestItemList(which) {
+  var kinds = playtestKinds(), kk = null, q;
+  for (q = 0; q < kinds.length; q++) if (kinds[q][0] === which) kk = kinds[q];
+  if (!kk) { playtestBack(); return; }
+  var rows = kk[2].map(function (r) {
+    var runes = playtestRunesFor(r[0], r[1] | 0);
+    var took = PT_TAKEN[playtestTakenKey(r[0], r[1] | 0, '')];
+    return [r[0] + '|' + r[1], String(r[2]).toUpperCase() + (took ? ' *' : ''),
+            took ? 1 : 0, runes.length ? 'press for the plain one, or an enchanted one' : ''];
+  }).concat(playtestFoot());
+  playtestPick(rows, kk[1] + ' - press to be handed one', function (v) {
+    if (playtestFooted(v)) return;
+    var bits = v.split('|'), t = bits[0], k = bits[1] | 0;
+    if (playtestRunesFor(t, k).length) {
+      playtestGo(function () { playtestItemRunes(which, t, k); });
+      return;
+    }
+    playtestGive(t, k, '');
+    playtestItemList(which);
+  }, 1);
+}
+/* The plain one, or one with any enchantment that fits it.  This is the
+   whole reason the bench has three screens rather than two. */
+function playtestItemRunes(which, t, k) {
+  var name = (t === 'weapon' ? WEAPONS[k] : t === 'armor' ? ARMORS[k] :
+              t === 'shield' ? SHIELDS[k] : t === 'head' ? HEADS[k] : FEET[k]).n;
+  function rows() {
+    var out = [['', 'PLAIN ' + name.toUpperCase() +
+      (PT_TAKEN[playtestTakenKey(t, k, '')] ? ' *' : ''),
+      PT_TAKEN[playtestTakenKey(t, k, '')] ? 1 : 0, '']];
+    playtestRunesFor(t, k).forEach(function (rn) {
+      var took = PT_TAKEN[playtestTakenKey(t, k, rn.n)];
+      out.push([rn.n, ('of ' + rn.n).toUpperCase() + (took ? ' *' : ''),
+                took ? 1 : 0, rn.txt]);
+    });
+    return out.concat(playtestFoot());
+  }
+  playtestPick(rows(), name + ' - plain, or worked with what?', function (br) {
+    if (playtestFooted(br)) return;
+    playtestGive(t, k, br);
+    playtestItemRunes(which, t, k);
+  }, 1);
+}
+
+/* ========================================================== the menu
+   The first question, and the bottom of the stack: BACK from a bench
+   comes here. */
+function playtestMenu() {
+  PT_STACK = [];
+  function show(rows, title, pick) { playtestPick(rows, title, pick, 0); }
+  show([['room', 'A ROOM'], ['monster', 'A MONSTER'], ['cellar', 'A CELLAR'],
+        ['perks', 'PERKS'], ['items', 'ITEMS'],
+        ['-start', 'JUST PLAY']],
+    'What do you want to try?',
+    function (what) {
+      if (what === '-start') { playtestClose(); return; }
+      if (what === 'perks') { playtestGo(playtestPerks); return; }
+      if (what === 'items') { playtestItems(); return; }
+      if (what === 'cellar') {
+        show([['open', 'A TRAPDOOR IN THE OPEN'], ['rug', 'ONE UNDER A RUG']],
+          'Which sort?', function (which) {
+            playtestClose();
+            playtestStart('cellar', which);
+          });
+      } else if (what === 'room') {
+        var rooms = SPECIAL_ROOMS.map(function (s) { return [s.n, s.n.toUpperCase()]; });
+        show(rooms, 'Which room?', function (which) {
+          playtestClose();
+          playtestStart('room', which);
+        });
+      } else {
+        var mons = MONS.map(function (m) { return [m.c, m.n.toUpperCase()]; });
+        mons.sort(function (a, b) { return a[1] < b[1] ? -1 : 1; });
+        show(mons, 'Which creature?', function (which) {
+          playtestClose();
+          playtestStart('monster', which);
+        });
+      }
+    });
+}
+
+document.getElementById('again').onclick = function () {
+  this.blur();
+  playtestMenu();
+};
+/* The two benches.  Unlike "pick again" these do not start a new run -
+   they reach into the one you are in, which is the point of them: take a
+   perk in the middle of a fight, or be handed the wand you wanted to try
+   it against. */
+document.getElementById('perks').onclick = function () {
+  this.blur();
+  playtestOpen(playtestPerks);
+};
+document.getElementById('items').onclick = function () {
+  this.blur();
+  playtestOpen(playtestItemKinds);
+};
 </script>
 </body>
 </html>

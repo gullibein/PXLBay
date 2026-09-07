@@ -2006,6 +2006,55 @@ spr('rug_c1', [
     "qqqqqqjq",
     "qqqqqqqj"])
 
+# ----- wall torches -------------------------------------------------------
+# Two frames of the same torch, the flame leaning a different way in each
+# so alternating them reads as a flicker.  Painted for a torch mounted
+# facing east; drawDecor turns it to face whichever way it actually hangs.
+spr('torch', [
+    "...R....",
+    "..RyR...",
+    "..ROyR..",
+    "...wN...",
+    "...wN...",
+    "...0....",
+    "........",
+    "........"])
+
+spr('torch2', [
+    "....R...",
+    "...RyR..",
+    "..RyOR..",
+    "...wN...",
+    "...wN...",
+    "...0....",
+    "........",
+    "........"])
+
+# A scatter of firelight caught on the surface of water, drawn over a
+# water tile at an alpha that rises and falls with the torch throwing it
+# - see glowTorch and the WATER case of drawMapAt.  Two frames, laid over
+# 'water' and 'water2' the same way those two already alternate, so the
+# glitter does not sit dead still while the ripple under it does.
+spr('water_refl', [
+    "........",
+    ".OO.....",
+    ".....O..",
+    "........",
+    ".OO.....",
+    ".....OO.",
+    "........",
+    "..O....."])
+
+spr('water2_refl', [
+    "........",
+    "....OO..",
+    ".O......",
+    "......O.",
+    "...OO...",
+    "........",
+    ".O....O.",
+    "........"])
+
 # ---------------------------------------------------------------- font 5x7
 F = {}
 def gl(ch, s):
@@ -2186,6 +2235,10 @@ LAYOUT = [
     # correct everywhere it has anything painted - see migrate_sheet.
     ('vials',     ['vial_g', 'vial_k', 'vial_p', 'vial_w',
                    'vial_r', 'vial_y', 'vial_b', 'ice', 'slime', 'rubble2']),
+
+    # Added last for the same reason the vials were: every sheet painted
+    # before torches existed keeps every cell it already has.
+    ('torches',   ['torch', 'torch2', 'water_refl', 'water2_refl']),
 ]
 
 # Sprites deliberately taken out of the game altogether - the definition

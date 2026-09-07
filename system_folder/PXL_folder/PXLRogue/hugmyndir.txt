@@ -1,0 +1,9 @@
+I want to fix the fog of war so that the line of sigt is a straight line instead of just darkened squares in a semi line.
+The alchemists cell should hold fewer potions. Five potions max.
+
+Some crazy stuff:
+- magic that changes the level, moves rooms around or makes new rooms or hallways
+- spells that increase the size of an enemy so that it fills four squares
+- Dash skill that allows the player to move two or three squares forwards every three turns.
+- Where is the bow that shoots fire arrows??
+- A weapon that can penetrate enemies and hit those behind it as well
