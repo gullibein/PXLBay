@@ -1,9 +1,17 @@
-I want to fix the fog of war so that the line of sigt is a straight line instead of just darkened squares in a semi line.
+I want to fix the fog of war so that the line of sight is a straight line instead of just darkened squares in a semi line. 
 The alchemists cell should hold fewer potions. Five potions max.
 
 Some crazy stuff:
 - magic that changes the level, moves rooms around or makes new rooms or hallways
 - spells that increase the size of an enemy so that it fills four squares
 - Dash skill that allows the player to move two or three squares forwards every three turns.
-- Where is the bow that shoots fire arrows??
-- A weapon that can penetrate enemies and hit those behind it as well
+- A weapon that can penetrate enemies to hit those behind it as well (penetrating arrows! Penetrating spear!)
+- Doors should burn, except for metal doors.
+- A vial with the letters DRINK ME. Can only be used on the current level. Different crazy effects:
+   - The player quadrupels in size and can break through walls for 100 turns. Walking over enemies deals heavy damage and all damage dealt to the player is halved.
+   - The player can walk through all walls for 100 turns
+   - MIND CONTROL: the player slips into the mind of the next monster he meets and can control it. As a monster he has an inventory that holds five objects and he can equip armors and weapons.
+- A shop on the 5th and 10th floor:
+   - The big books
+   - A dog
+    - 

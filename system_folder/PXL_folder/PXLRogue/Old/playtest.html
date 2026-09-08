@@ -12,17 +12,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PXLRogue">
 <meta name="theme-color" content="#05060d">
-<title>PXLRogue</title>
-<link rel="icon" href="favicon.ico">
+<title>Rogue-8 playtest</title>
 <style>
   /* dvh is the height that is actually showing once the address bar
      has slid away; the plain percentage is the fallback. */
   html,body{margin:0;padding:0;height:100%;height:100dvh;
             background:#05060d;overflow:hidden;overscroll-behavior:none;}
   body{display:flex;align-items:center;justify-content:center;}
-  /* The canvas backing store is EXACTLY 230x128 device pixels.
-     It is only ever blown up by a whole-number factor, with all
-     smoothing disabled, so every source pixel stays a perfect square. */
   canvas{
     image-rendering:pixelated;
     image-rendering:crisp-edges;
@@ -41,15 +37,7 @@
     -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
-  /* The retro monitor, switched on from the ESC menu.  It is a sheet of
-     glass laid over the picture rather than anything drawn into it, and
-     that is deliberate: the backing store stays exactly 230x128, and
-     scanlines drawn into it would be a whole game pixel thick - four
-     screen pixels at the usual scale, which cuts every sprite in half.
-     Laid over the top they are as fine as the screen showing them,
-     which is what a scanline actually is.  It also costs nothing per
-     frame; the browser composites it and the game never thinks about
-     it again. */
+  /* the retro monitor - see build.py, which has the reasoning */
   #crt{
     position:fixed; display:none; pointer-events:none; z-index:5;
     background:
@@ -59,32 +47,59 @@
       repeating-linear-gradient(to right,
         rgba(255,64,64,0.045) 0px, rgba(64,255,64,0.045) 1px,
         rgba(64,64,255,0.045) 2px, rgba(0,0,0,0.00) 3px);
-    /* the dark curve of the tube at its corners */
     box-shadow:inset 0 0 34px 6px rgba(0,0,0,0.42);
   }
   #crt.on{ display:block; }
-  #nosheet{
+  /* The picker is ordinary HTML over the canvas.  It is scaffolding for
+     testing, not part of the game, so it does not pretend to be pixels. */
+  #pick{
     position:fixed; inset:0; display:none;
-    align-items:center; justify-content:center; text-align:center;
-    color:#c3ccd9; background:#05060d; padding:20px;
-    font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;
+    flex-direction:column; align-items:center; justify-content:center;
+    background:rgba(5,6,13,0.94); color:#c3ccd9;
+    font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;
+    z-index:10;
   }
+  #pickhead{ color:#fad039; margin-bottom:14px; letter-spacing:1px; }
+  #picklist{
+    display:flex; flex-wrap:wrap; gap:8px;
+    max-width:720px; justify-content:center;
+  }
+  #picklist button{
+    font:inherit; color:#c3ccd9; background:#141829;
+    border:1px solid #3f4966; padding:7px 13px; cursor:pointer;
+    letter-spacing:1px;
+  }
+  #picklist button:hover{ background:#2b3352; border-color:#fad039; color:#fff; }
+  /* a bench button for something you already have */
+  #picklist button.on{ background:#2b3352; border-color:#fad039; color:#fad039; }
+  #bench{
+    position:fixed; right:10px; top:10px; z-index:11;
+    display:flex; gap:6px;
+  }
+  #bench button{
+    font:12px ui-monospace,Menlo,Consolas,monospace;
+    color:#86909f; background:#141829; border:1px solid #3f4966;
+    padding:5px 10px; cursor:pointer;
+  }
+  #bench button:hover{ color:#fff; border-color:#fad039; }
 </style>
 </head>
 <body>
 <canvas id="scr" width="320" height="200"></canvas>
 <div id="crt"></div>
-<div id="nosheet">spritesheet.png is not beside this file.<br>
-The graphics live in that PNG - keep the two together.</div>
+<div id="nosheet" style="position:fixed;inset:0;display:none;align-items:center;
+  justify-content:center;color:#c3ccd9;background:#05060d;text-align:center;
+  font:14px/1.6 ui-monospace,Menlo,Consolas,monospace">
+spritesheet.png is not beside this file.<br>The graphics live in that PNG.</div>
+<div id="bench">
+  <button id="perks">perks</button>
+  <button id="items">items</button>
+  <button id="again">pick again</button>
+</div>
+<div id="pick"><div id="pickhead"></div><div id="picklist"></div></div>
 <script>
 var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 14, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "trapdoor": 20, "keyhole": 21, "ice_wall": 22, "fire_wall": 23, "door_wood": 24, "door_bronze": 25, "door_iron": 26, "door_silver": 27, "door_gold": 28, "door_crystal": 29, "moss": 30, "moss_b": 31, "moss2": 32, "moss3": 33, "moss4": 34, "crack": 35, "crack2": 36, "crack3": 37, "crack4": 38, "bones": 39, "skull": 40, "web": 41, "rubble": 42, "table": 43, "chair": 44, "barrel": 45, "shelf": 46, "hearth_a": 47, "hearth_b": 48, "bed_c": 49, "bed_m": 50, "trap": 51, "trap_dart": 52, "trap_gas": 53, "trap_pit": 54, "rug_00": 55, "rug_01": 56, "rug_0c": 57, "rug_10": 58, "rug_11": 59, "rug_1c": 60, "rug_20": 61, "rug_21": 62, "rug_2c": 63, "rug_c1": 64, "chest": 65, "chest_open": 66, "pouch": 67, "chest_wood": 68, "chest_bronze": 69, "chest_iron": 70, "chest_silver": 71, "chest_gold": 72, "chest_crystal": 73, "key_wood": 74, "key_bronze": 75, "key_iron": 76, "key_silver": 77, "key_gold": 78, "key_crystal": 79, "gold": 80, "gold2": 81, "amulet": 82, "crystal": 83, "pin": 84, "dynamite": 85, "food": 86, "fruit": 87, "mushroom": 88, "mush_b": 89, "mush_y": 90, "mush_p": 91, "mush_g": 92, "berries": 93, "scroll": 94, "wand": 95, "wand2": 96, "wand3": 97, "staff": 98, "staff2": 99, "ring_b": 100, "ring_g": 101, "ring_r": 102, "ring_c": 103, "ring_y": 104, "ring_p": 105, "ring_m": 106, "ring_o": 107, "ring_n": 108, "pot_r": 109, "pot_b": 110, "pot_g": 111, "pot_y": 112, "pot_p": 113, "pot_c": 114, "pot_w": 115, "pot_o": 116, "sword": 117, "dagger": 118, "dagger_throw": 119, "mace": 120, "axe": 121, "spear": 122, "bow": 123, "bow_long": 124, "crossbow": 125, "arrow": 126, "bolt": 127, "bolt2": 128, "stone": 129, "stone_blast": 130, "stone_slow": 131, "stone_return": 132, "stone_fire": 133, "stone_ice": 134, "stone_shock": 135, "armor_l": 136, "armor_c": 137, "armor_p": 138, "armor_glass": 139, "shield": 140, "shield2": 141, "shield3": 142, "cap": 143, "helm": 144, "crown": 145, "boots": 146, "sandals": 147, "ironboots": 148, "hero": 149, "hero2": 150, "grave": 151, "mon_A": 152, "mon_B": 153, "mon_C": 154, "mon_D": 155, "mon_E": 156, "mon_F": 157, "mon_G": 158, "mon_H": 159, "mon_I": 160, "mon_J": 161, "mon_K": 162, "mon_L": 163, "mon_M": 164, "mon_N": 165, "mon_O": 166, "mon_P": 167, "mon_Q": 168, "mon_R": 169, "mon_S": 170, "mon_T": 171, "mon_U": 172, "mon_V": 173, "mon_W": 174, "mon_X": 175, "mon_Y": 176, "mon_Z": 177, "mon_h": 178, "mon_w": 179, "mon_k": 180, "mon_r": 181, "flame": 182, "flame2": 183, "frost": 184, "magic": 185, "gas": 186, "icecube": 187, "flash1": 188, "flash2": 189, "flash3": 190, "mouse": 191, "mouse_get": 192, "cursor": 193, "point": 194, "heart": 195, "pan_cross": 196, "mk_z": 197, "mk_q": 198, "mk_x": 199, "mk_ally": 200, "vial_g": 201, "vial_k": 202, "vial_p": 203, "vial_w": 204, "vial_r": 205, "vial_y": 206, "vial_b": 207, "ice": 208, "slime": 209, "rubble2": 210, "torch": 211, "torch2": 212, "water_refl": 213, "water2_refl": 214}, "font": {"x": 0, "y": 112, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 154, "moved": {"flame": [181, 182], "flame2": [182, 183], "frost": [183, 184], "magic": [184, 185], "gas": [185, 186], "icecube": [186, 187], "flash1": [187, 188], "flash2": [188, 189], "flash3": [189, 190], "mouse": [190, 191], "mouse_get": [191, 192], "cursor": [192, 193], "point": [193, 194], "heart": [194, 195], "pan_cross": [195, 196], "mk_z": [196, 197], "mk_q": [197, 198], "mk_x": [198, 199], "mk_ally": [199, 200], "vial_g": [200, 201], "vial_k": [201, 202], "vial_p": [202, 203], "vial_w": [203, 204], "vial_r": [204, 205], "vial_y": [205, 206], "vial_b": [206, 207], "ice": [207, 208], "slime": [208, 209], "rubble2": [209, 210], "torch": [210, 211], "torch2": [211, 212], "water_refl": [212, 213], "water2_refl": [213, 214]}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bed", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen", "hearth", "hearth2", "rug_c", "rug_c2", "rug_e", "rug_n", "rug_ne", "rug_nw", "rug_s", "rug_se", "rug_sw", "rug_w"]};
-/* The graphics are the file on disk, not a copy of it welded in here.
-   Repaint spritesheet.png and reload - there is no build step for art. */
 var ATLAS_PNG = "spritesheet.png?v=dcac380a6c";
-/* The title screen is a picture too, and the same rule applies: it is a
-   file beside this one, not baked in.  If it is missing the title screen
-   simply comes up black and the menu still works. */
-var SPLASH_PNG = "PXLRogue_splash.png?v=4bfe8e2c1e";
 /* ============================================================ ROGUE-8
    Part 1 : constants, RNG, data tables, dungeon generation.
    The whole game renders into a 230x128 pixel buffer, nothing else.
@@ -114,11 +129,6 @@ var VIEW_W = 19, VIEW_H = 16, VIEW_PX = PANEL_W, VIEW_PY = 0;
    that compose the tags can be measured against the same figure the
    renderer works out at boot. */
 var FX_MAX_PX = PANEL_W - 1 - 2 - 3;
-/* How wide the box is that a special room or a special floor puts up.
-   Here rather than in the drawing for the same reason FX_MAX_PX is: what
-   fits in it is a rule about words, and the rules suite has to be able
-   to measure a sentence without loading the renderer. */
-var ROOM_BOX_W = 148;
 /* Hold SHIFT and the panel gets out of the way so you can see the whole
    floor.  It leaves quickly - long enough to read as a movement, short
    enough that you are not waiting on it. */
@@ -151,38 +161,20 @@ var MAP_MIN_H = 29, MAP_MAX_H = 44;
 function setDims(w, h) { MAP_W = w; MAP_H = h; }
 var MAX_DEPTH = 26;
 
-/* ====================================================== special floors
-   Now and then a floor of the dungeon is not an ordinary floor at all.
-   It has a shape of its own, a hazard of its own and a name of its own,
-   and walking into one stops the game to say which it is.
+/* ============================================================ the sewer
+   One floor of the dungeon, now and then, is not a floor of the dungeon
+   at all.  It is a drain: four times as wide as an ordinary floor and
+   under half as tall, running east and west, mostly under water and
+   mostly unlit, and the length of it is the thing you are being asked to
+   survive.  The way in is at one end and the way down is at the other.
 
-   There are four so far and there will be more, so this is a TABLE.  A
-   new kind of floor is one row here and whatever functions that row
-   names; nothing else in the generator has to be told about it, because
-   everything the generator does differently is asked of the row.
-
-   Which floors a run has, if any, is READ out of the run's seed rather
-   than drawn from it.  A draw here would move every card behind it and
-   deal a different dungeon to every seed in the game, including the many
-   runs that see no special floor at all - so a special floor costs the
-   deck nothing, exactly as a torch's flicker does (see glowRoll).
-
-   The fields, in the order they are used:
-     id, n      what it is called, in the code and out loud
-     min, max   the floors it can turn up on
-     pct        of runs that get one at all
-     dims()     the size of the map, or missing for an ordinary one
-     lay()      the rectangles the rooms are cut from, or missing
-     dress(L)   what is done to those rooms - flood, collapse, overgrow
-     dark       how much of it nobody has lit
-     bare       no rugs, no tables, no holes dug, no streams
-     nospecial  no treasury, no nursery: it is already the special thing
-     notrap     no trapdoor: no skipping the floor that is the point
-     ends       the two staircases at opposite ends of the map
-     wander     a floor that keeps sending things, and how many
-     mons       {mult, min, pct, of} - how crowded, and with what
-     litter     what is scattered about instead of the usual moss */
+   Which floor, if any, is read out of the run's seed rather than drawn
+   from it.  A draw here would move every card behind it and deal a
+   different dungeon to every seed in the game, including the two runs in
+   three that never see a sewer at all - so the sewer costs the deck
+   nothing, exactly as a torch's flicker does (see glowRoll). */
 var SEWER_MIN_DEPTH = 3, SEWER_MAX_DEPTH = 10;
+var SEWER_RUN_PCT = 30;            /* runs that have one at all */
 var SEWER_W = [230, 290];          /* four times an ordinary floor */
 /* Deep enough that a tunnel of the full four squares still leaves two
    clear either side of it for a chamber, plus the lane of rock between
@@ -200,98 +192,16 @@ var SEWER_RAT_PCT = 62;            /* of everything living down here */
 var SEWER_MON_MULT = 3;            /* a drain is four times as long */
 var SEWER_MON_MIN = 12;            /* and never quiet, however shallow */
 var SEWER_WANDER = 14;             /* and something is always coming */
-
-/* The collapse: a floor that fell in.  Most of it is gone and what is
-   left is ledges between the holes, with cracked flagstones warning you
-   about every edge.  Nothing is hidden here - the danger is the shape of
-   the floor, and you can see all of it. */
-var FELL_HOLES = [4, 7];           /* holes torn out of each room */
-var FELL_SIZE = [8, 18];           /* and how big each one comes out */
-var FELL_DARK = 30;
-var FELL_RUBBLE_PCT = 26;          /* of what is left, under rubble */
-
-/* The catacombs: long straight galleries with cells cut off them, dark,
-   and full of the people they were cut for. */
-var TOMB_GALLERIES = [2, 3];
-var TOMB_GAL_H = 2;                /* a gallery is two squares deep */
-var TOMB_CELL_W = [3, 5];
-var TOMB_CELL_H = [3, 4];
-var TOMB_ROOMS_MAX = 34;           /* roomAt is a signed byte: stay well under */
-var TOMB_DARK = 72;
-var TOMB_BONE_PCT = 34;
-var TOMB_UNDEAD_PCT = 55;
-var TOMB_UNDEAD = ['Q', 'Z', 'W', 'V'];
-
-/* The mushroom cavern: one enormous cave with a few worked chambers off
-   the end of it, floored in moss and half of it unlit. */
-var CAVE_SHARE = 0.66;             /* how much of the map the cave takes */
-var CAVE_ROOMS = [3, 5];           /* and the little rooms in what is left */
-var CAVE_DARK = 48;
-var CAVE_MOSS_PCT = 62;            /* of the cave floor, under moss */
-var CAVE_CAPS = [4, 9];            /* mushrooms growing in it */
-
-var FLOOR_KINDS = [
-  { id: 'sewer', n: 'the sewers',
-    min: SEWER_MIN_DEPTH, max: SEWER_MAX_DEPTH, pct: 30,
-    dims: function () {
-      return [SEWER_W[0] + rnd(SEWER_W[1] - SEWER_W[0] + 1),
-              SEWER_H[0] + rnd(SEWER_H[1] - SEWER_H[0] + 1)];
-    },
-    lay: scatterSewer, dress: floodSewer,
-    dark: SEWER_DARK_PCT, bare: 1, nospecial: 1, notrap: 1, ends: 1,
-    wander: SEWER_WANDER,
-    mons: { mult: SEWER_MON_MULT, min: SEWER_MON_MIN,
-            pct: SEWER_RAT_PCT, of: ['K', 'K', 'K', 'r', 'r'] } },
-
-  { id: 'collapse', n: 'the collapse', min: 5, max: 16, pct: 26,
-    after: collapseFloor,
-    dark: FELL_DARK, bare: 1, nospecial: 1, notrap: 1,
-    litter: ['rubble', 'rubble2', 'bones', 'rubble', 'rubble2'] },
-
-  { id: 'catacomb', n: 'the catacombs', min: 4, max: 14, pct: 26,
-    lay: scatterCatacomb, dress: dressCatacomb,
-    dark: TOMB_DARK, bare: 1, notrap: 1,
-    mons: { mult: 1.4, min: 6, pct: TOMB_UNDEAD_PCT, of: TOMB_UNDEAD },
-    litter: ['bones', 'skull', 'bones', 'skull', 'rubble'] },
-
-  { id: 'cavern', n: 'the mushroom cavern', min: 2, max: 12, pct: 26,
-    lay: scatterCavern, dress: dressCavern, after: sowCavern, shade: shadeCavern,
-    dark: CAVE_DARK, bare: 1, nospecial: 1,
-    mons: { mult: 1.5, min: 7 } }
-];
-function floorKindById(id) {
-  for (var i = 0; i < FLOOR_KINDS.length; i++)
-    if (FLOOR_KINDS[i].id === id) return FLOOR_KINDS[i];
-  return null;
-}
-/* Which floor of THIS run is of this kind, or 0 for none.  Two numbers
-   read out of the seed and nothing drawn from it: one says whether the
-   run has one at all, the other says where. */
-function floorDepthOf(id) {
-  var k = floorKindById(id), i;
-  if (!k) return 0;
-  for (i = 0; i < FLOOR_KINDS.length; i++) if (FLOOR_KINDS[i] === k) break;
+function sewerDepth() {
   var s = (G && G.runSeed) || 1;
-  var a = Math.imul(s ^ (0x53657765 + i * 0x9e37), 2654435761) >>> 0;
-  if ((a >>> 9) % 100 >= k.pct) return 0;
-  var b = Math.imul(s ^ (0x72446e73 + i * 0x85eb), 40503) >>> 0;
-  return k.min + (b >>> 11) % (k.max - k.min + 1);
+  var a = Math.imul(s ^ 0x53657765, 2654435761) >>> 0;
+  if ((a >>> 9) % 100 >= SEWER_RUN_PCT) return 0;
+  var b = Math.imul(s ^ 0x72446e73, 40503) >>> 0;
+  return SEWER_MIN_DEPTH + (b >>> 11) % (SEWER_MAX_DEPTH - SEWER_MIN_DEPTH + 1);
 }
-/* And what kind THIS floor is, or null.  Two kinds that land on the same
-   floor is a thing the seed can do; the first in the table wins, so the
-   answer is the same however often it is asked. */
-function floorKindAt(depth) {
-  for (var i = 0; i < FLOOR_KINDS.length; i++) {
-    var k = FLOOR_KINDS[i];
-    if (depth < k.min || depth > k.max) continue;
-    if (floorDepthOf(k.id) === depth) return k;
-  }
-  return null;
-}
-function sewerDepth() { return floorDepthOf('sewer'); }
 function isSewerFloor(depth) {
-  var k = floorKindAt(depth);
-  return !!k && k.id === 'sewer';
+  return depth >= SEWER_MIN_DEPTH && depth <= SEWER_MAX_DEPTH &&
+         depth === sewerDepth();
 }
 var LIT_RADIUS = 9, TORCH_RADIUS = 4;
 /* Pitch dark: rooms and stretches of hallway nobody has lit for a very
@@ -2152,41 +2062,6 @@ var ROOM_ICON = {
   alchemist: 'pot_g', powder: 'barrel', mint: 'gold'
 };
 
-/* ------------------------------------------- what a special floor says
-   The same box a special room puts up, for the same reason: you have
-   walked into something built rather than dealt, and a floor whose whole
-   shape is against you has to say so before you take a step in it.
-
-   Keyed by the floor kind's id, so a new kind is a row here beside its
-   row in FLOOR_KINDS and nothing else at all.  The title and the picture
-   go in the same two tables the rooms use - the ids cannot collide,
-   because a room kind is a room and a floor kind is a floor. */
-var FLOOR_ENTRY = {
-  sewer:    ['You are in the sewers. The floor is',
-             'water, and the dark runs both ways.',
-             'Something moves down the drain.'],
-  collapse: ['This floor fell in long ago. What is',
-             'left is ledges between the holes.',
-             'Cracked stone is your only warning.'],
-  catacomb: ['The catacombs: galleries, and cells',
-             'cut off them. All of this was buried.',
-             'Not all of it stayed buried.'],
-  cavern:   ['One huge cave, floored in moss, and',
-             'half of it unlit. Caps grow here.',
-             'Nothing down here has seen a lamp.']
-};
-(function () {
-  var t = { sewer: 'THE SEWERS', collapse: 'THE COLLAPSE',
-            catacomb: 'THE CATACOMBS', cavern: 'THE MUSHROOM CAVERN' };
-  var ic = { sewer: 'water', collapse: 'hole',
-             catacomb: 'skull', cavern: 'mushroom' };
-  for (var k in FLOOR_ENTRY) {
-    ROOM_ENTRY[k] = FLOOR_ENTRY[k];
-    ROOM_TITLE[k] = t[k];
-    ROOM_ICON[k] = ic[k];
-  }
-})();
-
 var TILE_INFO = {};
 TILE_INFO[ROCK]     = ['Solid rock.', 'Dynamite might open it.'];
 TILE_INFO[WALL]     = ['A dressed stone wall.'];
@@ -3049,206 +2924,6 @@ function scatterRooms() {
   return rects;
 }
 
-/* ------------------------------------------------------- the catacombs
-   Two or three long straight galleries running east and west, and the
-   ground between and beside them cut into cells barely big enough to lie
-   down in.  Nothing here has a sightline longer than a gallery, which is
-   the opposite of the sewer and the whole point of building one: in a
-   drain you see what is coming for half a minute, and here you never see
-   it until it is in the doorway.
-
-   Cells are placed by trying a spot and keeping it if nothing is within
-   three squares - the same rule scatterRooms keeps, and for the same
-   reason: their wall, a lane of rock for the corridor, our wall. */
-function scatterCatacomb() {
-  var rects = [], i, tries = 0;
-  function clashes(x, y, w, h) {
-    for (var q = 0; q < rects.length; q++) {
-      var o = rects[q];
-      if (x - 3 < o.x + o.w && x + w + 3 > o.x &&
-          y - 3 < o.y + o.h && y + h + 3 > o.y) return true;
-    }
-    return false;
-  }
-  var gal = TOMB_GALLERIES[0] + rnd(TOMB_GALLERIES[1] - TOMB_GALLERIES[0] + 1);
-  /* A gallery and the cells above and below it want about nine squares
-     of depth between them.  More galleries than the map is deep enough
-     for is a map with nowhere left to cut a cell, and a catacomb with
-     five rooms in it is not a catacomb. */
-  var room = Math.floor((MAP_H - 6) / 9);
-  if (gal > room) gal = room;
-  if (gal < 1) gal = 1;
-  var span = MAP_W - 8;
-  for (i = 0; i < gal; i++) {
-    /* spread evenly down the map, with the ends jittered so the two do
-       not read as one shape drawn twice */
-    var gy = 3 + Math.round((MAP_H - 6 - TOMB_GAL_H) * ((i + 0.5) / gal));
-    var gx = 3 + rnd(4);
-    var gw = span - rnd(5);
-    if (gx + gw > MAP_W - 3) gw = MAP_W - 3 - gx;
-    if (gw < 12) continue;
-    if (clashes(gx, gy, gw, TOMB_GAL_H)) continue;
-    rects.push({ x: gx, y: gy, w: gw, h: TOMB_GAL_H, shape: 'rect', gallery: 1 });
-  }
-  if (!rects.length) return scatterRooms();      /* no room for a gallery */
-  while (rects.length < TOMB_ROOMS_MAX && tries++ < 900) {
-    var cw = TOMB_CELL_W[0] + rnd(TOMB_CELL_W[1] - TOMB_CELL_W[0] + 1);
-    var ch = TOMB_CELL_H[0] + rnd(TOMB_CELL_H[1] - TOMB_CELL_H[0] + 1);
-    var cx = 2 + rnd(Math.max(1, MAP_W - cw - 3));
-    var cy = 2 + rnd(Math.max(1, MAP_H - ch - 3));
-    if (clashes(cx, cy, cw, ch)) continue;
-    rects.push({ x: cx, y: cy, w: cw, h: ch, shape: 'rect', cell: 1 });
-  }
-  return rects;
-}
-/* Bones, and a great many of them.  A cell that nobody has opened is a
-   cell with somebody still in it. */
-function dressCatacomb(L) {
-  var i, laid = 0;
-  for (i = 0; i < L.rooms.length; i++) {
-    var r = L.rooms[i];
-    if (r.gone || !r.cell) continue;
-    for (var f = 0; f < r.floors.length; f++) {
-      var x = r.floors[f][0], y = r.floors[f][1], j = y * MAP_W + x;
-      if (L.tiles[j] !== FLOOR || L.decor[j]) continue;
-      if (x === L.stair.x && y === L.stair.y) continue;
-      if (rnd(100) >= TOMB_BONE_PCT) continue;
-      L.decor[j] = rnd(2) ? 'bones' : 'skull';
-      laid++;
-    }
-  }
-  return laid;
-}
-
-/* --------------------------------------------------------- the collapse
-   The floor fell in.  Every room loses most of itself to holes torn out
-   of it, and what is left is the ledges between them - which is why the
-   holes are dug one at a time through digHole, the one pass in the game
-   that will not cut a room in two: whatever it leaves standing, you can
-   still walk all of.
-
-   So the shape is not designed, it is what survives.  Every edge gets
-   its cracked flagstones for free, since that is what digHole does. */
-function collapseFloor(L, depth) {
-  var i, dug = 0;
-  for (i = 0; i < L.rooms.length; i++) {
-    var r = L.rooms[i];
-    if (r.gone) continue;
-    var want = FELL_HOLES[0] + rnd(FELL_HOLES[1] - FELL_HOLES[0] + 1);
-    for (var q = 0; q < want; q++) {
-      var big = FELL_SIZE[0] + rnd(FELL_SIZE[1] - FELL_SIZE[0] + 1);
-      if (digHole(L, r, big)) dug++;
-    }
-  }
-  /* and the stone that came down lying about on what is left */
-  for (i = 0; i < L.tiles.length; i++) {
-    if (L.tiles[i] !== FLOOR || L.decor[i]) continue;
-    if (rnd(100) >= FELL_RUBBLE_PCT) continue;
-    L.decor[i] = rnd(2) ? 'rubble' : 'rubble2';
-  }
-  return dug;
-}
-
-/* --------------------------------------------------- the mushroom cave
-   One enormous ragged cave taking two thirds of the map, with a handful
-   of worked chambers cut into the rock beside it.  The chambers are not
-   decoration: a floor with one room has no corridors, and a floor with
-   no corridors has nowhere to hang a door, a lock or a secret - so the
-   dungeon would deal it again and again looking for the things every
-   floor must have. */
-function scatterCavern() {
-  var rects = [], tries = 0;
-  var cw = Math.floor((MAP_W - 6) * CAVE_SHARE), ch = MAP_H - 6;
-  if (cw < 12 || ch < 8) return scatterRooms();
-  rects.push({ x: 2, y: 3, w: cw, h: ch, shape: 'cave', cave: 1 });
-  var want = CAVE_ROOMS[0] + rnd(CAVE_ROOMS[1] - CAVE_ROOMS[0] + 1);
-  var x0 = 2 + cw + 3;
-  while (rects.length < want + 1 && tries++ < 400) {
-    var w = 5 + rnd(5), h = 4 + rnd(4);
-    if (x0 + w > MAP_W - 3) break;
-    var rx = x0 + rnd(Math.max(1, MAP_W - 3 - x0 - w + 1));
-    var ry = 2 + rnd(Math.max(1, MAP_H - h - 3));
-    var clash = 0;
-    for (var q = 0; q < rects.length; q++) {
-      var o = rects[q];
-      if (rx - 3 < o.x + o.w && rx + w + 3 > o.x &&
-          ry - 3 < o.y + o.h && ry + h + 3 > o.y) { clash = 1; break; }
-    }
-    if (!clash) rects.push({ x: rx, y: ry, w: w, h: h, shape: 'rect', chamber: 1 });
-  }
-  return rects;
-}
-/* Moss over most of the cave floor, and caps growing in it.  The moss is
-   laid rather than grown because the cave IS the garden: remossGardens
-   tops up a patch, and here there is no patch, there is a floor. */
-function dressCavern(L, depth) {
-  var i, f, mossed = 0;
-  for (i = 0; i < L.rooms.length; i++) {
-    var r = L.rooms[i];
-    if (r.gone || !r.cave) continue;
-    for (f = 0; f < r.floors.length; f++) {
-      var x = r.floors[f][0], y = r.floors[f][1], j = y * MAP_W + x;
-      if (L.tiles[j] !== FLOOR || L.decor[j]) continue;
-      if (rnd(100) >= CAVE_MOSS_PCT) continue;
-      L.decor[j] = pick(MOSS_FIELD);
-      mossed++;
-    }
-  }
-  return mossed;
-}
-
-/* Caps growing in the moss, and half the cave left unlit.
-
-   The darkness has to be laid square by square rather than room by room:
-   a cavern is ONE room, so the ordinary rule - a coin for each room -
-   makes the whole cave pitch black or the whole of it lit, and a cave
-   whose darkness is a single coin toss is two different floors wearing
-   the same name.  L.darkHall is a set of squares rather than a set of
-   rooms, and that is exactly what is wanted here. */
-function shadeCavern(L) {
-  var i, f, seeds = [], marked = 0;
-  L.darkHall = L.darkHall || {};
-  for (i = 0; i < L.rooms.length; i++) {
-    var r = L.rooms[i];
-    if (r.gone || !r.cave) continue;
-    r.dark = 0; r.lit = 1;                 /* the cave is not dark AS A ROOM */
-    for (f = 0; f < r.floors.length; f++) seeds.push(r.floors[f]);
-  }
-  if (!seeds.length) return 0;
-  shuffle(seeds);
-  var want = Math.round(seeds.length * CAVE_DARK / 100);
-  /* grown in blobs rather than sprinkled: a cave with every other square
-     dark is a chequerboard, not a cave */
-  for (i = 0; i < seeds.length && marked < want; i++) {
-    var open = [seeds[i]], run = 0, seen = {};
-    seen[seeds[i][1] * MAP_W + seeds[i][0]] = 1;
-    while (open.length && run < 26 && marked < want) {
-      var c = open.shift(), k = c[1] * MAP_W + c[0];
-      if (!L.darkHall[k]) { L.darkHall[k] = 1; marked++; }
-      run++;
-      for (var d = 0; d < DIR4.length; d++) {
-        var nx = c[0] + DIR4[d][0], ny = c[1] + DIR4[d][1];
-        var k2 = ny * MAP_W + nx;
-        if (seen[k2] || L.tiles[k2] !== FLOOR) continue;
-        if (L.roomAt[k2] < 0 || !L.rooms[L.roomAt[k2]].cave) continue;
-        seen[k2] = 1; open.push([nx, ny]);
-      }
-    }
-  }
-  return marked;
-}
-function sowCavern(L, depth) {
-  var caps = CAVE_CAPS[0] + rnd(CAVE_CAPS[1] - CAVE_CAPS[0] + 1), i, sown = 0;
-  var kinds = [];
-  for (i = 0; i < FOODS.length; i++) if (FOODS[i].mush) kinds.push(i);
-  if (!kinds.length) return 0;
-  for (i = 0; i < caps; i++) {
-    var it = mkItem('food', kinds[rnd(kinds.length)]);
-    if (dropOnFloor(L, it)) sown++;
-  }
-  return sown;
-}
-
 /* ---------------------------------------------------- laying the drain
    A sewer is not a scatter of chambers.  It is one run of tunnels laid
    end to end down the middle of a very long, very shallow map, with
@@ -4061,13 +3736,6 @@ function freeForFurniture(L, r, x, y) {
   if (x === L.stair.x && y === L.stair.y) return false;
   if (L.up && x === L.up.x && y === L.up.y) return false;
   if (itemAt(L, x, y) || trapAtLevel(L, x, y)) return false;
-  /* Nor on top of anything standing there.  Rooms are furnished in
-     enterLevel, AFTER the floor has been stocked - so by the time a bed
-     is laid there may well be something asleep on the square, and a bed
-     is a square nobody may stand on.  It went down over the creature
-     anyway, and left it standing somewhere the game says it cannot be. */
-  if (monAt(L, x, y)) return false;
-  if (P && x === P.x && y === P.y) return false;
   /* and never in front of a door */
   for (d = 0; d < DIR8.length; d++) {
     var t = L.tiles[(y + DIR8[d][1]) * MAP_W + (x + DIR8[d][0])];
@@ -4393,7 +4061,7 @@ var ROOM_KINDS = [
 function addRoomKind(L, depth) {
   /* No library and no solar in a drain.  Bookshelves and a bed want a
      dry room somebody lived in, and there is not one down here. */
-  if (L.floor) return null;
+  if (L.sewer) return null;
   if (rnd(100) >= ROOM_KIND_PCT) return null;
   var pool = [], i;
   for (i = 0; i < L.rooms.length; i++) {
@@ -5011,31 +4679,6 @@ function walkableAroundFurniture(Lv, sx, sy) {
   }
   return true;
 }
-/* The nearest square of this room you could actually stand on, or the
-   centre unchanged if it is one already. */
-function recentreRoom(L, r) {
-  if (r.gone || !r.floors || !r.floors.length) return 0;
-  function standable(x, y) {
-    var t = L.tiles[y * MAP_W + x];
-    return walkTile(t) && t !== HOLE;
-  }
-  if (standable(r.cx, r.cy)) return 0;
-  var best = null, bd = 1e9, i;
-  for (i = 0; i < r.floors.length; i++) {
-    var x = r.floors[i][0], y = r.floors[i][1];
-    if (!standable(x, y)) continue;
-    var d = Math.abs(x - r.cx) + Math.abs(y - r.cy);
-    if (d < bd) { bd = d; best = [x, y]; }
-  }
-  if (!best) return 0;              /* nothing left of it at all */
-  r.cx = best[0]; r.cy = best[1];
-  return 1;
-}
-function recentreRooms(L) {
-  var moved = 0;
-  for (var i = 0; i < L.rooms.length; i++) moved += recentreRoom(L, L.rooms[i]);
-  return moved;
-}
 function everywhereReachable(L) {
   var T = L.tiles, n = T.length, i, from = -1;
   if (!_walkList || _walkList.length < n) {
@@ -5066,11 +4709,9 @@ function everywhereReachable(L) {
 
 /* A hole clean through the floor, with the flagstones round it cracked
    so you can see it coming. */
-/* `big` is how many squares to try to take out, for a caller that wants
-   more than the dungeon's ordinary bite - see collapseFloor. */
-function digHole(L, r, big) {
+function digHole(L, r) {
   if (r.floors.length < 16) return false;
-  var want = big || (HOLE_MIN + rnd(HOLE_MAX - HOLE_MIN + 1));
+  var want = HOLE_MIN + rnd(HOLE_MAX - HOLE_MIN + 1);
   var cells = [], seen = {}, taken = {};
 
   /* Only open ground, well inside the room: a hole jammed against a wall
@@ -5170,20 +4811,20 @@ function crackAround(L, cells) {
 function genLevelOnce(depth) {
   /* every floor is its own size and shape - and one floor in the run is
      not a floor at all but a drain, which is a different shape entirely */
-  var K = floorKindAt(depth);
-  var sewer = !!K && K.id === 'sewer';
-  if (K && K.dims) { var dm = K.dims(); setDims(dm[0], dm[1]); }
+  var sewer = isSewerFloor(depth);
+  if (sewer)
+    setDims(SEWER_W[0] + rnd(SEWER_W[1] - SEWER_W[0] + 1),
+            SEWER_H[0] + rnd(SEWER_H[1] - SEWER_H[0] + 1));
   else
     setDims(MAP_MIN_W + rnd(MAP_MAX_W - MAP_MIN_W + 1),
             MAP_MIN_H + rnd(MAP_MAX_H - MAP_MIN_H + 1));
   var L = newLevelObj(depth);
-  L.floor = K ? K.id : '';
   L.sewer = sewer ? 1 : 0;
   /* and something is always coming along it, for as long as you are
      down here - a drain you have cleared out does not stay cleared */
-  if (K && K.wander) L.wanderLeft = K.wander + depth;
+  if (sewer) L.wanderLeft = SEWER_WANDER + depth;
   var T = L.tiles, i, x, y;
-  var rects = (K && K.lay) ? K.lay() : scatterRooms();
+  var rects = sewer ? scatterSewer() : scatterRooms();
   var NCELL = rects.length;
 
   /* --- carve room floors ------------------------------------------- */
@@ -5211,16 +4852,10 @@ function genLevelOnce(depth) {
           floors: floors,
           /* Nobody has kept a lamp burning in a drain.  The odd stretch
              is lit, and that is where you will want to stop. */
-          lit: K ? (rnd(100) >= K.dark)
-                 : !(depth > 1 && rnd(12) < depth - 1) };
-    /* whatever the layout called this rectangle, the room remembers -
-       a tunnel floods, a cell fills with bones, a cave grows moss */
+          lit: sewer ? (rnd(100) >= SEWER_DARK_PCT)
+                     : !(depth > 1 && rnd(12) < depth - 1) };
     if (rects[i].tunnel) r.tunnel = 1;
     if (rects[i].side) r.side = 1;
-    if (rects[i].gallery) r.gallery = 1;
-    if (rects[i].cell) r.cell = 1;
-    if (rects[i].cave) r.cave = 1;
-    if (rects[i].chamber) r.chamber = 1;
     /* centre = the floor tile nearest the centroid */
     var mcx = sx / floors.length, mcy = sy / floors.length, bd = 1e9;
     for (var f = 0; f < floors.length; f++) {
@@ -5231,9 +4866,7 @@ function genLevelOnce(depth) {
   }
 
   /* --- pools of water on some room floors -------------------------- */
-  /* The water, the holes, the bones or the moss - whatever this kind of
-     floor is made of goes down where an ordinary floor's pools would. */
-  if (K) { if (K.dress) K.dress(L, depth); }
+  if (sewer) floodSewer(L);
   else if (rnd(100) < 52) {
     for (i = 0; i < L.rooms.length; i++)
       if (!L.rooms[i].gone && rnd(100) < 20) addWater(L, L.rooms[i]);
@@ -5290,7 +4923,7 @@ function genLevelOnce(depth) {
      stands between them.  Which end you come in at is decided here as
      well - see startSpot, which honours L.entry. */
   var sp;
-  if (K && K.ends) {
+  if (sewer) {
     var east = rnd(2);
     sp = sewerEndSpot(L, east);
     L.entry = sewerEndSpot(L, !east);
@@ -5312,13 +4945,7 @@ function genLevelOnce(depth) {
      in the floor of a room that is already under water is a drain in a
      drain.  The stream is the floor here, so there is nothing left of
      this pass that means anything - a sewer skips the lot. */
-  /* Whatever this kind of floor does to itself once it is a floor - the
-     holes torn out of a collapse, the caps sown in a cave.  It waits
-     until now because it needs the rooms JOINED: digHole will not cut a
-     floor in two, and before the corridors are dug there is no floor to
-     cut - every hole it tried came straight back out again. */
-  if (K && K.after) K.after(L, depth);
-  if (!(K && K.bare)) for (i = 0; i < L.rooms.length; i++) {
+  if (!sewer) for (i = 0; i < L.rooms.length; i++) {
     if (L.rooms[i].gone) continue;
     if (rnd(100) < RUG_CHANCE) addRug(L, L.rooms[i]);
     if (rnd(100) < FURNISH_CHANCE) furnishRoom(L, L.rooms[i]);
@@ -5332,7 +4959,7 @@ function genLevelOnce(depth) {
      but a sewer is already the thing worth walking into, and a treasury
      or an alchemist's parlour off a storm drain reads as a floor that
      forgot what it was */
-  L.special = (K && K.nospecial) ? null : addSpecialRoom(L, depth);
+  L.special = sewer ? null : addSpecialRoom(L, depth);
   /* The FURNISHED room does not go in here.  Everything below this can
      still take a wall away, add one, or turn one into a doorway - and a
      bookshelf wants stone at its back and a fireplace wants a wall to be
@@ -5351,7 +4978,7 @@ function genLevelOnce(depth) {
   /* Not in a sewer.  A trapdoor is the one way of skipping a floor, and
      the whole of this floor is the crossing - a hatch in the second
      tunnel would be an invitation to not play it. */
-  if (!(K && K.notrap) && typeof addTrapdoor === 'function') addTrapdoor(L, depth);
+  if (!sewer && typeof addTrapdoor === 'function') addTrapdoor(L, depth);
 
   /* every floor has something to step on */
   /* Every floor has something underfoot on it somewhere.  The darts are
@@ -5413,18 +5040,8 @@ function genLevelOnce(depth) {
     if (L.decor[dj]) continue;
     if (itemAt(L, dp.x, dp.y)) continue;
     if (trapAtLevel(L, dp.x, dp.y)) continue;
-    L.decor[dj] = pick((K && K.litter) ||
-      MOSS_FIELD.concat(['bones', 'skull', 'rubble', 'rubble2']));
+    L.decor[dj] = pick(MOSS_FIELD.concat(['bones', 'skull', 'rubble', 'rubble2']));
   }
-  /* A room's centre is a square things are aimed at and placed on - the
-     corridors are dug to it, the staircase is moved to it, the box that
-     announces a room is drawn over it.  Anything that takes the floor
-     out from under a room can leave that centre standing in mid-air: a
-     chasm across it, a hole dug in it, and on a collapse most of the
-     room.  So once the floor has stopped being cut about, every room
-     that has lost its middle is given a new one.  It was a rare thing
-     until the collapse; on a collapse it is the ordinary case. */
-  recentreRooms(L);
   buildLitMap(L);
   pickDarkness(L, depth);
   /* Torches do not go up here.  A fresh floor still has its secret door
@@ -6626,26 +6243,11 @@ function refreshRooms(L) {
     if (live.length !== r.floors.length) dropped += r.floors.length - live.length;
     r.floors = live;
     if (!live.length) { r.gone = 1; continue; }
-    /* The centre, nearest the middle of what is left - and it must be a
-       square you can STAND on.  walkTile counts a hole as walkable,
-       because you may always walk into one; that is the right answer for
-       the flood fills and the wrong one here.  A room's centre is where
-       corridors are dug to, where the staircase is moved to and where
-       the box that announces the room is drawn, and a centre hanging
-       over a hole is none of those.  It was rare while a hole was one
-       bite out of a room; on a collapse it is the ordinary case. */
-    var firm = [], fsx = 0, fsy = 0;
+    /* the centre, nearest the middle of what is left */
+    var mcx = sx / live.length, mcy = sy / live.length, bd = 1e9;
     for (f = 0; f < live.length; f++) {
-      var lj = live[f][1] * MAP_W + live[f][0];
-      if (L.tiles[lj] === HOLE) continue;
-      firm.push(live[f]); fsx += live[f][0]; fsy += live[f][1];
-    }
-    var use = firm.length ? firm : live;
-    var usx = firm.length ? fsx : sx, usy = firm.length ? fsy : sy;
-    var mcx = usx / use.length, mcy = usy / use.length, bd = 1e9;
-    for (f = 0; f < use.length; f++) {
-      var dd = Math.abs(use[f][0] - mcx) + Math.abs(use[f][1] - mcy);
-      if (dd < bd) { bd = dd; r.cx = use[f][0]; r.cy = use[f][1]; }
+      var dd = Math.abs(live[f][0] - mcx) + Math.abs(live[f][1] - mcy);
+      if (dd < bd) { bd = dd; r.cx = live[f][0]; r.cy = live[f][1]; }
     }
   }
   return dropped;
@@ -6904,17 +6506,14 @@ function pickDarkness(L, depth) {
     /* A drain is dark because nobody ever came down here to light it,
        not because a lamp went out - so most of it is dark, and the
        stretch that is not is the stretch you will want to stop in. */
-    var dpct = DARK_ROOM_PCT;
-    if (L.floor) { var dk = floorKindById(L.floor); if (dk) dpct = dk.dark; }
-    if (rnd(100) < dpct) { r.dark = 1; r.lit = 0; }
+    if (rnd(100) < (L.sewer ? SEWER_DARK_PCT : DARK_ROOM_PCT)) { r.dark = 1; r.lit = 0; }
   }
   /* a stretch of hallway that the lamps have gone out along */
   var seeds = [];
   for (i = 0; i < L.tiles.length; i++) if (L.tiles[i] === CORR) seeds.push(i);
   shuffle(seeds);
-  var hpct = DARK_HALL_PCT;
-  if (L.floor) { var hk = floorKindById(L.floor); if (hk) hpct = hk.dark; }
-  var want = Math.round(seeds.length * hpct / 100);
+  var want = Math.round(seeds.length *
+    (L.sewer ? SEWER_DARK_PCT : DARK_HALL_PCT) / 100);
   var done = 0;
   for (i = 0; i < seeds.length && done < want; i++) {
     if (L.darkHall[seeds[i]]) continue;
@@ -6931,9 +6530,6 @@ function pickDarkness(L, depth) {
       }
     }
   }
-  /* and whatever this kind of floor does about its own dark - see
-     shadeCavern, which shades squares because it has only one room */
-  if (L.floor) { var sk = floorKindById(L.floor); if (sk && sk.shade) sk.shade(L); }
   buildDarkMap(L, depth);
   spillLight(L);
 }
@@ -7032,25 +6628,16 @@ function randRoom(L) {
   for (var i = 0; i < L.rooms.length; i++) if (!L.rooms[i].gone) solid.push(L.rooms[i]);
   return solid.length ? solid[rnd(solid.length)] : L.rooms[0];
 }
-/* Somewhere in this room to put something.  Bare floor, and not a square
-   something already fills: a barrel of powder and a bed are furniture
-   nobody walks onto, so they are not squares anything can be PUT on
-   either - a creature dealt onto a bed is a creature standing where you
-   are not allowed to go. */
 function randSpot(L, r) {
   if (r.gone || !r.floors.length) return { x: r.x, y: r.y };
   var t, f;
-  function open(x, y) {
-    if (L.tiles[y * MAP_W + x] !== FLOOR) return false;
-    return !(typeof blockedAt === 'function' && blockedAt(x, y, L));
-  }
   for (t = 0; t < 60; t++) {
     f = r.floors[rnd(r.floors.length)];
-    if (open(f[0], f[1])) return { x: f[0], y: f[1] };
+    if (L.tiles[f[1] * MAP_W + f[0]] === FLOOR) return { x: f[0], y: f[1] };
   }
   for (t = 0; t < r.floors.length; t++) {
     f = r.floors[t];
-    if (open(f[0], f[1])) return { x: f[0], y: f[1] };
+    if (L.tiles[f[1] * MAP_W + f[0]] === FLOOR) return { x: f[0], y: f[1] };
   }
   return { x: r.cx, y: r.cy };
 }
@@ -9659,16 +9246,8 @@ function pickMonsterChar(Lv, depth) {
      big one and the ordinary one both, so the floor is not one creature
      drawn thirteen times - and the rest of it is whatever else belongs
      at this depth, wading. */
-  var fk = Lv && Lv.floor ? floorKindById(Lv.floor) : null;
-  if (fk && fk.mons && fk.mons.pct && rnd(100) < fk.mons.pct) {
-    var pool = fk.mons.of, ok = [], q;
-    for (q = 0; q < pool.length; q++) {
-      var D0 = MON_BY_CHAR[pool[q]];
-      if (D0 && D0.minDepth && depth < D0.minDepth) continue;
-      ok.push(pool[q]);
-    }
-    if (ok.length) return ok[rnd(ok.length)];
-  }
+  if (Lv && Lv.sewer && rnd(100) < SEWER_RAT_PCT)
+    return rnd(100) < 55 ? 'K' : 'r';
   for (var t = 0; t < 12; t++) {
     var c = randMonsterChar(depth, Lv);
     var D = MON_BY_CHAR[c];
@@ -10011,9 +9590,7 @@ function populate(Lv) {
   /* A drain is not quiet.  It is also four times as long as an ordinary
      floor, so the same handful of creatures would be strung out one to
      every fifty squares and the place would read as empty. */
-  var pk = Lv.floor ? floorKindById(Lv.floor) : null;
-  if (pk && pk.mons)
-    n = Math.max(pk.mons.min || 0, Math.round(n * (pk.mons.mult || 1)));
+  if (Lv.sewer) n = Math.max(SEWER_MON_MIN, Math.round(n * SEWER_MON_MULT));
   for (i = 0; i < n; i++) {
     var s = randSpot(Lv, randRoom(Lv));
     if (monAt(Lv, s.x, s.y)) continue;
@@ -12419,12 +11996,9 @@ function enterLevel(depth, how) {
      standing in it - but it does need saying, because the first thing a
      player sees of a sewer is a wall two squares away in the dark and
      that reads as any other floor until the water starts. */
-  /* A floor with a name of its own says so, in the same box a special
-     room uses: it is the same kind of moment - you have walked into
-     something built, and the game stops to tell you what. */
-  if (L.floor && FLOOR_ENTRY[L.floor] && !L.said) {
-    L.said = 1;
-    G.roomBox = { kind: L.floor };
+  if (L.sewer) {
+    msg('The stair ends in water. The air is wet and it stinks.', 'g');
+    msg('Something moves further down the drain.', '6');
   }
   computeVis();
 }
@@ -18205,14 +17779,8 @@ function readScroll(it) {
    where somebody left it.  Setting one off sets off its neighbours, and
    theirs - which is either a tunnel through several walls or the last
    mistake you make, depending entirely on where you are standing. */
-/* `Lv` is the floor being asked about, and it is optional only because
-   nearly every caller means the one you are standing on.  The generator
-   does not: a floor is built inside genLevelOnce where `L` is a local of
-   its own and the global still holds the LAST floor, so anything the
-   generator asks has to be asked of the floor it is holding. */
-function barrelAt(x, y, Lv) {
-  Lv = Lv || L;
-  return !!(Lv && Lv.barrels && Lv.barrels[y * MAP_W + x]);
+function barrelAt(x, y) {
+  return !!(L.barrels && L.barrels[y * MAP_W + x]);
 }
 /* ------------------------------------- furniture nobody walks through
    Most of what is put down on a floor is flat: a rug is walked over, a
@@ -18225,15 +17793,13 @@ function barrelAt(x, y, Lv) {
    that a blast gives, and the cost the pathfinder puts on a square.  A
    new piece of furniture that fills its square is one line in isBedName's
    family or one more test here, and nothing else has to be told. */
-function fillsSquare(x, y, Lv) {
-  Lv = Lv || L;
-  if (!Lv) return '';
-  if (barrelAt(x, y, Lv)) return 'barrel';
-  var d = Lv.decor[y * MAP_W + x];
+function fillsSquare(x, y) {
+  if (barrelAt(x, y)) return 'barrel';
+  var d = L.decor[y * MAP_W + x];
   if (typeof isBedName === 'function' && isBedName(d)) return 'bed';
   return '';
 }
-function blockedAt(x, y, Lv) { return !!fillsSquare(x, y, Lv); }
+function blockedAt(x, y) { return !!fillsSquare(x, y); }
 /* Fire has reached a barrel.  It does not go up on the spot: the powder
    catches, and a turn later the barrel does - which is one turn to get
    out of the room, and the difference between a trap and a decision.
@@ -20789,6 +20355,7 @@ function boot() {
     fitBars();
     ready = true;
     newGame(true);
+    playtestMenu();   /* ask, rather than open on the title */
     requestAnimationFrame(loop);
   };
   atlasImg.src = ATLAS_PNG;
@@ -23435,6 +23002,7 @@ function drawStory() {
    box over the middle of the map with the room's own picture in it.  Any
    of the four keys that mean "done" anywhere else in the game closes it,
    and so does a click or a touch anywhere at all. */
+var ROOM_BOX_W = 148;
 function roomLines() {
   var lines = ROOM_ENTRY[G.roomBox.kind] || [];
   return wrap(lines.join(' '), ROOM_BOX_W - 10);
@@ -27789,6 +27357,652 @@ function sound(what) {
   return false;
 }
 
+/* ============================================================ playtest
+   The game, with a way in that skips the walking.
+
+   This file is only in playtest.html.  It adds nothing to the rules: it
+   picks a floor that has the thing you asked for on it, stands you next
+   to it, and hands you a pack full of gear so you can get straight to
+   whatever you meant to look at.  Everything after that is the game.
+
+   Two questions, in order.  What sort of thing - a room, or a creature -
+   and then which one.  The menu is ordinary HTML over the canvas rather
+   than pixels on it: it is scaffolding, and scaffolding should not have
+   to be drawn twice. */
+
+/* --------------------------------------------------------- a full pack
+   One of everything worth carrying, so nothing has to be searched for.
+   Weapons and armour come identified: you are here to test how a thing
+   fights, not to work out what it is. */
+function playtestKit() {
+  var i, it;
+  P.slots = new Array(N_SLOTS).fill(null);
+  P.eq = { rh: null, body: null, lh: null, head: null, feet: null };
+
+  var sword = mkItem('weapon', weaponIndex('long sword'));
+  sword.known = 1; sword.hp = 2; sword.dp = 2;
+  var mail = mkItem('armor', ARMORS.length - 2);
+  mail.known = 1; mail.ap = 2;
+  var bow = mkItem('weapon', weaponIndex('short bow')); bow.known = 1;
+  var helm = mkItem('head', 1); helm.known = 1;
+  var boots = mkItem('feet', 1); boots.known = 1;
+  P.eq.rh = sword; P.eq.body = mail; P.eq.lh = bow;
+  P.eq.head = helm; P.eq.feet = boots;
+  learnGear(sword); learnGear(mail); learnGear(bow);
+  learnGear(helm); learnGear(boots);
+
+  /* The pouch goes in first.  Filled last it never found a slot, and
+     everything meant to be in it ended up in an object nobody was
+     carrying. */
+  var pouch = mkItem('pouch', 0);
+  addItem(pouch);
+
+  /* what goes in the pack: something of every kind you might reach for */
+  var arrows = mkItem('weapon', weaponIndex('arrow'));
+  arrows.cnt = 30; arrows.known = 1; addItem(arrows);
+
+  var stones = mkItem('weapon', weaponIndex('stone'));
+  stones.cnt = 8; stones.known = 1; addItem(stones);
+
+  /* one of each runed stone, named, three apiece */
+  for (i = 0; i < WEAPONS.length; i++) {
+    if (!WEAPONS[i].rune) continue;
+    it = mkItem('weapon', i); it.cnt = 3; it.known = 1;
+    learnWeapon(i);
+    addItem(it);
+  }
+
+  var dyn = mkItem('dynamite', 0); dyn.cnt = 5; addItem(dyn);
+  var pins = mkItem('pin', 0); pins.cnt = 3; addItem(pins);
+  var crystals = mkItem('crystal', 0); crystals.cnt = 5; addItem(crystals);
+
+  /* --- and then a handful of whatever ------------------------------
+     What is left of the pack is dealt rather than laid out.  A kit with
+     one of everything in it is a fine way to test a thing you already
+     know about and a poor way to notice one you do not: it looks the
+     same every time, so nothing in it ever looks odd.
+
+     It was never one of everything anyway - there are 19 wands and 20
+     slots, so the old loop simply filled the pack with wands in table
+     order and stopped, and half of what it meant to hand you never fit.
+
+     Unidentified, on purpose.  Half of what a vial or a mushroom or a
+     ring IS lives in not knowing which one you are holding, and a
+     playtest that hands you the answer cannot show you that half.
+     Wands are the exception: they are the tool you reach for while
+     testing something else, so the ones dealt come charged and named. */
+  function ofKind(kind) {
+    var out = [], q;
+    if (kind === 'vial') for (q = 0; q < VIALS.length; q++) out.push(q);
+    if (kind === 'food') for (q = 0; q < FOODS.length; q++) if (isMushroom(q)) out.push(q);
+    if (kind === 'ring') for (q = 0; q < RINGS.length; q++) if (RINGS[q].p) out.push(q);
+    if (kind === 'wand') for (q = 0; q < WANDS.length; q++) out.push(q);
+    if (kind === 'potion') for (q = 0; q < POTIONS.length; q++) out.push(q);
+    if (kind === 'scroll') for (q = 0; q < SCROLLS.length; q++) out.push(q);
+    return out;
+  }
+  /* The KIND is drawn first and the thing second, so nineteen wands do
+     not crowd out four vials simply by being nineteen. */
+  var kinds = ['vial', 'food', 'ring', 'wand', 'potion', 'scroll'];
+  function deal(kind, k) {
+    var thing = mkItem(kind, k);
+    if (kind === 'wand') { thing.ch = 9; KNOWN.wand[k] = 1; }
+    if (kind === 'ring') thing.ch = RINGS[k].charges === undefined
+      ? RING_CHARGES : RINGS[k].charges;
+    if (kind === 'vial' || kind === 'food') thing.cnt = 1 + rnd(2);
+    return addItem(thing);
+  }
+  function dealOne(kind) {
+    var list = ofKind(kind);
+    if (!list.length) return null;
+    return deal(kind, list[rnd(list.length)]);
+  }
+  /* one of each of the three that are worth seeing and easy to miss */
+  dealOne('vial'); dealOne('food'); dealOne('ring');
+  var guard = 0;
+  while (freeSlot() >= 0 && guard++ < 60) dealOne(kinds[rnd(kinds.length)]);
+
+  /* and the pouch, likewise: a mix of glass rather than the same ten
+     flasks every time.  addItem puts potions and vials in it by itself,
+     so this is only about filling what is left of it. */
+  var glass = [];
+  for (i = 0; i < POTIONS.length; i++) glass.push(['potion', i]);
+  for (i = 0; i < VIALS.length; i++) glass.push(['vial', i]);
+  for (var s = 0; s < POUCH_CAP && glass.length; s++) {
+    if (pouch.items[s]) continue;
+    var g = glass[rnd(glass.length)];
+    var gi = mkItem(g[0], g[1]);
+    gi.cnt = 1 + rnd(2);
+    pouch.items[s] = gi;
+  }
+  /* Scrolls stay known: they are the one kind you read to make something
+     else happen, and hunting for the identify scroll in a list of made-up
+     titles is not what anybody opened this file to do. */
+  for (i = 0; i < SCROLLS.length; i++) KNOWN.scr[i] = 1;
+
+  P.food = FOOD_MAX;
+  P.gold = 500;
+}
+
+/* --------------------------------------------- a floor with that on it
+   Roll floors until one has what was asked for, then stand the player
+   beside it.  Rolling is simpler than building a floor by hand and it
+   gives you a real one - the room you get is the room the game makes. */
+var PLAYTEST_TRIES = 400;
+
+function playtestRoom(kind) {
+  var depth, tries;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    depth = 1;
+    for (var i = 0; i < SPECIAL_ROOMS.length; i++)
+      if (SPECIAL_ROOMS[i].n === kind) depth = Math.max(1, SPECIAL_ROOMS[i].min);
+    /* A floor you have already been on is remembered, so asking for it
+       again hands back the same one.  Forget it, and get a new floor. */
+    G.floors = {};
+    enterLevel(depth);
+    var r = null;
+    for (i = 0; i < L.rooms.length; i++)
+      if (!L.rooms[i].gone && L.rooms[i].special === kind) r = L.rooms[i];
+    if (!r) continue;
+    /* stand in the doorway of it, or in the middle if it has none */
+    standIn(r);
+    return true;
+  }
+  return false;
+}
+
+/* And the FURNISHED rooms, which are a different question.  A special
+   room announces itself and there is one at most on a floor that has
+   one; a room type says nothing and turns up on about a third of floors,
+   so the only way to look at one on purpose is to roll until a floor has
+   one and then stand in it. */
+function playtestKindRoom(kind) {
+  var tries, i;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    G.floors = {};
+    enterLevel(1 + rnd(6));
+    var r = null;
+    for (i = 0; i < L.rooms.length; i++)
+      if (!L.rooms[i].gone && L.rooms[i].kind === kind) r = L.rooms[i];
+    if (!r) continue;
+    standIn(r);
+    return true;
+  }
+  return false;
+}
+
+/* -------------------------------------------------------- the drain
+   A whole floor that is not an ordinary floor.  There is one so far -
+   the sewer - and there will be more, so this is a TABLE rather than a
+   bench of its own: a new kind of floor is one row here and one row in
+   the generator, and it turns up on this menu with nothing else to do.
+
+   `find` is handed nothing and must leave the player standing on a floor
+   of that kind, or return false.  A kind that the run's seed decides -
+   the sewer is one - does not have to be hunted for: the seed can simply
+   be written until it names the floor you want, since sewerDepth reads
+   G.runSeed and draws nothing from the deck. */
+var PLAYTEST_FLOORS = [
+  { id: 'sewer', n: 'A SEWER', find: playtestFindSewer,
+    say: 'A sewer, at the end you come in at. The way down is at the other.' }
+];
+/* Write seeds into the run until one of them names a floor of the kind
+   asked for, then go and stand on it.  `pick` is handed a seed and hands
+   back the depth that seed puts the floor at, or 0.  Every floor kind
+   whose place in the dungeon is read out of the seed can be found this
+   way; one that is rolled while the floor is built cannot, and wants a
+   `find` that deals floors until one comes up. */
+function playtestSeedFloor(pick, is) {
+  var tries, d;
+  for (tries = 0; tries < 4000; tries++) {
+    G.runSeed = ((tries + 1) * 2654435761) >>> 0;
+    d = pick();
+    if (d) break;
+  }
+  if (!d) return false;
+  G.floors = {};
+  enterLevel(d);
+  return !!is(L);
+}
+function playtestFindSewer() {
+  return playtestSeedFloor(sewerDepth, function (Lv) { return Lv.sewer; });
+}
+function playtestFloorById(id) {
+  for (var i = 0; i < PLAYTEST_FLOORS.length; i++)
+    if (PLAYTEST_FLOORS[i].id === id) return PLAYTEST_FLOORS[i];
+  return null;
+}
+function playtestFloor(id) {
+  var k = playtestFloorById(id);
+  return !!(k && k.find());
+}
+
+/* ------------------------------------------------------ a way down
+   A trapdoor turns up on about one floor in four and is hidden until it
+   is found, which makes it the one thing in the game you cannot go and
+   look at when you want to.  So: a floor that has one, standing beside
+   it with it already found, and the cellar underneath it left exactly
+   as the dungeon built it. */
+function playtestCellar(rugged) {
+  var tries, i;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    G.floors = {};
+    enterLevel(2 + rnd(6));
+    if (!L.tdoor) continue;
+    var keys = [], k;
+    for (k in L.tdoor) keys.push(k | 0);
+    if (!keys.length) continue;
+    var j = keys[0];
+    var tx = j % MAP_W, ty = (j / MAP_W) | 0;
+    /* under a rug, or in plain sight - both are worth being able to ask
+       for, since the rug is the whole reason one can be missed */
+    if (rugged && !isRugName(L.decor[j])) continue;
+    if (!rugged && isRugName(L.decor[j])) continue;
+    /* found, so it can be used - a rug over it still hides it, which is
+       the point of asking for that one */
+    L.tdoor[j].found = 1;
+    /* stand beside it, or on it if there is nowhere beside it */
+    var spot = null;
+    for (i = 0; i < DIR8.length; i++) {
+      var nx = tx + DIR8[i][0], ny = ty + DIR8[i][1];
+      if (walkable(nx, ny) && !monAt(L, nx, ny) && tileAt(nx, ny) !== TRAPDOOR) { spot = [nx, ny]; break; }
+    }
+    P.x = spot ? spot[0] : tx; P.y = spot ? spot[1] : ty;
+    L.mons.length = 0;
+    computeVis();
+    return true;
+  }
+  return false;
+}
+
+/* A plain room, with one of these in it and nothing else alive. */
+function playtestMonster(c) {
+  var D = MON_BY_C[c];
+  var depth = Math.max(1, D && D.minDepth ? D.minDepth : 1);
+  var tries;
+  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
+    G.floors = {};
+    enterLevel(depth);
+    var r = biggestPlainRoom();
+    if (!r) continue;
+    standIn(r);
+    L.mons.length = 0;
+    /* far enough off to see it coming, near enough to reach it */
+    var spot = spotInRoom(r, 4, 8);
+    if (!spot) spot = spotInRoom(r, 2, 12);
+    if (!spot) continue;
+    var m = mkMonster(c, Math.max(depth, 6), spot.x, spot.y);
+    m.state = 2; m.disguise = 0;
+    L.mons.push(m);
+    computeVis();
+    return true;
+  }
+  return false;
+}
+
+/* the biggest room with nothing special about it */
+function biggestPlainRoom() {
+  var best = null, i;
+  for (i = 0; i < L.rooms.length; i++) {
+    var r = L.rooms[i];
+    if (r.gone || r.special || r.sealed || r.dark) continue;
+    if (r.floors.length < 14) continue;
+    if (!best || r.floors.length > best.floors.length) best = r;
+  }
+  return best;
+}
+function standIn(r) {
+  P.x = r.cx; P.y = r.cy;
+  if (!walkable(P.x, P.y) && r.floors.length) { P.x = r.floors[0][0]; P.y = r.floors[0][1]; }
+  computeVis();
+}
+function spotInRoom(r, lo, hi) {
+  var out = [], i;
+  for (i = 0; i < r.floors.length; i++) {
+    var f = r.floors[i];
+    var d = Math.abs(f[0] - P.x) + Math.abs(f[1] - P.y);
+    if (d < lo || d > hi) continue;
+    if (!walkable(f[0], f[1]) || monAt(L, f[0], f[1])) continue;
+    out.push({ x: f[0], y: f[1] });
+  }
+  return out.length ? out[rnd(out.length)] : null;
+}
+
+/* ---------------------------------------------------------- the start
+   Set a run up the way newGame does, then put the asked-for thing in
+   front of you. */
+function playtestStart(what, which) {
+  srand((Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0);
+  makeAppearances();
+  G = freshG();
+  P = newPlayer();
+  P.lv = 6; P.exp = E_LEVELS[4];
+  P.mhp = 60; P.hp = 60;
+  P.str = P.mstr = 18; P.dex = P.mdex = 16; P.wis = P.mwis = 16;
+  PT_TAKEN = {};                 /* a new run, a new pack, nothing taken yet */
+  playtestKit();
+
+  var ok = (what === 'room') ? playtestRoom(which) :
+           (what === 'kind') ? playtestKindRoom(which) :
+           (what === 'floor') ? playtestFloor(which) :
+           (what === 'cellar') ? playtestCellar(which === 'rug') :
+           playtestMonster(which);
+  G.msgq = [];
+  G.mode = 'play';
+  if (!ok) msg('Could not find one. Reload and try again.', 'R');
+  else if (what === 'room') msg('A ' + which + ' room. Have a look round.', 'c');
+  else if (what === 'kind') msg('A ' + which + '. Nothing will tell you so.', 'c');
+  else if (what === 'floor') {
+    var fk = playtestFloorById(which);
+    msg((fk && fk.say) || 'A floor of its own kind.', 'c');
+  }
+  else if (what === 'cellar')
+    msg(which === 'rug' ? 'A trapdoor under that rug. Burn it off to find it.'
+                        : 'A trapdoor, found. ENTER on it goes down.', 'c');
+  else msg('One ' + MON_BY_C[which].n + ', waiting for you.', 'c');
+  msg('TAB for the pack. ESC for the menu.', '6');
+  finishMsgs();
+}
+
+
+/* ========================================================== the picker
+   One list of buttons over the canvas, used by every menu here.  A row
+   is [value, label] and may carry two more: 1 if the thing is already
+   taken or held, which draws the button lit, and a line of hover text.
+
+   The screens form a STACK.  BACK goes up one of them and, at the top,
+   back to the first question; START puts the whole thing away and leaves
+   you in the dungeon.  Those two used to be one button, which is why
+   BACK out of the item list dropped you into the game. */
+var PT_STACK = [];
+var PT_TAKEN = {};
+
+function playtestPick(rows, title, pick, stay) {
+  var box = document.getElementById('pick');
+  var head = document.getElementById('pickhead');
+  var list = document.getElementById('picklist');
+  head.textContent = title;
+  list.innerHTML = '';
+  rows.forEach(function (row) {
+    var b = document.createElement('button');
+    b.textContent = row[1];
+    if (row[2]) b.className = 'on';
+    if (row[3]) b.title = row[3];
+    b.onclick = function () {
+      if (!stay) box.style.display = 'none';
+      pick(row[0]);
+    };
+    list.appendChild(b);
+  });
+  box.style.display = 'flex';
+}
+function playtestClose() {
+  PT_STACK = [];
+  document.getElementById('pick').style.display = 'none';
+}
+/* Go to a screen, remembering the one you came from. */
+function playtestGo(fn) {
+  PT_STACK.push(fn);
+  fn();
+}
+/* Opening a bench from the button in the corner: whatever screen you
+   were on before is forgotten, so BACK from it goes to the first
+   question rather than somewhere you have already left. */
+function playtestOpen(fn) { PT_STACK = []; playtestGo(fn); }
+/* And come back off it.  The screen below is drawn again, so whatever
+   changed while you were away - a perk taken, an item handed over -
+   shows when you get there. */
+function playtestBack() {
+  PT_STACK.pop();
+  if (!PT_STACK.length) { playtestMenu(); return; }
+  PT_STACK[PT_STACK.length - 1]();
+}
+/* The two rows every bench screen ends with. */
+function playtestFoot() {
+  return [['-back', 'BACK', 0, 'up one screen'],
+          ['-start', 'START', 0, 'put this away and play']];
+}
+/* true if the press was one of those, and it has been dealt with */
+function playtestFooted(v) {
+  if (v === '-back') { playtestBack(); return 1; }
+  if (v === '-start') { playtestClose(); return 1; }
+  return 0;
+}
+
+/* ====================================================== the perk bench
+   Every perk in the game, on or off with a press, at any moment of a
+   run.  Perks are handed out three at a time at five levels, so trying
+   one used to mean playing up to it and hoping it was offered; here they
+   are all just there.
+
+   It goes through the game's own takePerk, so a perk that does something
+   the moment it is taken does that here too. */
+function playtestPerks() {
+  var rows = PERKS.map(function (pk) {
+    return [pk.id, pk.n.toUpperCase() + (hasPerk(pk.id) ? ' *' : ''),
+            hasPerk(pk.id) ? 1 : 0, pk.txt];
+  }).concat(playtestFoot());
+  playtestPick(rows, 'Perks - press to take or drop one', function (id) {
+    if (playtestFooted(id)) return;
+    if (hasPerk(id)) {
+      delete P.perks[id];
+      msg('You put down ' + perkById(id).n + '.', '6');
+    } else takePerk(id);
+    finishMsgs();
+    playtestPerks();               /* drawn again, so the mark is right */
+  }, 1);
+}
+function perkById(id) { return PERK_BY_ID[id] || { n: id }; }
+
+/* ====================================================== the item bench
+   Everything the dungeon can hand you, by kind and then by name, put
+   straight into the pack and identified.  A great bow does not show up
+   before the fifth floor and a wand of fire is one of nineteen wands, so
+   the only honest way to try either is to be given one.
+
+   A weapon or a piece of gear asks one more question: which enchantment
+   is worked into it.  That is the only way to reach a bow of fire, which
+   needs a bow AND the fire rune to land on it - about four weapons in a
+   thousand - and which is why one can be played for without ever
+   turning up.
+
+   What has been taken is marked, because one of each is enough. */
+function playtestKinds() {
+  var out = [];
+  function some(t, list, pick) {
+    var rows = [], q;
+    for (q = 0; q < list.length; q++)
+      if (!pick || pick(list[q], q)) rows.push([t, q, list[q].n]);
+    return rows;
+  }
+  out.push(['weapon', 'WEAPONS', some('weapon', WEAPONS)]);
+  out.push(['wand', 'WANDS', some('wand', WANDS)]);
+  out.push(['ring', 'RINGS', some('ring', RINGS, function (r) { return !!r.p; })]);
+  out.push(['potion', 'POTIONS', some('potion', POTIONS)]);
+  out.push(['scroll', 'SCROLLS', some('scroll', SCROLLS)]);
+  out.push(['vial', 'VIALS', some('vial', VIALS)]);
+  out.push(['armor', 'ARMOUR', some('armor', ARMORS)]);
+  out.push(['shield', 'SHIELDS', some('shield', SHIELDS)]);
+  out.push(['head', 'HELMS', some('head', HEADS)]);
+  out.push(['feet', 'BOOTS', some('feet', FEET)]);
+  out.push(['other', 'THE REST', [['dynamite', 0, 'dynamite'],
+    ['pin', 0, 'lock pin'], ['crystal', 0, 'crystal'], ['pouch', 0, 'pouch']]]);
+  return out;
+}
+/* Which enchantments will go into this thing, asked the way the dungeon
+   asks: a bow says 'wb' and so is offered the bow's own rune as well as
+   every weapon rune, a cap says 'gh', and a potion says nothing at all. */
+function playtestRuneKind(t, k) {
+  if (t === 'weapon') {
+    if (WEAPONS[k].grp) return '';           /* arrows and stones take none */
+    return WEAPONS[k].launch ? 'wb' : 'w';
+  }
+  if (t === 'armor' || t === 'shield') return 'g';
+  if (t === 'head') return 'gh';
+  if (t === 'feet') return 'gf';
+  return '';
+}
+function playtestRunesFor(t, k) {
+  var kind = playtestRuneKind(t, k), out = [], i, c;
+  if (!kind) return out;
+  for (i = 0; i < RUNES.length; i++) {
+    for (c = 0; c < RUNES[i].t.length; c++)
+      if (kind.indexOf(RUNES[i].t.charAt(c)) >= 0) { out.push(RUNES[i]); break; }
+  }
+  return out;
+}
+function playtestTakenKey(t, k, br) { return t + '|' + k + '|' + (br || ''); }
+/* One of that thing, known, in the pack.  Charges and counts are set the
+   way the dungeon sets them, so what you are handed behaves like one you
+   found rather than like an empty shell. */
+function playtestGive(t, k, br) {
+  var it = mkItem(t, k);
+  it.known = 1;
+  if (br) { it.br = br; learnRune(it); }
+  if (t === 'wand') { it.ch = 9; KNOWN.wand[k] = 1; }
+  if (t === 'ring') it.ch = RINGS[k].charges === undefined ? RING_CHARGES : RINGS[k].charges;
+  if (t === 'weapon') {
+    learnWeapon(k);
+    if (WEAPONS[k].grp) it.cnt = WEAPONS[k].rune ? 3 : 20;
+  }
+  if (t === 'potion') KNOWN.pot[k] = 1;
+  if (t === 'scroll') KNOWN.scr[k] = 1;
+  if (t === 'dynamite' || t === 'pin' || t === 'crystal') it.cnt = 5;
+  if (isGear(it) || t === 'weapon') learnGear(it);
+  if (!addItem(it)) {
+    msg('Your pack is full.', 'R');
+    finishMsgs();
+    return 0;
+  }
+  PT_TAKEN[playtestTakenKey(t, k, br)] = 1;
+  msg('Given: ' + itemName(it) + '.', 'y');
+  finishMsgs();
+  return 1;
+}
+function playtestItems() {
+  playtestGo(playtestItemKinds);
+}
+function playtestItemKinds() {
+  var kinds = playtestKinds();
+  var rows = kinds.map(function (kk) { return [kk[0], kk[1], 0, '']; })
+    .concat(playtestFoot());
+  playtestPick(rows, 'Items - which kind?', function (which) {
+    if (playtestFooted(which)) return;
+    playtestGo(function () { playtestItemList(which); });
+  }, 1);
+}
+function playtestItemList(which) {
+  var kinds = playtestKinds(), kk = null, q;
+  for (q = 0; q < kinds.length; q++) if (kinds[q][0] === which) kk = kinds[q];
+  if (!kk) { playtestBack(); return; }
+  var rows = kk[2].map(function (r) {
+    var runes = playtestRunesFor(r[0], r[1] | 0);
+    var took = PT_TAKEN[playtestTakenKey(r[0], r[1] | 0, '')];
+    return [r[0] + '|' + r[1], String(r[2]).toUpperCase() + (took ? ' *' : ''),
+            took ? 1 : 0, runes.length ? 'press for the plain one, or an enchanted one' : ''];
+  }).concat(playtestFoot());
+  playtestPick(rows, kk[1] + ' - press to be handed one', function (v) {
+    if (playtestFooted(v)) return;
+    var bits = v.split('|'), t = bits[0], k = bits[1] | 0;
+    if (playtestRunesFor(t, k).length) {
+      playtestGo(function () { playtestItemRunes(which, t, k); });
+      return;
+    }
+    playtestGive(t, k, '');
+    playtestItemList(which);
+  }, 1);
+}
+/* The plain one, or one with any enchantment that fits it.  This is the
+   whole reason the bench has three screens rather than two. */
+function playtestItemRunes(which, t, k) {
+  var name = (t === 'weapon' ? WEAPONS[k] : t === 'armor' ? ARMORS[k] :
+              t === 'shield' ? SHIELDS[k] : t === 'head' ? HEADS[k] : FEET[k]).n;
+  function rows() {
+    var out = [['', 'PLAIN ' + name.toUpperCase() +
+      (PT_TAKEN[playtestTakenKey(t, k, '')] ? ' *' : ''),
+      PT_TAKEN[playtestTakenKey(t, k, '')] ? 1 : 0, '']];
+    playtestRunesFor(t, k).forEach(function (rn) {
+      var took = PT_TAKEN[playtestTakenKey(t, k, rn.n)];
+      out.push([rn.n, ('of ' + rn.n).toUpperCase() + (took ? ' *' : ''),
+                took ? 1 : 0, rn.txt]);
+    });
+    return out.concat(playtestFoot());
+  }
+  playtestPick(rows(), name + ' - plain, or worked with what?', function (br) {
+    if (playtestFooted(br)) return;
+    playtestGive(t, k, br);
+    playtestItemRunes(which, t, k);
+  }, 1);
+}
+
+/* ========================================================== the menu
+   The first question, and the bottom of the stack: BACK from a bench
+   comes here. */
+function playtestMenu() {
+  PT_STACK = [];
+  function show(rows, title, pick) { playtestPick(rows, title, pick, 0); }
+  show([['room', 'A SPECIAL ROOM'], ['kind', 'A FURNISHED ROOM'],
+        ['floor', 'A WHOLE FLOOR'],
+        ['monster', 'A MONSTER'], ['cellar', 'A CELLAR'],
+        ['perks', 'PERKS'], ['items', 'ITEMS'],
+        ['-start', 'JUST PLAY']],
+    'What do you want to try?',
+    function (what) {
+      if (what === '-start') { playtestClose(); return; }
+      if (what === 'floor') {
+        var rows = PLAYTEST_FLOORS.map(function (k) { return [k.id, k.n]; });
+        show(rows, 'Which floor?', function (which) {
+          playtestGo(function () { playtestStart('floor', which); });
+        });
+        return;
+      }
+      if (what === 'perks') { playtestGo(playtestPerks); return; }
+      if (what === 'items') { playtestItems(); return; }
+      if (what === 'cellar') {
+        show([['open', 'A TRAPDOOR IN THE OPEN'], ['rug', 'ONE UNDER A RUG']],
+          'Which sort?', function (which) {
+            playtestClose();
+            playtestStart('cellar', which);
+          });
+      } else if (what === 'kind') {
+        var kinds2 = ROOM_KINDS.map(function (s) { return [s.n, s.n.toUpperCase()]; });
+        show(kinds2, 'Which one?', function (which) {
+          playtestClose();
+          playtestStart('kind', which);
+        });
+      } else if (what === 'room') {
+        var rooms = SPECIAL_ROOMS.map(function (s) { return [s.n, s.n.toUpperCase()]; });
+        show(rooms, 'Which room?', function (which) {
+          playtestClose();
+          playtestStart('room', which);
+        });
+      } else {
+        var mons = MONS.map(function (m) { return [m.c, m.n.toUpperCase()]; });
+        mons.sort(function (a, b) { return a[1] < b[1] ? -1 : 1; });
+        show(mons, 'Which creature?', function (which) {
+          playtestClose();
+          playtestStart('monster', which);
+        });
+      }
+    });
+}
+
+document.getElementById('again').onclick = function () {
+  this.blur();
+  playtestMenu();
+};
+/* The two benches.  Unlike "pick again" these do not start a new run -
+   they reach into the one you are in, which is the point of them: take a
+   perk in the middle of a fight, or be handed the wand you wanted to try
+   it against. */
+document.getElementById('perks').onclick = function () {
+  this.blur();
+  playtestOpen(playtestPerks);
+};
+document.getElementById('items').onclick = function () {
+  this.blur();
+  playtestOpen(playtestItemKinds);
+};
 </script>
 </body>
 </html>
