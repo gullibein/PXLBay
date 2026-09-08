@@ -25739,19 +25739,10 @@ function drawDecor(name, mx, my, px, py, a, still) {
      bracket are plainly the same fire.  Not while you are only
      remembering the room - a picture does not move. */
   if (isHearthName(name)) {
-    var hmir = name === 'hearth_h' ? 1 : 0;
-    /* Both halves are read off the LEFT square's beat, so the two of them
-       always move together - and then the mirrored half is put onto the
-       other frame of that beat.  It used to be handed the same frame as
-       well as the same cell, so the fire was a picture folded down the
-       middle: the same tongue of flame twice, mirrored, which reads as a
-       pattern rather than as a fire.  One shape against the other, and
-       the join stops being a mirror line.  It differs while the room is
-       only remembered too - a still fire that is the same both sides is
-       the same fold standing still. */
-    var hf = (still ? 0 : torchFlameFrame(mx - hmir, my)) & 1;
-    if (hmir) hf ^= 1;
-    sprMirror(hf ? 'hearth_a' : 'hearth_b', px, py, a, hmir, 0);
+    var hspr = still ? 'hearth_a'
+             : (torchFlameFrame(mx - (name === 'hearth_h' ? 1 : 0), my) & 1)
+               ? 'hearth_a' : 'hearth_b';
+    sprMirror(hspr, px, py, a, name === 'hearth_h' ? 1 : 0, 0);
     return;
   }
   /* A BED is six squares out of two cells - the lower left corner and
@@ -25759,27 +25750,19 @@ function drawDecor(name, mx, my, px, py, a, still) {
      round, the same way a rug's does: 'h' mirrored left to right for the
      far end, 'v' top to bottom for the head. */
   if (isBedName(name)) {
-    /* Six squares off THREE cells, and the bed lies ALONG the room, west
-       to east: the head with its board and its pillow, then the middle,
-       then the foot.  That is the three cells left to right, each one
-       painted as the SOUTH half of its column - rail along the bottom,
-       leg at the outside corner - and the north half of the column is
-       that same cell turned top to bottom, which puts the far rail where
-       it belongs and the pillow at the head and nowhere else.
-
-       Nothing is mirrored left to right any more.  It was, and mirroring
-       the head end to make the far end is what put a pillow at both ends
-       of the bed; making the whole foot row out of the foot cell instead
-       only moved the fault, and gave a bed with no head to it at all.
+    /* Six squares off THREE cells.  The head row - the one against the
+       wall, which is where the pillow is - is bed_c and bed_m as
+       painted; the foot row is bed_e, laid left, middle and mirrored
+       right.  Nothing about a bed is mirrored top to bottom any more:
+       it was, and that put the pillow at both ends of it.
 
        The names still carry 'v' for the row nearer the wall and 'h' for
-       the far column, so the generator lays a bed exactly as it did. */
+       the far corner, so the generator lays a bed exactly as it did. */
     var bt = name.slice(3);                     /* what is after 'bed' */
-    var north = bt.indexOf('v') >= 0;
-    var foot = bt.indexOf('h') >= 0;
-    var mid = bt.charAt(1) === 'm';
-    sprMirror(foot ? 'bed_e' : mid ? 'bed_m' : 'bed_c',
-      px, py, a, 0, north ? 1 : 0);
+    var head = bt.indexOf('v') >= 0;
+    var mid = bt.charAt(0) === '_' && bt.charAt(1) === 'm';
+    sprMirror(head ? (mid ? 'bed_m' : 'bed_c') : 'bed_e',
+      px, py, a, bt.indexOf('h') >= 0 ? 1 : 0, 0);
     return;
   }
   /* Two tiles are painted joining something above them and are turned to

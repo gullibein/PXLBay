@@ -12,13 +12,17 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="PXLRogue">
 <meta name="theme-color" content="#05060d">
-<title>Rogue-8 playtest</title>
+<title>PXLRogue</title>
+<link rel="icon" href="favicon.ico">
 <style>
   /* dvh is the height that is actually showing once the address bar
      has slid away; the plain percentage is the fallback. */
   html,body{margin:0;padding:0;height:100%;height:100dvh;
             background:#05060d;overflow:hidden;overscroll-behavior:none;}
   body{display:flex;align-items:center;justify-content:center;}
+  /* The canvas backing store is EXACTLY 230x128 device pixels.
+     It is only ever blown up by a whole-number factor, with all
+     smoothing disabled, so every source pixel stays a perfect square. */
   canvas{
     image-rendering:pixelated;
     image-rendering:crisp-edges;
@@ -37,7 +41,15 @@
     -webkit-tap-highlight-color:transparent;
     box-shadow:0 0 0 1px #1b2140;
   }
-  /* the retro monitor - see build.py, which has the reasoning */
+  /* The retro monitor, switched on from the ESC menu.  It is a sheet of
+     glass laid over the picture rather than anything drawn into it, and
+     that is deliberate: the backing store stays exactly 230x128, and
+     scanlines drawn into it would be a whole game pixel thick - four
+     screen pixels at the usual scale, which cuts every sprite in half.
+     Laid over the top they are as fine as the screen showing them,
+     which is what a scanline actually is.  It also costs nothing per
+     frame; the browser composites it and the game never thinks about
+     it again. */
   #crt{
     position:fixed; display:none; pointer-events:none; z-index:5;
     background:
@@ -47,59 +59,32 @@
       repeating-linear-gradient(to right,
         rgba(255,64,64,0.045) 0px, rgba(64,255,64,0.045) 1px,
         rgba(64,64,255,0.045) 2px, rgba(0,0,0,0.00) 3px);
+    /* the dark curve of the tube at its corners */
     box-shadow:inset 0 0 34px 6px rgba(0,0,0,0.42);
   }
   #crt.on{ display:block; }
-  /* The picker is ordinary HTML over the canvas.  It is scaffolding for
-     testing, not part of the game, so it does not pretend to be pixels. */
-  #pick{
+  #nosheet{
     position:fixed; inset:0; display:none;
-    flex-direction:column; align-items:center; justify-content:center;
-    background:rgba(5,6,13,0.94); color:#c3ccd9;
-    font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;
-    z-index:10;
+    align-items:center; justify-content:center; text-align:center;
+    color:#c3ccd9; background:#05060d; padding:20px;
+    font:14px/1.6 ui-monospace,Menlo,Consolas,monospace;
   }
-  #pickhead{ color:#fad039; margin-bottom:14px; letter-spacing:1px; }
-  #picklist{
-    display:flex; flex-wrap:wrap; gap:8px;
-    max-width:720px; justify-content:center;
-  }
-  #picklist button{
-    font:inherit; color:#c3ccd9; background:#141829;
-    border:1px solid #3f4966; padding:7px 13px; cursor:pointer;
-    letter-spacing:1px;
-  }
-  #picklist button:hover{ background:#2b3352; border-color:#fad039; color:#fff; }
-  /* a bench button for something you already have */
-  #picklist button.on{ background:#2b3352; border-color:#fad039; color:#fad039; }
-  #bench{
-    position:fixed; right:10px; top:10px; z-index:11;
-    display:flex; gap:6px;
-  }
-  #bench button{
-    font:12px ui-monospace,Menlo,Consolas,monospace;
-    color:#86909f; background:#141829; border:1px solid #3f4966;
-    padding:5px 10px; cursor:pointer;
-  }
-  #bench button:hover{ color:#fff; border-color:#fad039; }
 </style>
 </head>
 <body>
 <canvas id="scr" width="320" height="200"></canvas>
 <div id="crt"></div>
-<div id="nosheet" style="position:fixed;inset:0;display:none;align-items:center;
-  justify-content:center;color:#c3ccd9;background:#05060d;text-align:center;
-  font:14px/1.6 ui-monospace,Menlo,Consolas,monospace">
-spritesheet.png is not beside this file.<br>The graphics live in that PNG.</div>
-<div id="bench">
-  <button id="perks">perks</button>
-  <button id="items">items</button>
-  <button id="again">pick again</button>
-</div>
-<div id="pick"><div id="pickhead"></div><div id="picklist"></div></div>
+<div id="nosheet">spritesheet.png is not beside this file.<br>
+The graphics live in that PNG - keep the two together.</div>
 <script>
 var ATLAS = {"tileSize": 8, "cols": 16, "tileRows": 14, "index": {"void": 0, "floor": 1, "floor2": 2, "floor3": 3, "corr": 4, "wall": 5, "wall2": 6, "wall3": 7, "wall_moss": 8, "water": 9, "water2": 10, "holy": 11, "holy2": 12, "hole": 13, "bridge_h": 14, "bridge_v": 15, "bars": 16, "kerb": 17, "stairs_down": 18, "stairs_up": 19, "trapdoor": 20, "keyhole": 21, "ice_wall": 22, "fire_wall": 23, "door_wood": 24, "door_bronze": 25, "door_iron": 26, "door_silver": 27, "door_gold": 28, "door_crystal": 29, "moss": 30, "moss_b": 31, "moss2": 32, "moss3": 33, "moss4": 34, "crack": 35, "crack2": 36, "crack3": 37, "crack4": 38, "bones": 39, "skull": 40, "web": 41, "rubble": 42, "table": 43, "chair": 44, "barrel": 45, "shelf": 46, "hearth_a": 47, "hearth_b": 48, "bed_c": 49, "bed_m": 50, "bed_e": 51, "trap": 52, "trap_dart": 53, "trap_gas": 54, "trap_pit": 55, "rug_00": 56, "rug_01": 57, "rug_0c": 58, "rug_10": 59, "rug_11": 60, "rug_1c": 61, "rug_20": 62, "rug_21": 63, "rug_2c": 64, "rug_c1": 65, "chest": 66, "chest_open": 67, "pouch": 68, "chest_wood": 69, "chest_bronze": 70, "chest_iron": 71, "chest_silver": 72, "chest_gold": 73, "chest_crystal": 74, "key_wood": 75, "key_bronze": 76, "key_iron": 77, "key_silver": 78, "key_gold": 79, "key_crystal": 80, "gold": 81, "gold2": 82, "amulet": 83, "crystal": 84, "pin": 85, "dynamite": 86, "food": 87, "fruit": 88, "mushroom": 89, "mush_b": 90, "mush_y": 91, "mush_p": 92, "mush_g": 93, "berries": 94, "scroll": 95, "wand": 96, "wand2": 97, "wand3": 98, "staff": 99, "staff2": 100, "ring_b": 101, "ring_g": 102, "ring_r": 103, "ring_c": 104, "ring_y": 105, "ring_p": 106, "ring_m": 107, "ring_o": 108, "ring_n": 109, "pot_r": 110, "pot_b": 111, "pot_g": 112, "pot_y": 113, "pot_p": 114, "pot_c": 115, "pot_w": 116, "pot_o": 117, "sword": 118, "dagger": 119, "dagger_throw": 120, "mace": 121, "axe": 122, "spear": 123, "bow": 124, "bow_long": 125, "crossbow": 126, "arrow": 127, "bolt": 128, "bolt2": 129, "stone": 130, "stone_blast": 131, "stone_slow": 132, "stone_return": 133, "stone_fire": 134, "stone_ice": 135, "stone_shock": 136, "armor_l": 137, "armor_c": 138, "armor_p": 139, "armor_glass": 140, "shield": 141, "shield2": 142, "shield3": 143, "cap": 144, "helm": 145, "crown": 146, "boots": 147, "sandals": 148, "ironboots": 149, "hero": 150, "hero2": 151, "grave": 152, "mon_A": 153, "mon_B": 154, "mon_C": 155, "mon_D": 156, "mon_E": 157, "mon_F": 158, "mon_G": 159, "mon_H": 160, "mon_I": 161, "mon_J": 162, "mon_K": 163, "mon_L": 164, "mon_M": 165, "mon_N": 166, "mon_O": 167, "mon_P": 168, "mon_Q": 169, "mon_R": 170, "mon_S": 171, "mon_T": 172, "mon_U": 173, "mon_V": 174, "mon_W": 175, "mon_X": 176, "mon_Y": 177, "mon_Z": 178, "mon_h": 179, "mon_w": 180, "mon_k": 181, "mon_r": 182, "flame": 183, "flame2": 184, "frost": 185, "magic": 186, "gas": 187, "icecube": 188, "flash1": 189, "flash2": 190, "flash3": 191, "mouse": 192, "mouse_get": 193, "cursor": 194, "point": 195, "heart": 196, "pan_cross": 197, "mk_z": 198, "mk_q": 199, "mk_x": 200, "mk_ally": 201, "vial_g": 202, "vial_k": 203, "vial_p": 204, "vial_w": 205, "vial_r": 206, "vial_y": 207, "vial_b": 208, "ice": 209, "slime": 210, "rubble2": 211, "torch": 212, "torch2": 213, "water_refl": 214, "water2_refl": 215}, "font": {"x": 0, "y": 112, "cols": 16, "cw": 6, "ch": 7, "glyphW": 6, "glyphH": 7, "first": 32, "count": 95, "widths": [4, 2, 4, 6, 5, 5, 5, 2, 3, 3, 4, 4, 2, 4, 2, 3, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 2, 2, 3, 4, 3, 4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 2, 4, 4, 4, 6, 4, 4, 4, 5, 4, 4, 4, 4, 4, 6, 4, 4, 4, 3, 3, 3, 4, 5, 3, 4, 4, 4, 4, 4, 3, 4, 4, 2, 3, 4, 3, 6, 4, 4, 4, 4, 3, 4, 3, 4, 4, 6, 4, 4, 4, 4, 2, 4, 5]}, "atlasW": 128, "atlasH": 154, "moved": {"trap": [51, 52], "trap_dart": [52, 53], "trap_gas": [53, 54], "trap_pit": [54, 55], "rug_00": [55, 56], "rug_01": [56, 57], "rug_0c": [57, 58], "rug_10": [58, 59], "rug_11": [59, 60], "rug_1c": [60, 61], "rug_20": [61, 62], "rug_21": [62, 63], "rug_2c": [63, 64], "rug_c1": [64, 65], "chest": [65, 66], "chest_open": [66, 67], "pouch": [67, 68], "chest_wood": [68, 69], "chest_bronze": [69, 70], "chest_iron": [70, 71], "chest_silver": [71, 72], "chest_gold": [72, 73], "chest_crystal": [73, 74], "key_wood": [74, 75], "key_bronze": [75, 76], "key_iron": [76, 77], "key_silver": [77, 78], "key_gold": [78, 79], "key_crystal": [79, 80], "gold": [80, 81], "gold2": [81, 82], "amulet": [82, 83], "crystal": [83, 84], "pin": [84, 85], "dynamite": [85, 86], "food": [86, 87], "fruit": [87, 88], "mushroom": [88, 89], "mush_b": [89, 90], "mush_y": [90, 91], "mush_p": [91, 92], "mush_g": [92, 93], "berries": [93, 94], "scroll": [94, 95], "wand": [95, 96], "wand2": [96, 97], "wand3": [97, 98], "staff": [98, 99], "staff2": [99, 100], "ring_b": [100, 101], "ring_g": [101, 102], "ring_r": [102, 103], "ring_c": [103, 104], "ring_y": [104, 105], "ring_p": [105, 106], "ring_m": [106, 107], "ring_o": [107, 108], "ring_n": [108, 109], "pot_r": [109, 110], "pot_b": [110, 111], "pot_g": [111, 112], "pot_y": [112, 113], "pot_p": [113, 114], "pot_c": [114, 115], "pot_w": [115, 116], "pot_o": [116, 117], "sword": [117, 118], "dagger": [118, 119], "dagger_throw": [119, 120], "mace": [120, 121], "axe": [121, 122], "spear": [122, 123], "bow": [123, 124], "bow_long": [124, 125], "crossbow": [125, 126], "arrow": [126, 127], "bolt": [127, 128], "bolt2": [128, 129], "stone": [129, 130], "stone_blast": [130, 131], "stone_slow": [131, 132], "stone_return": [132, 133], "stone_fire": [133, 134], "stone_ice": [134, 135], "stone_shock": [135, 136], "armor_l": [136, 137], "armor_c": [137, 138], "armor_p": [138, 139], "armor_glass": [139, 140], "shield": [140, 141], "shield2": [141, 142], "shield3": [142, 143], "cap": [143, 144], "helm": [144, 145], "crown": [145, 146], "boots": [146, 147], "sandals": [147, 148], "ironboots": [148, 149], "hero": [149, 150], "hero2": [150, 151], "grave": [151, 152], "mon_A": [152, 153], "mon_B": [153, 154], "mon_C": [154, 155], "mon_D": [155, 156], "mon_E": [156, 157], "mon_F": [157, 158], "mon_G": [158, 159], "mon_H": [159, 160], "mon_I": [160, 161], "mon_J": [161, 162], "mon_K": [162, 163], "mon_L": [163, 164], "mon_M": [164, 165], "mon_N": [165, 166], "mon_O": [166, 167], "mon_P": [167, 168], "mon_Q": [168, 169], "mon_R": [169, 170], "mon_S": [170, 171], "mon_T": [171, 172], "mon_U": [172, 173], "mon_V": [173, 174], "mon_W": [174, 175], "mon_X": [175, 176], "mon_Y": [176, 177], "mon_Z": [177, 178], "mon_h": [178, 179], "mon_w": [179, 180], "mon_k": [180, 181], "mon_r": [181, 182], "flame": [182, 183], "flame2": [183, 184], "frost": [184, 185], "magic": [185, 186], "gas": [186, 187], "icecube": [187, 188], "flash1": [188, 189], "flash2": [189, 190], "flash3": [190, 191], "mouse": [191, 192], "mouse_get": [192, 193], "cursor": [193, 194], "point": [194, 195], "heart": [195, 196], "pan_cross": [196, 197], "mk_z": [197, 198], "mk_q": [198, 199], "mk_x": [199, 200], "mk_ally": [200, 201], "vial_g": [201, 202], "vial_k": [202, 203], "vial_p": [203, 204], "vial_w": [204, 205], "vial_r": [205, 206], "vial_y": [206, 207], "vial_b": [207, 208], "ice": [208, 209], "slime": [209, 210], "rubble2": [210, 211], "torch": [211, 212], "torch2": [212, 213], "water_refl": [213, 214], "water2_refl": [214, 215]}, "dropped": ["arrow_e", "arrow_n", "arrow_s", "arrow_up", "arrow_w", "bed", "bolt_e", "bolt_n", "bolt_s", "bolt_w", "column", "dart", "door", "dooropen", "hearth", "hearth2", "rug_c", "rug_c2", "rug_e", "rug_n", "rug_ne", "rug_nw", "rug_s", "rug_se", "rug_sw", "rug_w"]};
+/* The graphics are the file on disk, not a copy of it welded in here.
+   Repaint spritesheet.png and reload - there is no build step for art. */
 var ATLAS_PNG = "spritesheet.png?v=59b809d92e";
+/* The title screen is a picture too, and the same rule applies: it is a
+   file beside this one, not baked in.  If it is missing the title screen
+   simply comes up black and the menu still works. */
+var SPLASH_PNG = "PXLRogue_splash.png?v=4bfe8e2c1e";
 /* ============================================================ ROGUE-8
    Part 1 : constants, RNG, data tables, dungeon generation.
    The whole game renders into a 230x128 pixel buffer, nothing else.
@@ -11490,21 +11475,6 @@ function shockSplash(cells, sx, sy) {
    by the time the flames are drawn - and the walk is the same one the
    light already does for every lit square on the floor, several hundred
    times a frame, so one more for each flame costs nothing worth having. */
-/* Does the torch in the player's own hand reach this square?  Every
-   flame that lights a square is kept on it (see glowPut), and the hand
-   torch is the one whose key says so - glowHandTorch names it 'hand,x,y'
-   because it walks about with you, while a bracket on the wall is named
-   by the square it is nailed to. */
-var HAND_GLOW = 'hand,';
-function byHandTorch(e) {
-  if (!e || !e.srcs) return false;
-  for (var i = 0; i < e.srcs.length; i++) {
-    var k = e.srcs[i].s && e.srcs[i].s.k;
-    if (typeof k === 'string' && k.slice(0, HAND_GLOW.length) === HAND_GLOW)
-      return true;
-  }
-  return false;
-}
 function blazeSeen(x, y) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return false;
   if (L.flags[y * MAP_W + x] & F_VIS) return true;
@@ -12292,21 +12262,10 @@ function computeVis() {
      a clear line to it however far off, would light doorways and dead
      ends nowhere near what the floor in front of you shows.  A fire
      earns that reach by being a thing that is not supposed to be there;
-     a torch is furniture.
-
-     The torch in your OWN hand is neither.  It is not somebody else's
-     light down a corridor, it is the light you are carrying, and it is
-     the whole reason for carrying one: in a dark room it throws a pool
-     several squares across while your own eyes reach one.  That pool
-     went through this same skip, so the far side of it was drawn but
-     never written down, and every square of it went back to black the
-     moment you stepped away - the map remembered only what your night
-     eyes had touched.  A hand torch names itself in the key of its
-     flame, so it is told apart from the brackets on the wall here. */
+     a torch is furniture. */
   var lit = lightMap(1), lk;
   for (lk in lit) {
-    var le = lit[lk];
-    if (le.col === GLOW_TORCH && !(le.v > 0 && byHandTorch(le))) continue;
+    if (lit[lk].col === GLOW_TORCH) continue;
     var li = lk | 0;
     if (F[li] & F_VIS) continue;
     var lx = li % W, ly = (li / W) | 0;
@@ -16019,11 +15978,6 @@ function dropEmber(x, y, turns, at) {
   /* Water does not catch.  A pool with a fire burning on it was the one
      thing in the dungeon that read as a mistake however it got there. */
   if (inWater(x, y)) return;
-  /* Neither does a hole, for the same reason and worse: there is no
-     floor there to burn, so a flame left on one hung in mid air over the
-     drop.  Whatever was going to burn there has fallen out of the level
-     - see holeTakes. */
-  if (tileAt(x, y) === HOLE) return;
   if (typeof lightBarrel === 'function') lightBarrel(x, y);
   var life = turns || BURN_TRAIL_TURNS;
   for (var i = 0; i < L.clouds.length; i++) {
@@ -19540,28 +19494,6 @@ function layTrapHere(it) {
   return true;
 }
 
-/* ------------------------------------------------------- down the hole
-   A hole is a square with no floor in it, so nothing thrown at one comes
-   to REST there.  It goes over the lip and down, and what is down there
-   is not this floor.
-
-   Every throw used to be worked out as though the hole were flagstones.
-   A torch lay burning in mid air over it and the game said "the torch
-   lands, burning on the stone"; a stone cut for fire flared in the empty
-   space above it; and an ordinary arrow was quietly set down on the RIM,
-   because dropNear has never counted a hole as somewhere to put
-   anything and simply walked out to the next square that was.
-
-   So the hole is asked first, at the one point a throw comes down, and
-   what it takes is gone.  Named as ONE of whatever it is, for the same
-   reason a fumble is - you lost a stone, not the four in your pocket. */
-function holeTakes(it, x, y) {
-  if (tileAt(x, y) !== HOLE) return false;
-  var one = it, k;
-  if (it && (it.cnt || 1) > 1) { one = {}; for (k in it) one[k] = it[k]; one.cnt = 1; }
-  msg(cap(itemName(one)) + ' goes down the hole.', '6');
-  return true;
-}
 /* --------------------------------------------------- a torch let go of
    It goes out as a thing you are carrying and comes down as an open
    flame - which is the whole reason for throwing one.  But WHAT it comes
@@ -19572,14 +19504,6 @@ function holeTakes(it, x, y) {
    It said "the torch lands and the flame takes" for all three, which is
    the same sentence for a fire that started and a fire that did not. */
 function torchLands(tx, ty) {
-  /* and over a hole it comes down on nothing at all - see holeTakes.
-     Asked here as well as at the throw, because a torch also comes down
-     on whatever it HIT, and a thing that flies may be hanging over
-     one. */
-  if (tileAt(tx, ty) === HOLE) {
-    msg('The torch goes down the hole.', '6');
-    return 0;
-  }
   if (inWater(tx, ty)) {
     msg('The torch hisses out in the water.', 'c');
     return 0;
@@ -19652,12 +19576,6 @@ function throwAtSquare(it, tx, ty, noFumble) {
              col: boom ? '#d82b2b' : vial ? vialColour(it)
                   : isFlask(it) ? '#f59e0b' : null };
   beatWait(flight);
-  /* The hole is asked before anything else the square might have done to
-     it, because a square with no floor does none of them: the trap under
-     it is not there to spring, the vial does not break on it, the rune
-     does not go off over it, and a stone charmed to come back does not
-     come back up out of it.  It leaves the pack either way. */
-  if (holeTakes(it, tx, ty)) { removeItem(it, 1); return true; }
   /* A returning stone is not spent by being thrown, exactly as it is not
      when it is thrown at something - see fireAt, which has always known
      this.  Taking it out of the pack here and then letting the rune
@@ -20083,10 +20001,6 @@ function fireAt(best) {
         msgFight(fightLine(ammoName + ' goes wide past ', sname, '.'), '6', 'miss', '6', stray);
       }
     }
-    /* A shot that sails on past can sail on over a hole, and then it is
-       the hole's - fire, rune, shaft and all.  No resolveRune: the rune
-       went down with the stone. */
-    if (holeTakes(am, fx, fy)) return true;
     if (aflame) dropEmber(fx, fy, 0, beatNow());
     if (torchThrow) { torchLands(fx, fy); resolveRune(); return true; }
     /* A RUNED STONE IS resolveRune's BUSINESS AND NOBODY ELSE'S.  This
@@ -21179,7 +21093,6 @@ function boot() {
     fitBars();
     ready = true;
     newGame(true);
-    playtestMenu();   /* ask, rather than open on the title */
     requestAnimationFrame(loop);
   };
   atlasImg.src = ATLAS_PNG;
@@ -25739,19 +25652,10 @@ function drawDecor(name, mx, my, px, py, a, still) {
      bracket are plainly the same fire.  Not while you are only
      remembering the room - a picture does not move. */
   if (isHearthName(name)) {
-    var hmir = name === 'hearth_h' ? 1 : 0;
-    /* Both halves are read off the LEFT square's beat, so the two of them
-       always move together - and then the mirrored half is put onto the
-       other frame of that beat.  It used to be handed the same frame as
-       well as the same cell, so the fire was a picture folded down the
-       middle: the same tongue of flame twice, mirrored, which reads as a
-       pattern rather than as a fire.  One shape against the other, and
-       the join stops being a mirror line.  It differs while the room is
-       only remembered too - a still fire that is the same both sides is
-       the same fold standing still. */
-    var hf = (still ? 0 : torchFlameFrame(mx - hmir, my)) & 1;
-    if (hmir) hf ^= 1;
-    sprMirror(hf ? 'hearth_a' : 'hearth_b', px, py, a, hmir, 0);
+    var hspr = still ? 'hearth_a'
+             : (torchFlameFrame(mx - (name === 'hearth_h' ? 1 : 0), my) & 1)
+               ? 'hearth_a' : 'hearth_b';
+    sprMirror(hspr, px, py, a, name === 'hearth_h' ? 1 : 0, 0);
     return;
   }
   /* A BED is six squares out of two cells - the lower left corner and
@@ -25759,27 +25663,19 @@ function drawDecor(name, mx, my, px, py, a, still) {
      round, the same way a rug's does: 'h' mirrored left to right for the
      far end, 'v' top to bottom for the head. */
   if (isBedName(name)) {
-    /* Six squares off THREE cells, and the bed lies ALONG the room, west
-       to east: the head with its board and its pillow, then the middle,
-       then the foot.  That is the three cells left to right, each one
-       painted as the SOUTH half of its column - rail along the bottom,
-       leg at the outside corner - and the north half of the column is
-       that same cell turned top to bottom, which puts the far rail where
-       it belongs and the pillow at the head and nowhere else.
-
-       Nothing is mirrored left to right any more.  It was, and mirroring
-       the head end to make the far end is what put a pillow at both ends
-       of the bed; making the whole foot row out of the foot cell instead
-       only moved the fault, and gave a bed with no head to it at all.
+    /* Six squares off THREE cells.  The head row - the one against the
+       wall, which is where the pillow is - is bed_c and bed_m as
+       painted; the foot row is bed_e, laid left, middle and mirrored
+       right.  Nothing about a bed is mirrored top to bottom any more:
+       it was, and that put the pillow at both ends of it.
 
        The names still carry 'v' for the row nearer the wall and 'h' for
-       the far column, so the generator lays a bed exactly as it did. */
+       the far corner, so the generator lays a bed exactly as it did. */
     var bt = name.slice(3);                     /* what is after 'bed' */
-    var north = bt.indexOf('v') >= 0;
-    var foot = bt.indexOf('h') >= 0;
-    var mid = bt.charAt(1) === 'm';
-    sprMirror(foot ? 'bed_e' : mid ? 'bed_m' : 'bed_c',
-      px, py, a, 0, north ? 1 : 0);
+    var head = bt.indexOf('v') >= 0;
+    var mid = bt.charAt(0) === '_' && bt.charAt(1) === 'm';
+    sprMirror(head ? (mid ? 'bed_m' : 'bed_c') : 'bed_e',
+      px, py, a, bt.indexOf('h') >= 0 ? 1 : 0, 0);
     return;
   }
   /* Two tiles are painted joining something above them and are turned to
@@ -28404,646 +28300,6 @@ function sound(what) {
   return false;
 }
 
-/* ============================================================ playtest
-   The game, with a way in that skips the walking.
-
-   This file is only in playtest.html.  It adds nothing to the rules: it
-   picks a floor that has the thing you asked for on it, stands you next
-   to it, and hands you a pack full of gear so you can get straight to
-   whatever you meant to look at.  Everything after that is the game.
-
-   Two questions, in order.  What sort of thing - a room, or a creature -
-   and then which one.  The menu is ordinary HTML over the canvas rather
-   than pixels on it: it is scaffolding, and scaffolding should not have
-   to be drawn twice. */
-
-/* --------------------------------------------------------- a full pack
-   One of everything worth carrying, so nothing has to be searched for.
-   Weapons and armour come identified: you are here to test how a thing
-   fights, not to work out what it is. */
-function playtestKit() {
-  var i, it;
-  P.slots = new Array(N_SLOTS).fill(null);
-  P.eq = { rh: null, body: null, lh: null, head: null, feet: null };
-
-  var sword = mkItem('weapon', weaponIndex('long sword'));
-  sword.known = 1; sword.hp = 2; sword.dp = 2;
-  var mail = mkItem('armor', ARMORS.length - 2);
-  mail.known = 1; mail.ap = 2;
-  var bow = mkItem('weapon', weaponIndex('short bow')); bow.known = 1;
-  var helm = mkItem('head', 1); helm.known = 1;
-  var boots = mkItem('feet', 1); boots.known = 1;
-  P.eq.rh = sword; P.eq.body = mail; P.eq.lh = bow;
-  P.eq.head = helm; P.eq.feet = boots;
-  learnGear(sword); learnGear(mail); learnGear(bow);
-  learnGear(helm); learnGear(boots);
-
-  /* The pouch goes in first.  Filled last it never found a slot, and
-     everything meant to be in it ended up in an object nobody was
-     carrying. */
-  var pouch = mkItem('pouch', 0);
-  addItem(pouch);
-
-  /* what goes in the pack: something of every kind you might reach for */
-  var arrows = mkItem('weapon', weaponIndex('arrow'));
-  arrows.cnt = 30; arrows.known = 1; addItem(arrows);
-
-  var stones = mkItem('weapon', weaponIndex('stone'));
-  stones.cnt = 8; stones.known = 1; addItem(stones);
-
-  /* one of each runed stone, named, three apiece */
-  for (i = 0; i < WEAPONS.length; i++) {
-    if (!WEAPONS[i].rune) continue;
-    it = mkItem('weapon', i); it.cnt = 3; it.known = 1;
-    learnWeapon(i);
-    addItem(it);
-  }
-
-  var dyn = mkItem('dynamite', 0); dyn.cnt = 5; addItem(dyn);
-  var pins = mkItem('pin', 0); pins.cnt = 3; addItem(pins);
-  var crystals = mkItem('crystal', 0); crystals.cnt = 5; addItem(crystals);
-
-  /* --- and then a handful of whatever ------------------------------
-     What is left of the pack is dealt rather than laid out.  A kit with
-     one of everything in it is a fine way to test a thing you already
-     know about and a poor way to notice one you do not: it looks the
-     same every time, so nothing in it ever looks odd.
-
-     It was never one of everything anyway - there are 19 wands and 20
-     slots, so the old loop simply filled the pack with wands in table
-     order and stopped, and half of what it meant to hand you never fit.
-
-     Unidentified, on purpose.  Half of what a vial or a mushroom or a
-     ring IS lives in not knowing which one you are holding, and a
-     playtest that hands you the answer cannot show you that half.
-     Wands are the exception: they are the tool you reach for while
-     testing something else, so the ones dealt come charged and named. */
-  function ofKind(kind) {
-    var out = [], q;
-    if (kind === 'vial') for (q = 0; q < VIALS.length; q++) out.push(q);
-    if (kind === 'food') for (q = 0; q < FOODS.length; q++) if (isMushroom(q)) out.push(q);
-    if (kind === 'ring') for (q = 0; q < RINGS.length; q++) if (RINGS[q].p) out.push(q);
-    if (kind === 'wand') for (q = 0; q < WANDS.length; q++) out.push(q);
-    if (kind === 'potion') for (q = 0; q < POTIONS.length; q++) out.push(q);
-    if (kind === 'scroll') for (q = 0; q < SCROLLS.length; q++) out.push(q);
-    return out;
-  }
-  /* The KIND is drawn first and the thing second, so nineteen wands do
-     not crowd out four vials simply by being nineteen. */
-  var kinds = ['vial', 'food', 'ring', 'wand', 'potion', 'scroll'];
-  function deal(kind, k) {
-    var thing = mkItem(kind, k);
-    if (kind === 'wand') { thing.ch = 9; KNOWN.wand[k] = 1; }
-    if (kind === 'ring') thing.ch = RINGS[k].charges === undefined
-      ? RING_CHARGES : RINGS[k].charges;
-    if (kind === 'vial' || kind === 'food') thing.cnt = 1 + rnd(2);
-    return addItem(thing);
-  }
-  function dealOne(kind) {
-    var list = ofKind(kind);
-    if (!list.length) return null;
-    return deal(kind, list[rnd(list.length)]);
-  }
-  /* one of each of the three that are worth seeing and easy to miss */
-  dealOne('vial'); dealOne('food'); dealOne('ring');
-  var guard = 0;
-  while (freeSlot() >= 0 && guard++ < 60) dealOne(kinds[rnd(kinds.length)]);
-
-  /* and the pouch, likewise: a mix of glass rather than the same ten
-     flasks every time.  addItem puts potions and vials in it by itself,
-     so this is only about filling what is left of it. */
-  var glass = [];
-  for (i = 0; i < POTIONS.length; i++) glass.push(['potion', i]);
-  for (i = 0; i < VIALS.length; i++) glass.push(['vial', i]);
-  for (var s = 0; s < POUCH_CAP && glass.length; s++) {
-    if (pouch.items[s]) continue;
-    var g = glass[rnd(glass.length)];
-    var gi = mkItem(g[0], g[1]);
-    gi.cnt = 1 + rnd(2);
-    pouch.items[s] = gi;
-  }
-  /* Scrolls stay known: they are the one kind you read to make something
-     else happen, and hunting for the identify scroll in a list of made-up
-     titles is not what anybody opened this file to do. */
-  for (i = 0; i < SCROLLS.length; i++) KNOWN.scr[i] = 1;
-
-  P.food = FOOD_MAX;
-  P.gold = 500;
-}
-
-/* --------------------------------------------- a floor with that on it
-   Roll floors until one has what was asked for, then stand the player
-   beside it.  Rolling is simpler than building a floor by hand and it
-   gives you a real one - the room you get is the room the game makes. */
-var PLAYTEST_TRIES = 400;
-
-function playtestRoom(kind) {
-  var depth, tries;
-  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
-    depth = 1;
-    for (var i = 0; i < SPECIAL_ROOMS.length; i++)
-      if (SPECIAL_ROOMS[i].n === kind) depth = Math.max(1, SPECIAL_ROOMS[i].min);
-    /* A floor you have already been on is remembered, so asking for it
-       again hands back the same one.  Forget it, and get a new floor. */
-    G.floors = {};
-    enterLevel(depth);
-    var r = null;
-    for (i = 0; i < L.rooms.length; i++)
-      if (!L.rooms[i].gone && L.rooms[i].special === kind) r = L.rooms[i];
-    if (!r) continue;
-    /* stand in the doorway of it, or in the middle if it has none */
-    standIn(r);
-    return true;
-  }
-  return false;
-}
-
-/* And the FURNISHED rooms, which are a different question.  A special
-   room announces itself and there is one at most on a floor that has
-   one; a room type says nothing and turns up on about a third of floors,
-   so the only way to look at one on purpose is to roll until a floor has
-   one and then stand in it. */
-function playtestKindRoom(kind) {
-  var tries, i;
-  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
-    G.floors = {};
-    enterLevel(1 + rnd(6));
-    var r = null;
-    for (i = 0; i < L.rooms.length; i++)
-      if (!L.rooms[i].gone && L.rooms[i].kind === kind) r = L.rooms[i];
-    if (!r) continue;
-    standIn(r);
-    return true;
-  }
-  return false;
-}
-
-/* -------------------------------------------------------- the drain
-   Every whole floor that is not an ordinary floor, built straight off
-   the generator's own table: a new kind of floor is a row in FLOOR_KINDS
-   and it turns up on this menu with nothing else to do.  `say` is the
-   first line of what the floor tells you when you walk into it, which is
-   the same sentence in both places.
-*/
-var PLAYTEST_FLOORS = FLOOR_KINDS.map(function (k) {
-  return { id: k.id, n: k.n.toUpperCase(),
-           say: (FLOOR_ENTRY[k.id] || [])[0] || ('A floor of its own kind: ' + k.n),
-           find: function () { return playtestSeedFloor(k.id); } };
-});
-/* Write seeds into the run until one of them names a floor of the kind
-   asked for, then go and stand on it.  Every special floor's place in
-   the dungeon is READ out of the run's seed rather than drawn from it -
-   see floorDepthOf - so writing a seed in is the whole of the search,
-   and no floors have to be dealt to find one. */
-function playtestSeedFloor(id) {
-  var tries, d;
-  for (tries = 0; tries < 6000; tries++) {
-    G.runSeed = ((tries + 1) * 2654435761) >>> 0;
-    d = floorDepthOf(id);
-    if (d && floorKindAt(d) && floorKindAt(d).id === id) break;
-    d = 0;
-  }
-  if (!d) return false;
-  G.floors = {};
-  enterLevel(d);
-  return L.floor === id;
-}
-function playtestFloorById(id) {
-  for (var i = 0; i < PLAYTEST_FLOORS.length; i++)
-    if (PLAYTEST_FLOORS[i].id === id) return PLAYTEST_FLOORS[i];
-  return null;
-}
-function playtestFloor(id) {
-  var k = playtestFloorById(id);
-  return !!(k && k.find());
-}
-
-/* ------------------------------------------------------ a way down
-   A trapdoor turns up on about one floor in four and is hidden until it
-   is found, which makes it the one thing in the game you cannot go and
-   look at when you want to.  So: a floor that has one, standing beside
-   it with it already found, and the cellar underneath it left exactly
-   as the dungeon built it. */
-function playtestCellar(rugged) {
-  var tries, i;
-  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
-    G.floors = {};
-    enterLevel(2 + rnd(6));
-    if (!L.tdoor) continue;
-    var keys = [], k;
-    for (k in L.tdoor) keys.push(k | 0);
-    if (!keys.length) continue;
-    var j = keys[0];
-    var tx = j % MAP_W, ty = (j / MAP_W) | 0;
-    /* under a rug, or in plain sight - both are worth being able to ask
-       for, since the rug is the whole reason one can be missed */
-    if (rugged && !isRugName(L.decor[j])) continue;
-    if (!rugged && isRugName(L.decor[j])) continue;
-    /* found, so it can be used - a rug over it still hides it, which is
-       the point of asking for that one */
-    L.tdoor[j].found = 1;
-    /* stand beside it, or on it if there is nowhere beside it */
-    var spot = null;
-    for (i = 0; i < DIR8.length; i++) {
-      var nx = tx + DIR8[i][0], ny = ty + DIR8[i][1];
-      if (walkable(nx, ny) && !monAt(L, nx, ny) && tileAt(nx, ny) !== TRAPDOOR) { spot = [nx, ny]; break; }
-    }
-    P.x = spot ? spot[0] : tx; P.y = spot ? spot[1] : ty;
-    L.mons.length = 0;
-    computeVis();
-    return true;
-  }
-  return false;
-}
-
-/* A plain room, with one of these in it and nothing else alive. */
-function playtestMonster(c) {
-  var D = MON_BY_C[c];
-  var depth = Math.max(1, D && D.minDepth ? D.minDepth : 1);
-  var tries;
-  for (tries = 0; tries < PLAYTEST_TRIES; tries++) {
-    G.floors = {};
-    enterLevel(depth);
-    var r = biggestPlainRoom();
-    if (!r) continue;
-    standIn(r);
-    L.mons.length = 0;
-    /* far enough off to see it coming, near enough to reach it */
-    var spot = spotInRoom(r, 4, 8);
-    if (!spot) spot = spotInRoom(r, 2, 12);
-    if (!spot) continue;
-    var m = mkMonster(c, Math.max(depth, 6), spot.x, spot.y);
-    m.state = 2; m.disguise = 0;
-    L.mons.push(m);
-    computeVis();
-    return true;
-  }
-  return false;
-}
-
-/* the biggest room with nothing special about it */
-function biggestPlainRoom() {
-  var best = null, i;
-  for (i = 0; i < L.rooms.length; i++) {
-    var r = L.rooms[i];
-    if (r.gone || r.special || r.sealed || r.dark) continue;
-    if (r.floors.length < 14) continue;
-    if (!best || r.floors.length > best.floors.length) best = r;
-  }
-  return best;
-}
-function standIn(r) {
-  P.x = r.cx; P.y = r.cy;
-  if (!walkable(P.x, P.y) && r.floors.length) { P.x = r.floors[0][0]; P.y = r.floors[0][1]; }
-  computeVis();
-}
-function spotInRoom(r, lo, hi) {
-  var out = [], i;
-  for (i = 0; i < r.floors.length; i++) {
-    var f = r.floors[i];
-    var d = Math.abs(f[0] - P.x) + Math.abs(f[1] - P.y);
-    if (d < lo || d > hi) continue;
-    if (!walkable(f[0], f[1]) || monAt(L, f[0], f[1])) continue;
-    out.push({ x: f[0], y: f[1] });
-  }
-  return out.length ? out[rnd(out.length)] : null;
-}
-
-/* ---------------------------------------------------------- the start
-   Set a run up the way newGame does, then put the asked-for thing in
-   front of you. */
-function playtestStart(what, which) {
-  srand((Date.now() ^ (Math.random() * 0x7fffffff)) >>> 0);
-  makeAppearances();
-  G = freshG();
-  P = newPlayer();
-  P.lv = 6; P.exp = E_LEVELS[4];
-  P.mhp = 60; P.hp = 60;
-  P.str = P.mstr = 18; P.dex = P.mdex = 16; P.wis = P.mwis = 16;
-  PT_TAKEN = {};                 /* a new run, a new pack, nothing taken yet */
-  playtestKit();
-
-  var ok = (what === 'room') ? playtestRoom(which) :
-           (what === 'kind') ? playtestKindRoom(which) :
-           (what === 'floor') ? playtestFloor(which) :
-           (what === 'cellar') ? playtestCellar(which === 'rug') :
-           playtestMonster(which);
-  G.msgq = [];
-  G.mode = 'play';
-  if (!ok) msg('Could not find one. Reload and try again.', 'R');
-  else if (what === 'room') msg('A ' + which + ' room. Have a look round.', 'c');
-  else if (what === 'kind') msg('A ' + which + '. Nothing will tell you so.', 'c');
-  else if (what === 'floor') {
-    var fk = playtestFloorById(which);
-    msg((fk && fk.say) || 'A floor of its own kind.', 'c');
-  }
-  else if (what === 'cellar')
-    msg(which === 'rug' ? 'A trapdoor under that rug. Burn it off to find it.'
-                        : 'A trapdoor, found. ENTER on it goes down.', 'c');
-  else msg('One ' + MON_BY_C[which].n + ', waiting for you.', 'c');
-  msg('TAB for the pack. ESC for the menu.', '6');
-  finishMsgs();
-}
-
-
-/* ========================================================== the picker
-   One list of buttons over the canvas, used by every menu here.  A row
-   is [value, label] and may carry two more: 1 if the thing is already
-   taken or held, which draws the button lit, and a line of hover text.
-
-   The screens form a STACK.  BACK goes up one of them and, at the top,
-   back to the first question; START puts the whole thing away and leaves
-   you in the dungeon.  Those two used to be one button, which is why
-   BACK out of the item list dropped you into the game. */
-var PT_STACK = [];
-var PT_TAKEN = {};
-
-function playtestPick(rows, title, pick, stay) {
-  var box = document.getElementById('pick');
-  var head = document.getElementById('pickhead');
-  var list = document.getElementById('picklist');
-  head.textContent = title;
-  list.innerHTML = '';
-  rows.forEach(function (row) {
-    var b = document.createElement('button');
-    b.textContent = row[1];
-    if (row[2]) b.className = 'on';
-    if (row[3]) b.title = row[3];
-    b.onclick = function () {
-      if (!stay) box.style.display = 'none';
-      pick(row[0]);
-    };
-    list.appendChild(b);
-  });
-  box.style.display = 'flex';
-}
-function playtestClose() {
-  PT_STACK = [];
-  document.getElementById('pick').style.display = 'none';
-}
-/* Go to a screen, remembering the one you came from. */
-function playtestGo(fn) {
-  PT_STACK.push(fn);
-  fn();
-}
-/* Opening a bench from the button in the corner: whatever screen you
-   were on before is forgotten, so BACK from it goes to the first
-   question rather than somewhere you have already left. */
-function playtestOpen(fn) { PT_STACK = []; playtestGo(fn); }
-/* And come back off it.  The screen below is drawn again, so whatever
-   changed while you were away - a perk taken, an item handed over -
-   shows when you get there. */
-function playtestBack() {
-  PT_STACK.pop();
-  if (!PT_STACK.length) { playtestMenu(); return; }
-  PT_STACK[PT_STACK.length - 1]();
-}
-/* The two rows every bench screen ends with. */
-function playtestFoot() {
-  return [['-back', 'BACK', 0, 'up one screen'],
-          ['-start', 'START', 0, 'put this away and play']];
-}
-/* true if the press was one of those, and it has been dealt with */
-function playtestFooted(v) {
-  if (v === '-back') { playtestBack(); return 1; }
-  if (v === '-start') { playtestClose(); return 1; }
-  return 0;
-}
-
-/* ====================================================== the perk bench
-   Every perk in the game, on or off with a press, at any moment of a
-   run.  Perks are handed out three at a time at five levels, so trying
-   one used to mean playing up to it and hoping it was offered; here they
-   are all just there.
-
-   It goes through the game's own takePerk, so a perk that does something
-   the moment it is taken does that here too. */
-function playtestPerks() {
-  var rows = PERKS.map(function (pk) {
-    return [pk.id, pk.n.toUpperCase() + (hasPerk(pk.id) ? ' *' : ''),
-            hasPerk(pk.id) ? 1 : 0, pk.txt];
-  }).concat(playtestFoot());
-  playtestPick(rows, 'Perks - press to take or drop one', function (id) {
-    if (playtestFooted(id)) return;
-    if (hasPerk(id)) {
-      delete P.perks[id];
-      msg('You put down ' + perkById(id).n + '.', '6');
-    } else takePerk(id);
-    finishMsgs();
-    playtestPerks();               /* drawn again, so the mark is right */
-  }, 1);
-}
-function perkById(id) { return PERK_BY_ID[id] || { n: id }; }
-
-/* ====================================================== the item bench
-   Everything the dungeon can hand you, by kind and then by name, put
-   straight into the pack and identified.  A great bow does not show up
-   before the fifth floor and a wand of fire is one of nineteen wands, so
-   the only honest way to try either is to be given one.
-
-   A weapon or a piece of gear asks one more question: which enchantment
-   is worked into it.  That is the only way to reach a bow of fire, which
-   needs a bow AND the fire rune to land on it - about four weapons in a
-   thousand - and which is why one can be played for without ever
-   turning up.
-
-   What has been taken is marked, because one of each is enough. */
-function playtestKinds() {
-  var out = [];
-  function some(t, list, pick) {
-    var rows = [], q;
-    for (q = 0; q < list.length; q++)
-      if (!pick || pick(list[q], q)) rows.push([t, q, list[q].n]);
-    return rows;
-  }
-  out.push(['weapon', 'WEAPONS', some('weapon', WEAPONS)]);
-  out.push(['wand', 'WANDS', some('wand', WANDS)]);
-  out.push(['ring', 'RINGS', some('ring', RINGS, function (r) { return !!r.p; })]);
-  out.push(['potion', 'POTIONS', some('potion', POTIONS)]);
-  out.push(['scroll', 'SCROLLS', some('scroll', SCROLLS)]);
-  out.push(['vial', 'VIALS', some('vial', VIALS)]);
-  out.push(['armor', 'ARMOUR', some('armor', ARMORS)]);
-  out.push(['shield', 'SHIELDS', some('shield', SHIELDS)]);
-  out.push(['head', 'HELMS', some('head', HEADS)]);
-  out.push(['feet', 'BOOTS', some('feet', FEET)]);
-  out.push(['other', 'THE REST', [['dynamite', 0, 'dynamite'],
-    ['pin', 0, 'lock pin'], ['crystal', 0, 'crystal'], ['pouch', 0, 'pouch']]]);
-  return out;
-}
-/* Which enchantments will go into this thing, asked the way the dungeon
-   asks: a bow says 'wb' and so is offered the bow's own rune as well as
-   every weapon rune, a cap says 'gh', and a potion says nothing at all. */
-function playtestRuneKind(t, k) {
-  if (t === 'weapon') {
-    if (WEAPONS[k].grp) return '';           /* arrows and stones take none */
-    return WEAPONS[k].launch ? 'wb' : 'w';
-  }
-  if (t === 'armor' || t === 'shield') return 'g';
-  if (t === 'head') return 'gh';
-  if (t === 'feet') return 'gf';
-  return '';
-}
-function playtestRunesFor(t, k) {
-  var kind = playtestRuneKind(t, k), out = [], i, c;
-  if (!kind) return out;
-  for (i = 0; i < RUNES.length; i++) {
-    for (c = 0; c < RUNES[i].t.length; c++)
-      if (kind.indexOf(RUNES[i].t.charAt(c)) >= 0) { out.push(RUNES[i]); break; }
-  }
-  return out;
-}
-function playtestTakenKey(t, k, br) { return t + '|' + k + '|' + (br || ''); }
-/* One of that thing, known, in the pack.  Charges and counts are set the
-   way the dungeon sets them, so what you are handed behaves like one you
-   found rather than like an empty shell. */
-function playtestGive(t, k, br) {
-  var it = mkItem(t, k);
-  it.known = 1;
-  if (br) { it.br = br; learnRune(it); }
-  if (t === 'wand') { it.ch = 9; KNOWN.wand[k] = 1; }
-  if (t === 'ring') it.ch = RINGS[k].charges === undefined ? RING_CHARGES : RINGS[k].charges;
-  if (t === 'weapon') {
-    learnWeapon(k);
-    if (WEAPONS[k].grp) it.cnt = WEAPONS[k].rune ? 3 : 20;
-  }
-  if (t === 'potion') KNOWN.pot[k] = 1;
-  if (t === 'scroll') KNOWN.scr[k] = 1;
-  if (t === 'dynamite' || t === 'pin' || t === 'crystal') it.cnt = 5;
-  if (isGear(it) || t === 'weapon') learnGear(it);
-  if (!addItem(it)) {
-    msg('Your pack is full.', 'R');
-    finishMsgs();
-    return 0;
-  }
-  PT_TAKEN[playtestTakenKey(t, k, br)] = 1;
-  msg('Given: ' + itemName(it) + '.', 'y');
-  finishMsgs();
-  return 1;
-}
-function playtestItems() {
-  playtestGo(playtestItemKinds);
-}
-function playtestItemKinds() {
-  var kinds = playtestKinds();
-  var rows = kinds.map(function (kk) { return [kk[0], kk[1], 0, '']; })
-    .concat(playtestFoot());
-  playtestPick(rows, 'Items - which kind?', function (which) {
-    if (playtestFooted(which)) return;
-    playtestGo(function () { playtestItemList(which); });
-  }, 1);
-}
-function playtestItemList(which) {
-  var kinds = playtestKinds(), kk = null, q;
-  for (q = 0; q < kinds.length; q++) if (kinds[q][0] === which) kk = kinds[q];
-  if (!kk) { playtestBack(); return; }
-  var rows = kk[2].map(function (r) {
-    var runes = playtestRunesFor(r[0], r[1] | 0);
-    var took = PT_TAKEN[playtestTakenKey(r[0], r[1] | 0, '')];
-    return [r[0] + '|' + r[1], String(r[2]).toUpperCase() + (took ? ' *' : ''),
-            took ? 1 : 0, runes.length ? 'press for the plain one, or an enchanted one' : ''];
-  }).concat(playtestFoot());
-  playtestPick(rows, kk[1] + ' - press to be handed one', function (v) {
-    if (playtestFooted(v)) return;
-    var bits = v.split('|'), t = bits[0], k = bits[1] | 0;
-    if (playtestRunesFor(t, k).length) {
-      playtestGo(function () { playtestItemRunes(which, t, k); });
-      return;
-    }
-    playtestGive(t, k, '');
-    playtestItemList(which);
-  }, 1);
-}
-/* The plain one, or one with any enchantment that fits it.  This is the
-   whole reason the bench has three screens rather than two. */
-function playtestItemRunes(which, t, k) {
-  var name = (t === 'weapon' ? WEAPONS[k] : t === 'armor' ? ARMORS[k] :
-              t === 'shield' ? SHIELDS[k] : t === 'head' ? HEADS[k] : FEET[k]).n;
-  function rows() {
-    var out = [['', 'PLAIN ' + name.toUpperCase() +
-      (PT_TAKEN[playtestTakenKey(t, k, '')] ? ' *' : ''),
-      PT_TAKEN[playtestTakenKey(t, k, '')] ? 1 : 0, '']];
-    playtestRunesFor(t, k).forEach(function (rn) {
-      var took = PT_TAKEN[playtestTakenKey(t, k, rn.n)];
-      out.push([rn.n, ('of ' + rn.n).toUpperCase() + (took ? ' *' : ''),
-                took ? 1 : 0, rn.txt]);
-    });
-    return out.concat(playtestFoot());
-  }
-  playtestPick(rows(), name + ' - plain, or worked with what?', function (br) {
-    if (playtestFooted(br)) return;
-    playtestGive(t, k, br);
-    playtestItemRunes(which, t, k);
-  }, 1);
-}
-
-/* ========================================================== the menu
-   The first question, and the bottom of the stack: BACK from a bench
-   comes here. */
-function playtestMenu() {
-  PT_STACK = [];
-  function show(rows, title, pick) { playtestPick(rows, title, pick, 0); }
-  show([['room', 'A SPECIAL ROOM'], ['kind', 'A FURNISHED ROOM'],
-        ['floor', 'A WHOLE FLOOR'],
-        ['monster', 'A MONSTER'], ['cellar', 'A CELLAR'],
-        ['perks', 'PERKS'], ['items', 'ITEMS'],
-        ['-start', 'JUST PLAY']],
-    'What do you want to try?',
-    function (what) {
-      if (what === '-start') { playtestClose(); return; }
-      if (what === 'floor') {
-        var rows = PLAYTEST_FLOORS.map(function (k) { return [k.id, k.n]; });
-        show(rows, 'Which floor?', function (which) {
-          playtestGo(function () { playtestStart('floor', which); });
-        });
-        return;
-      }
-      if (what === 'perks') { playtestGo(playtestPerks); return; }
-      if (what === 'items') { playtestItems(); return; }
-      if (what === 'cellar') {
-        show([['open', 'A TRAPDOOR IN THE OPEN'], ['rug', 'ONE UNDER A RUG']],
-          'Which sort?', function (which) {
-            playtestClose();
-            playtestStart('cellar', which);
-          });
-      } else if (what === 'kind') {
-        var kinds2 = ROOM_KINDS.map(function (s) { return [s.n, s.n.toUpperCase()]; });
-        show(kinds2, 'Which one?', function (which) {
-          playtestClose();
-          playtestStart('kind', which);
-        });
-      } else if (what === 'room') {
-        var rooms = SPECIAL_ROOMS.map(function (s) { return [s.n, s.n.toUpperCase()]; });
-        show(rooms, 'Which room?', function (which) {
-          playtestClose();
-          playtestStart('room', which);
-        });
-      } else {
-        var mons = MONS.map(function (m) { return [m.c, m.n.toUpperCase()]; });
-        mons.sort(function (a, b) { return a[1] < b[1] ? -1 : 1; });
-        show(mons, 'Which creature?', function (which) {
-          playtestClose();
-          playtestStart('monster', which);
-        });
-      }
-    });
-}
-
-document.getElementById('again').onclick = function () {
-  this.blur();
-  playtestMenu();
-};
-/* The two benches.  Unlike "pick again" these do not start a new run -
-   they reach into the one you are in, which is the point of them: take a
-   perk in the middle of a fight, or be handed the wand you wanted to try
-   it against. */
-document.getElementById('perks').onclick = function () {
-  this.blur();
-  playtestOpen(playtestPerks);
-};
-document.getElementById('items').onclick = function () {
-  this.blur();
-  playtestOpen(playtestItemKinds);
-};
 </script>
 </body>
 </html>

@@ -11490,21 +11490,6 @@ function shockSplash(cells, sx, sy) {
    by the time the flames are drawn - and the walk is the same one the
    light already does for every lit square on the floor, several hundred
    times a frame, so one more for each flame costs nothing worth having. */
-/* Does the torch in the player's own hand reach this square?  Every
-   flame that lights a square is kept on it (see glowPut), and the hand
-   torch is the one whose key says so - glowHandTorch names it 'hand,x,y'
-   because it walks about with you, while a bracket on the wall is named
-   by the square it is nailed to. */
-var HAND_GLOW = 'hand,';
-function byHandTorch(e) {
-  if (!e || !e.srcs) return false;
-  for (var i = 0; i < e.srcs.length; i++) {
-    var k = e.srcs[i].s && e.srcs[i].s.k;
-    if (typeof k === 'string' && k.slice(0, HAND_GLOW.length) === HAND_GLOW)
-      return true;
-  }
-  return false;
-}
 function blazeSeen(x, y) {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return false;
   if (L.flags[y * MAP_W + x] & F_VIS) return true;
@@ -12292,21 +12277,10 @@ function computeVis() {
      a clear line to it however far off, would light doorways and dead
      ends nowhere near what the floor in front of you shows.  A fire
      earns that reach by being a thing that is not supposed to be there;
-     a torch is furniture.
-
-     The torch in your OWN hand is neither.  It is not somebody else's
-     light down a corridor, it is the light you are carrying, and it is
-     the whole reason for carrying one: in a dark room it throws a pool
-     several squares across while your own eyes reach one.  That pool
-     went through this same skip, so the far side of it was drawn but
-     never written down, and every square of it went back to black the
-     moment you stepped away - the map remembered only what your night
-     eyes had touched.  A hand torch names itself in the key of its
-     flame, so it is told apart from the brackets on the wall here. */
+     a torch is furniture. */
   var lit = lightMap(1), lk;
   for (lk in lit) {
-    var le = lit[lk];
-    if (le.col === GLOW_TORCH && !(le.v > 0 && byHandTorch(le))) continue;
+    if (lit[lk].col === GLOW_TORCH) continue;
     var li = lk | 0;
     if (F[li] & F_VIS) continue;
     var lx = li % W, ly = (li / W) | 0;
@@ -16019,11 +15993,6 @@ function dropEmber(x, y, turns, at) {
   /* Water does not catch.  A pool with a fire burning on it was the one
      thing in the dungeon that read as a mistake however it got there. */
   if (inWater(x, y)) return;
-  /* Neither does a hole, for the same reason and worse: there is no
-     floor there to burn, so a flame left on one hung in mid air over the
-     drop.  Whatever was going to burn there has fallen out of the level
-     - see holeTakes. */
-  if (tileAt(x, y) === HOLE) return;
   if (typeof lightBarrel === 'function') lightBarrel(x, y);
   var life = turns || BURN_TRAIL_TURNS;
   for (var i = 0; i < L.clouds.length; i++) {
@@ -19540,28 +19509,6 @@ function layTrapHere(it) {
   return true;
 }
 
-/* ------------------------------------------------------- down the hole
-   A hole is a square with no floor in it, so nothing thrown at one comes
-   to REST there.  It goes over the lip and down, and what is down there
-   is not this floor.
-
-   Every throw used to be worked out as though the hole were flagstones.
-   A torch lay burning in mid air over it and the game said "the torch
-   lands, burning on the stone"; a stone cut for fire flared in the empty
-   space above it; and an ordinary arrow was quietly set down on the RIM,
-   because dropNear has never counted a hole as somewhere to put
-   anything and simply walked out to the next square that was.
-
-   So the hole is asked first, at the one point a throw comes down, and
-   what it takes is gone.  Named as ONE of whatever it is, for the same
-   reason a fumble is - you lost a stone, not the four in your pocket. */
-function holeTakes(it, x, y) {
-  if (tileAt(x, y) !== HOLE) return false;
-  var one = it, k;
-  if (it && (it.cnt || 1) > 1) { one = {}; for (k in it) one[k] = it[k]; one.cnt = 1; }
-  msg(cap(itemName(one)) + ' goes down the hole.', '6');
-  return true;
-}
 /* --------------------------------------------------- a torch let go of
    It goes out as a thing you are carrying and comes down as an open
    flame - which is the whole reason for throwing one.  But WHAT it comes
@@ -19572,14 +19519,6 @@ function holeTakes(it, x, y) {
    It said "the torch lands and the flame takes" for all three, which is
    the same sentence for a fire that started and a fire that did not. */
 function torchLands(tx, ty) {
-  /* and over a hole it comes down on nothing at all - see holeTakes.
-     Asked here as well as at the throw, because a torch also comes down
-     on whatever it HIT, and a thing that flies may be hanging over
-     one. */
-  if (tileAt(tx, ty) === HOLE) {
-    msg('The torch goes down the hole.', '6');
-    return 0;
-  }
   if (inWater(tx, ty)) {
     msg('The torch hisses out in the water.', 'c');
     return 0;
@@ -19652,12 +19591,6 @@ function throwAtSquare(it, tx, ty, noFumble) {
              col: boom ? '#d82b2b' : vial ? vialColour(it)
                   : isFlask(it) ? '#f59e0b' : null };
   beatWait(flight);
-  /* The hole is asked before anything else the square might have done to
-     it, because a square with no floor does none of them: the trap under
-     it is not there to spring, the vial does not break on it, the rune
-     does not go off over it, and a stone charmed to come back does not
-     come back up out of it.  It leaves the pack either way. */
-  if (holeTakes(it, tx, ty)) { removeItem(it, 1); return true; }
   /* A returning stone is not spent by being thrown, exactly as it is not
      when it is thrown at something - see fireAt, which has always known
      this.  Taking it out of the pack here and then letting the rune
@@ -20083,10 +20016,6 @@ function fireAt(best) {
         msgFight(fightLine(ammoName + ' goes wide past ', sname, '.'), '6', 'miss', '6', stray);
       }
     }
-    /* A shot that sails on past can sail on over a hole, and then it is
-       the hole's - fire, rune, shaft and all.  No resolveRune: the rune
-       went down with the stone. */
-    if (holeTakes(am, fx, fy)) return true;
     if (aflame) dropEmber(fx, fy, 0, beatNow());
     if (torchThrow) { torchLands(fx, fy); resolveRune(); return true; }
     /* A RUNED STONE IS resolveRune's BUSINESS AND NOBODY ELSE'S.  This
@@ -25739,19 +25668,10 @@ function drawDecor(name, mx, my, px, py, a, still) {
      bracket are plainly the same fire.  Not while you are only
      remembering the room - a picture does not move. */
   if (isHearthName(name)) {
-    var hmir = name === 'hearth_h' ? 1 : 0;
-    /* Both halves are read off the LEFT square's beat, so the two of them
-       always move together - and then the mirrored half is put onto the
-       other frame of that beat.  It used to be handed the same frame as
-       well as the same cell, so the fire was a picture folded down the
-       middle: the same tongue of flame twice, mirrored, which reads as a
-       pattern rather than as a fire.  One shape against the other, and
-       the join stops being a mirror line.  It differs while the room is
-       only remembered too - a still fire that is the same both sides is
-       the same fold standing still. */
-    var hf = (still ? 0 : torchFlameFrame(mx - hmir, my)) & 1;
-    if (hmir) hf ^= 1;
-    sprMirror(hf ? 'hearth_a' : 'hearth_b', px, py, a, hmir, 0);
+    var hspr = still ? 'hearth_a'
+             : (torchFlameFrame(mx - (name === 'hearth_h' ? 1 : 0), my) & 1)
+               ? 'hearth_a' : 'hearth_b';
+    sprMirror(hspr, px, py, a, name === 'hearth_h' ? 1 : 0, 0);
     return;
   }
   /* A BED is six squares out of two cells - the lower left corner and
@@ -25759,27 +25679,19 @@ function drawDecor(name, mx, my, px, py, a, still) {
      round, the same way a rug's does: 'h' mirrored left to right for the
      far end, 'v' top to bottom for the head. */
   if (isBedName(name)) {
-    /* Six squares off THREE cells, and the bed lies ALONG the room, west
-       to east: the head with its board and its pillow, then the middle,
-       then the foot.  That is the three cells left to right, each one
-       painted as the SOUTH half of its column - rail along the bottom,
-       leg at the outside corner - and the north half of the column is
-       that same cell turned top to bottom, which puts the far rail where
-       it belongs and the pillow at the head and nowhere else.
-
-       Nothing is mirrored left to right any more.  It was, and mirroring
-       the head end to make the far end is what put a pillow at both ends
-       of the bed; making the whole foot row out of the foot cell instead
-       only moved the fault, and gave a bed with no head to it at all.
+    /* Six squares off THREE cells.  The head row - the one against the
+       wall, which is where the pillow is - is bed_c and bed_m as
+       painted; the foot row is bed_e, laid left, middle and mirrored
+       right.  Nothing about a bed is mirrored top to bottom any more:
+       it was, and that put the pillow at both ends of it.
 
        The names still carry 'v' for the row nearer the wall and 'h' for
-       the far column, so the generator lays a bed exactly as it did. */
+       the far corner, so the generator lays a bed exactly as it did. */
     var bt = name.slice(3);                     /* what is after 'bed' */
-    var north = bt.indexOf('v') >= 0;
-    var foot = bt.indexOf('h') >= 0;
-    var mid = bt.charAt(1) === 'm';
-    sprMirror(foot ? 'bed_e' : mid ? 'bed_m' : 'bed_c',
-      px, py, a, 0, north ? 1 : 0);
+    var head = bt.indexOf('v') >= 0;
+    var mid = bt.charAt(0) === '_' && bt.charAt(1) === 'm';
+    sprMirror(head ? (mid ? 'bed_m' : 'bed_c') : 'bed_e',
+      px, py, a, bt.indexOf('h') >= 0 ? 1 : 0, 0);
     return;
   }
   /* Two tiles are painted joining something above them and are turned to
