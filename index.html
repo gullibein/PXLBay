@@ -37,10 +37,31 @@
         touch-action: none;
         cursor: none !important;
       }
+
+      #os-hidden-input {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        opacity: 0.0001;
+        pointer-events: none;
+        font-size: 16px;
+        border: none;
+        outline: none;
+        background: transparent;
+        color: transparent;
+        z-index: 1000;
+        padding: 0;
+        margin: 0;
+        user-select: text !important;
+        -webkit-user-select: text !important;
+      }
     </style>
   </head>
   <body>
     <canvas id="os-canvas" width="640" height="340"></canvas>
+    <input id="os-hidden-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
 
     <script type="module" src="/src/main.ts"></script>
     <script>

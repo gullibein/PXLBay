@@ -109,10 +109,167 @@ export class OS {
     editingFileId?: string;
   } | null = null;
 
+  private hiddenInput!: HTMLInputElement;
+
   constructor() {
     this.font = new FontRenderer(fontUrl);
     this.refreshFiles();
     this.initTree();
+    this.initHiddenInput();
+  }
+
+  private initHiddenInput() {
+    let input = document.getElementById('os-hidden-input') as HTMLInputElement | null;
+    if (!input) {
+      input = document.createElement('input');
+      input.id = 'os-hidden-input';
+      input.type = 'text';
+      input.autocomplete = 'off';
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('autocapitalize', 'off');
+      input.spellcheck = false;
+      Object.assign(input.style, {
+        position: 'fixed',
+        top: '0px',
+        left: '0px',
+        width: '1px',
+        height: '1px',
+        opacity: '0.0001',
+        pointerEvents: 'none',
+        fontSize: '16px',
+        border: 'none',
+        outline: 'none',
+        background: 'transparent',
+        color: 'transparent',
+        zIndex: '1000',
+        padding: '0',
+        margin: '0',
+        userSelect: 'text',
+        webkitUserSelect: 'text'
+      });
+      document.body.appendChild(input);
+    }
+    this.hiddenInput = input;
+
+    this.hiddenInput.addEventListener('input', () => {
+      const val = this.hiddenInput.value;
+      const cursor = this.hiddenInput.selectionStart ?? val.length;
+      const selStart = this.hiddenInput.selectionStart;
+      const selEnd = this.hiddenInput.selectionEnd;
+
+      if (this.renamingId) {
+        let clean = val.replace(/[\r\n]+/g, '');
+        if (clean.length > 24) {
+          clean = clean.substring(0, 24);
+          this.hiddenInput.value = clean;
+        }
+        this.renameText = clean;
+        this.renameCursorPos = Math.min(clean.length, cursor);
+        this.renameSelStart = selStart;
+        this.renameSelEnd = selEnd;
+        this.isRenameSelected = (selStart !== null && selEnd !== null && selStart !== selEnd && selStart === 0 && selEnd === clean.length);
+      } else if (this.addFileModal) {
+        if (this.addFileModal.activeField === 'url') {
+          let clean = val.replace(/[\r\n]+/g, '');
+          if (clean.length > 255) {
+            clean = clean.substring(0, 255);
+            this.hiddenInput.value = clean;
+          }
+          this.addFileModal.url = clean;
+          this.addFileModal.urlCursorPos = Math.min(clean.length, cursor);
+          this.addFileModal.urlSelStart = selStart;
+          this.addFileModal.urlSelEnd = selEnd;
+          this.onModalUrlChanged();
+        } else {
+          let clean = val.replace(/[\r\n]+/g, '');
+          if (clean.length > 30) {
+            clean = clean.substring(0, 30);
+            this.hiddenInput.value = clean;
+          }
+          this.addFileModal.name = clean;
+          this.addFileModal.nameCursorPos = Math.min(clean.length, cursor);
+          this.addFileModal.nameSelStart = selStart;
+          this.addFileModal.nameSelEnd = selEnd;
+          this.addFileModal.userEditedName = true;
+        }
+      }
+    });
+
+    document.addEventListener('selectionchange', () => {
+      if (document.activeElement === this.hiddenInput) {
+        const selStart = this.hiddenInput.selectionStart;
+        const selEnd = this.hiddenInput.selectionEnd;
+        if (this.renamingId) {
+          this.renameCursorPos = selEnd ?? this.renameText.length;
+          this.renameSelStart = selStart;
+          this.renameSelEnd = selEnd;
+          this.isRenameSelected = (selStart !== null && selEnd !== null && selStart !== selEnd && selStart === 0 && selEnd === this.renameText.length);
+        } else if (this.addFileModal) {
+          if (this.addFileModal.activeField === 'url') {
+            this.addFileModal.urlCursorPos = selEnd ?? this.addFileModal.url.length;
+            this.addFileModal.urlSelStart = selStart;
+            this.addFileModal.urlSelEnd = selEnd;
+          } else {
+            this.addFileModal.nameCursorPos = selEnd ?? this.addFileModal.name.length;
+            this.addFileModal.nameSelStart = selStart;
+            this.addFileModal.nameSelEnd = selEnd;
+          }
+        }
+      }
+    });
+
+    this.hiddenInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (this.renamingId) {
+          this.commitRename();
+        } else if (this.addFileModal) {
+          this.submitAddFile();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        if (this.renamingId) {
+          this.renamingId = null;
+          this.syncHiddenInput();
+        } else if (this.addFileModal) {
+          this.addFileModal = null;
+          this.syncHiddenInput();
+        }
+      }
+    });
+  }
+
+  private syncHiddenInput(selectStart?: number, selectEnd?: number) {
+    if (!this.hiddenInput) return;
+
+    if (this.renamingId) {
+      this.hiddenInput.value = this.renameText;
+      this.hiddenInput.maxLength = 24;
+      this.hiddenInput.focus({ preventScroll: true });
+      const sStart = selectStart !== undefined ? selectStart : (this.renameSelStart !== null ? this.renameSelStart : (this.isRenameSelected ? 0 : this.renameCursorPos));
+      const sEnd = selectEnd !== undefined ? selectEnd : (this.renameSelEnd !== null ? this.renameSelEnd : (this.isRenameSelected ? this.renameText.length : this.renameCursorPos));
+      try {
+        this.hiddenInput.setSelectionRange(Math.min(sStart, sEnd), Math.max(sStart, sEnd));
+      } catch (e) {}
+    } else if (this.addFileModal) {
+      const isUrl = this.addFileModal.activeField === 'url';
+      const text = isUrl ? this.addFileModal.url : this.addFileModal.name;
+      const cursorPos = isUrl ? this.addFileModal.urlCursorPos : this.addFileModal.nameCursorPos;
+      const selStart = isUrl ? this.addFileModal.urlSelStart : this.addFileModal.nameSelStart;
+      const selEnd = isUrl ? this.addFileModal.urlSelEnd : this.addFileModal.nameSelEnd;
+
+      this.hiddenInput.value = text;
+      this.hiddenInput.maxLength = isUrl ? 255 : 30;
+      this.hiddenInput.focus({ preventScroll: true });
+      const sStart = selectStart !== undefined ? selectStart : (selStart !== null ? selStart : cursorPos);
+      const sEnd = selectEnd !== undefined ? selectEnd : (selEnd !== null ? selEnd : cursorPos);
+      try {
+        this.hiddenInput.setSelectionRange(Math.min(sStart, sEnd), Math.max(sStart, sEnd));
+      } catch (e) {}
+    } else {
+      this.hiddenInput.blur();
+      this.hiddenInput.value = '';
+    }
   }
 
   private async initTree() {
@@ -700,6 +857,7 @@ export class OS {
           this.submitAddFile();
         } else if (x >= cancelBtnRect.x && x <= cancelBtnRect.x + cancelBtnRect.w && y >= cancelBtnRect.y && y <= cancelBtnRect.y + cancelBtnRect.h) {
           this.addFileModal = null;
+          this.syncHiddenInput();
         } else if (x >= urlInputRect.x && x <= urlInputRect.x + urlInputRect.w && y >= urlInputRect.y && y <= urlInputRect.y + urlInputRect.h) {
           const now = performance.now();
           this.addFileModal.activeField = 'url';
@@ -733,6 +891,7 @@ export class OS {
           this.modalUrlLastClickTime = now;
           this.addFileModal.nameSelStart = null;
           this.addFileModal.nameSelEnd = null;
+          this.syncHiddenInput();
         } else if (x >= nameInputRect.x && x <= nameInputRect.x + nameInputRect.w && y >= nameInputRect.y && y <= nameInputRect.y + nameInputRect.h) {
           if (this.addFileModal.activeField === 'url') {
             this.resolveModalTitleNow();
@@ -760,6 +919,7 @@ export class OS {
           this.modalNameLastClickTime = now;
           this.addFileModal.urlSelStart = null;
           this.addFileModal.urlSelEnd = null;
+          this.syncHiddenInput();
         }
       }
       return;
@@ -845,6 +1005,7 @@ export class OS {
             }
             this.renameLastClickTime = now;
             insideRenameBox = true;
+            this.syncHiddenInput(this.renameSelStart ?? this.renameCursorPos, this.renameSelEnd ?? this.renameCursorPos);
           }
           break;
         }
@@ -1108,6 +1269,7 @@ export class OS {
       }
     }
     this.addFileModal = null;
+    this.syncHiddenInput();
   }
 
   private titleFetchTimer: any = null;
@@ -1121,6 +1283,9 @@ export class OS {
       if (title && this.addFileModal && !this.addFileModal.userEditedName && this.addFileModal.url.trim() === targetUrl) {
         this.addFileModal.name = title.substring(0, 30);
         this.addFileModal.nameCursorPos = this.addFileModal.name.length;
+        if (this.addFileModal.activeField === 'name') {
+          this.syncHiddenInput(this.addFileModal.name.length, this.addFileModal.name.length);
+        }
       }
     });
   }
@@ -1183,6 +1348,7 @@ export class OS {
           okBtnRect: { x: okX, y: my + 94, w: btnW, h: 20 },
           cancelBtnRect: { x: cancelX, y: my + 94, w: btnW, h: 20 }
         };
+        this.syncHiddenInput(0, 0);
         break;
       case 'Edit file':
         if (file && !file.isDirectory) {
@@ -1211,6 +1377,7 @@ export class OS {
             cancelBtnRect: { x: eCancelX, y: emy + 94, w: eBtnW, h: 20 },
             editingFileId: file.id
           };
+          this.syncHiddenInput(0, (file.url || '').length);
         }
         break;
       case 'Open':
@@ -1355,6 +1522,7 @@ export class OS {
     this.renameSelStart = 0;
     this.renameSelEnd = currentName.length;
     this.renameLastClickTime = performance.now();
+    this.syncHiddenInput(0, currentName.length);
   }
 
   private commitRename() {
@@ -1376,6 +1544,7 @@ export class OS {
     this.renameSelStart = null;
     this.renameSelEnd = null;
     this.isRenameSelected = false;
+    this.syncHiddenInput();
   }
 
   handlePaste(pastedText: string) {
@@ -1465,6 +1634,7 @@ export class OS {
     if (this.addFileModal) {
       if (key === 'Escape') {
         this.addFileModal = null;
+        this.syncHiddenInput();
         return;
       }
       if (key === 'Enter') {
@@ -1480,6 +1650,11 @@ export class OS {
         this.addFileModal.urlSelEnd = null;
         this.addFileModal.nameSelStart = null;
         this.addFileModal.nameSelEnd = null;
+        this.syncHiddenInput();
+        return;
+      }
+
+      if (document.activeElement === this.hiddenInput) {
         return;
       }
 
@@ -1710,9 +1885,18 @@ export class OS {
 
       if (key === 'Enter') {
         this.commitRename();
+        return;
       } else if (key === 'Escape') {
         this.renamingId = null;
-      } else if (key === 'ArrowLeft') {
+        this.syncHiddenInput();
+        return;
+      }
+
+      if (document.activeElement === this.hiddenInput) {
+        return;
+      }
+
+      if (key === 'ArrowLeft') {
         if (shift) {
           if (this.renameSelStart === null) this.renameSelStart = this.renameCursorPos;
           this.renameCursorPos = Math.max(0, this.renameCursorPos - 1);
@@ -2007,6 +2191,26 @@ export class OS {
         this.isRenameSelected = false;
       }
       this.textSelectTarget = null;
+
+      if (this.hiddenInput) {
+        if (this.renamingId) {
+          const sMin = this.renameSelStart !== null && this.renameSelEnd !== null ? Math.min(this.renameSelStart, this.renameSelEnd) : (this.isRenameSelected ? 0 : this.renameCursorPos);
+          const sMax = this.renameSelStart !== null && this.renameSelEnd !== null ? Math.max(this.renameSelStart, this.renameSelEnd) : (this.isRenameSelected ? this.renameText.length : this.renameCursorPos);
+          try {
+            this.hiddenInput.setSelectionRange(sMin, sMax);
+          } catch (e) {}
+        } else if (this.addFileModal) {
+          const isUrl = this.addFileModal.activeField === 'url';
+          const selStart = isUrl ? this.addFileModal.urlSelStart : this.addFileModal.nameSelStart;
+          const selEnd = isUrl ? this.addFileModal.urlSelEnd : this.addFileModal.nameSelEnd;
+          const cursorPos = isUrl ? this.addFileModal.urlCursorPos : this.addFileModal.nameCursorPos;
+          const sMin = selStart !== null && selEnd !== null ? Math.min(selStart, selEnd) : cursorPos;
+          const sMax = selStart !== null && selEnd !== null ? Math.max(selStart, selEnd) : cursorPos;
+          try {
+            this.hiddenInput.setSelectionRange(sMin, sMax);
+          } catch (e) {}
+        }
+      }
     }
   }
 
