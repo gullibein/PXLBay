@@ -59,7 +59,11 @@ let touchStartY = 0;
 let prevTouchY = 0;
 let touchMoved = false;
 let isLongPressed = false;
+let isDraggingItem = false;
+let touchedItemId: string | null = null;
 let longPressTimer: any = null;
+
+const DRAG_SAFETY_ZONE = 2; // 2 logical pixels threshold to differentiate tap from drag
 
 canvas.addEventListener('touchstart', (e: TouchEvent) => {
   if (e.touches.length !== 1) return;
@@ -71,13 +75,19 @@ canvas.addEventListener('touchstart', (e: TouchEvent) => {
   prevTouchY = y;
   touchMoved = false;
   isLongPressed = false;
+  isDraggingItem = false;
 
   mouseX = x;
   mouseY = y;
 
   if (longPressTimer) {
     clearTimeout(longPressTimer);
+    longPressTimer = null;
   }
+
+  // Check if an item (folder, file, trash can) was touched
+  const hitItem = os.getItemAt(x, y);
+  touchedItemId = hitItem ? hitItem.id : null;
 
   // Touching and holding equals right-clicking
   longPressTimer = setTimeout(() => {
@@ -93,17 +103,27 @@ canvas.addEventListener('touchmove', (e: TouchEvent) => {
   const { x, y } = getLogicalCoords(touch.clientX, touch.clientY);
   const dist = Math.hypot(x - touchStartX, y - touchStartY);
 
-  if (dist > 6) {
+  if (dist > DRAG_SAFETY_ZONE) {
     touchMoved = true;
     if (!isLongPressed && longPressTimer) {
       clearTimeout(longPressTimer);
       longPressTimer = null;
-      // Scroll desktop vertically if moving without holding
-      const dy = y - prevTouchY;
-      os.handleScroll(dy, x, y);
-    } else if (isLongPressed) {
+    }
+
+    if (isLongPressed) {
       // Moving finger after holding moves the file/folder
       os.handleTouchMoveDrag(x, y);
+    } else if (touchedItemId) {
+      // Dragging an item through the safety zone puts it in move mode!
+      if (!isDraggingItem) {
+        isDraggingItem = true;
+        os.startItemDrag(touchedItemId, touchStartX, touchStartY);
+      }
+      os.handleMouseMove(x, y);
+    } else {
+      // Scroll desktop vertically if moving on empty space
+      const dy = y - prevTouchY;
+      os.handleScroll(dy, x, y);
     }
   }
 
@@ -118,15 +138,20 @@ canvas.addEventListener('touchend', (_e: TouchEvent) => {
     longPressTimer = null;
   }
 
-  if (!isLongPressed && !touchMoved) {
-    // Single touch opens file/folder once or clicks UI
+  if (isDraggingItem) {
+    // Finish dragging the item to its new position
+    os.handleMouseUp();
+  } else if (!isLongPressed && !touchMoved) {
+    // Single touch tap within the safety zone clicks/opens the item or UI
     os.handleTouchTap(touchStartX, touchStartY);
   } else if (isLongPressed) {
     os.handleMouseUp();
   }
 
+  isDraggingItem = false;
   isLongPressed = false;
   touchMoved = false;
+  touchedItemId = null;
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', () => {
@@ -135,8 +160,10 @@ canvas.addEventListener('touchcancel', () => {
     longPressTimer = null;
   }
   os.handleMouseUp();
+  isDraggingItem = false;
   isLongPressed = false;
   touchMoved = false;
+  touchedItemId = null;
 });
 
 window.addEventListener('keydown', (e) => {

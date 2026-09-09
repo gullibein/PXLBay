@@ -2315,29 +2315,107 @@ export class OS {
     this.lastSelectedId = null;
   }
 
+  public getItemAt(x: number, y: number): VFSNode | null {
+    if (this.modal || this.addFileModal || this.contextMenu || this.renamingId) {
+      return null;
+    }
+
+    if (this.currentFolderId === 'bin') {
+      const { x: bx, y: by, w, h } = this.emptyBinBtnRect;
+      if (x >= bx && x <= bx + w && y >= by && y <= by + h) {
+        return null;
+      }
+    }
+
+    const cols = Math.floor(this.width / this.cellWidth);
+    if (cols <= 0) return null;
+    const gridOffsetX = Math.floor((this.width - (cols * this.cellWidth)) / 2);
+    const cy = y - this.scrollY;
+
+    for (let i = 0; i < this.currentFiles.length; i++) {
+      const file = this.currentFiles[i];
+      if (file.id === '..') continue;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      
+      let iconX, iconY;
+      if (file.x !== undefined && file.y !== undefined) {
+        iconX = file.x;
+        iconY = file.y;
+      } else {
+        iconX = gridOffsetX + col * this.cellWidth + (this.cellWidth - this.iconWidth) / 2;
+        iconY = this.marginY + row * this.cellHeight;
+      }
+
+      const onIcon = x >= iconX && x <= iconX + this.iconWidth && cy >= iconY && cy <= iconY + this.iconHeight;
+      const lines = this.formatNameLines(file.name);
+      const centerX = iconX + this.iconWidth / 2;
+      const nameTop = iconY + this.iconHeight + 4;
+      const nameBottom = nameTop + lines.length * 12 + 2;
+      
+      let maxTextWidth = 0;
+      lines.forEach(line => {
+        maxTextWidth = Math.max(maxTextWidth, this.font.measureText(line));
+      });
+      
+      const onName = x >= centerX - (maxTextWidth / 2 + 3) && 
+                     x <= centerX + (maxTextWidth / 2 + 3) && 
+                     cy >= nameTop && cy <= nameBottom;
+
+      if (onIcon || onName) {
+        return file;
+      }
+    }
+    return null;
+  }
+
+  public startItemDrag(id: string, x: number, y: number) {
+    const file = this.vfs.getNode(id);
+    if (!file || file.id === '..') return;
+
+    if (!this.selectedIds.has(file.id)) {
+      this.selectedIds.clear();
+      this.selectedIds.add(file.id);
+    }
+    this.lastSelectedId = file.id;
+
+    const cols = Math.floor(this.width / this.cellWidth);
+    const gridOffsetX = Math.floor((this.width - (cols * this.cellWidth)) / 2);
+    const idx = this.currentFiles.findIndex(f => f.id === file.id);
+    const col = idx >= 0 ? idx % cols : 0;
+    const row = idx >= 0 ? Math.floor(idx / cols) : 0;
+    const iconX = file.x !== undefined ? file.x : (gridOffsetX + col * this.cellWidth + (this.cellWidth - this.iconWidth) / 2);
+    const iconY = file.y !== undefined ? file.y : (this.marginY + row * this.cellHeight);
+
+    this.draggingId = file.id;
+    this.draggingSelected = true;
+    this.dragOffsetX = x - iconX;
+    this.dragOffsetY = (y - this.scrollY) - iconY;
+    this.dragInitialPositions.clear();
+    this.selectedIds.forEach(selectedId => {
+      const node = this.vfs.getNode(selectedId);
+      if (node) {
+        if (node.x !== undefined && node.y !== undefined) {
+          this.dragInitialPositions.set(selectedId, { x: node.x, y: node.y });
+        } else {
+          const sIdx = this.currentFiles.findIndex(f => f.id === selectedId);
+          const sCol = sIdx >= 0 ? sIdx % cols : 0;
+          const sRow = sIdx >= 0 ? Math.floor(sIdx / cols) : 0;
+          const sIconX = gridOffsetX + sCol * this.cellWidth + (this.cellWidth - this.iconWidth) / 2;
+          const sIconY = this.marginY + sRow * this.cellHeight;
+          this.dragInitialPositions.set(selectedId, { x: sIconX, y: sIconY });
+        }
+      }
+    });
+  }
+
   public handleTouchHold(x: number, y: number) {
     // Touching and holding equals right-clicking
     this.handleMouseDown(x, y, 2, false, false);
     
     // Prepare item dragging if holding on an item
     if (this.lastSelectedId) {
-      const file = this.vfs.getNode(this.lastSelectedId);
-      if (file && file.id !== '..') {
-        const cols = Math.floor(this.width / this.cellWidth);
-        const gridOffsetX = Math.floor((this.width - (cols * this.cellWidth)) / 2);
-        const idx = this.currentFiles.findIndex(f => f.id === file.id);
-        const col = idx >= 0 ? idx % cols : 0;
-        const row = idx >= 0 ? Math.floor(idx / cols) : 0;
-        const iconX = file.x !== undefined ? file.x : (gridOffsetX + col * this.cellWidth + (this.cellWidth - this.iconWidth) / 2);
-        const iconY = file.y !== undefined ? file.y : (this.marginY + row * this.cellHeight);
-        
-        this.draggingId = file.id;
-        this.draggingSelected = true;
-        this.dragOffsetX = x - iconX;
-        this.dragOffsetY = (y - this.scrollY) - iconY;
-        this.dragInitialPositions.clear();
-        this.dragInitialPositions.set(file.id, { x: iconX, y: iconY });
-      }
+      this.startItemDrag(this.lastSelectedId, x, y);
     }
   }
 
