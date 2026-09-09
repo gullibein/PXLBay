@@ -21742,6 +21742,7 @@ function fullOn() { return !!(typeof G !== 'undefined' && G && G.full); }
 function setFull(on) {
   if (typeof G === 'undefined' || !G) return 0;
   G.full = on ? 1 : 0;
+  if (typeof PANEL_PEEK !== 'undefined') { PANEL_PEEK.from = 0; PANEL_PEEK.to = 0; PANEL_PEEK.t = 0; }
   if (G.full) { PAN_KEYS = {}; panSet(1); }
   else {
     /* let go of it properly: the slide has to be allowed to close, which
@@ -21853,6 +21854,94 @@ function hitAt(mx, my) {
   return null;
 }
 
+/* ============================================== interactive panel drag & peek
+   Drag the right side of the left panel to the left to switch to full
+   screen mode.  When clicking on it, the right side doubles in thickness
+   (2 pixels wide).  In full screen mode, moving the mouse to the left edge
+   slides the panel out by 3 pixels so it can be grabbed and dragged back
+   to normal view.  Touch devices can swipe left on the panel edge to enter
+   full screen, and swipe right from the left screen edge to exit. */
+var PANEL_DRAG = { active: false, startX: 0, startY: 0, currentX: 0, mode: null, shift: 0, dragged: false, isTouch: false };
+var PANEL_PEEK = { from: 0, to: 0, t: 0, dur: 70 };
+
+function isPanelEdgeGrabbed() {
+  return !!PANEL_DRAG.active;
+}
+
+function updatePanelPeek() {
+  if (!fullOn() || PANEL_DRAG.active) {
+    if (PANEL_PEEK.to !== 0) {
+      PANEL_PEEK.from = 0; PANEL_PEEK.to = 0; PANEL_PEEK.t = 0;
+    }
+    return;
+  }
+  var wantPeek = usingMouse() && MOUSE.on && MOUSE.x >= 0 && MOUSE.x <= 3;
+  if (!wantPeek && PANEL_PEEK.to === 3 && usingMouse() && MOUSE.on && MOUSE.x >= 0 && MOUSE.x <= 4) {
+    wantPeek = true;
+  }
+  var target = wantPeek ? 3 : 0;
+  if (target !== PANEL_PEEK.to) {
+    var cur = currentPeekVis();
+    PANEL_PEEK.from = cur;
+    PANEL_PEEK.to = target;
+    PANEL_PEEK.t = Date.now();
+  }
+}
+
+function currentPeekVis() {
+  if (!PANEL_PEEK.t) return PANEL_PEEK.to;
+  var now = Date.now();
+  var f = (now - PANEL_PEEK.t) / PANEL_PEEK.dur;
+  if (f >= 1) { PANEL_PEEK.t = 0; return PANEL_PEEK.to; }
+  return PANEL_PEEK.from + (PANEL_PEEK.to - PANEL_PEEK.from) * f;
+}
+
+function peekVis() {
+  return Math.round(currentPeekVis());
+}
+
+function canGrabPanel() {
+  return typeof G !== 'undefined' && G && !dialogUp() &&
+    (G.mode === 'play' || G.mode === 'dash' || G.mode === 'blink' || G.mode === 'aim');
+}
+
+function startPanelDrag(mx, my, mode, isTouch) {
+  PANEL_DRAG.active = true;
+  PANEL_DRAG.mode = mode;
+  PANEL_DRAG.startX = mx;
+  PANEL_DRAG.startY = my;
+  PANEL_DRAG.currentX = mx;
+  PANEL_DRAG.dragged = false;
+  PANEL_DRAG.isTouch = !!isTouch;
+  if (mode === 'toFull') {
+    PANEL_DRAG.shift = panShift();
+  } else {
+    PANEL_DRAG.shift = PANEL_W - 3;
+  }
+}
+
+function endPanelDrag(mx) {
+  if (!PANEL_DRAG.active) return false;
+  var dx = mx - PANEL_DRAG.startX;
+  var mode = PANEL_DRAG.mode;
+  var threshold = PANEL_DRAG.isTouch ? 12 : 8;
+  if (mode === 'toFull') {
+    if (dx <= -threshold || PANEL_DRAG.shift >= 15) {
+      setFull(1);
+    } else {
+      setFull(0);
+    }
+  } else if (mode === 'toNormal') {
+    if (dx >= threshold || (PANEL_W - PANEL_DRAG.shift) >= 15) {
+      setFull(0);
+    } else {
+      setFull(1);
+    }
+  }
+  PANEL_DRAG.active = false;
+  return true;
+}
+
 /* client pixels to buffer pixels */
 function mousePos(e) {
   if (!cv || !cv.getBoundingClientRect) return { x: -99, y: -99 };
@@ -21868,6 +21957,19 @@ function onMouseMove(e) {
   MOUSE.x = m.x; MOUSE.y = m.y;
   MOUSE.on = m.x >= 0 && m.y >= 0 && m.x < SW && m.y < SH;
   if (MOUSE.on) LAST_INPUT = 'mouse';
+  if (PANEL_DRAG.active) {
+    PANEL_DRAG.currentX = m.x;
+    var pdx = m.x - PANEL_DRAG.startX;
+    var pdy = m.y - PANEL_DRAG.startY;
+    if (Math.abs(pdx) >= 2 || Math.abs(pdy) >= 2) PANEL_DRAG.dragged = true;
+    if (PANEL_DRAG.mode === 'toFull') {
+      PANEL_DRAG.shift = clamp(-pdx, 0, PANEL_W);
+    } else {
+      var visW = clamp(3 + pdx, 3, PANEL_W);
+      PANEL_DRAG.shift = PANEL_W - visW;
+    }
+    return;
+  }
   /* Held down and moved: you are pushing the map about, not choosing a
      square.  Once it counts as a drag the button no longer means a
      click, so the view can be shoved around without walking anywhere. */
@@ -21907,6 +22009,9 @@ function onMouseMove(e) {
   CAM_AT.x = ex; CAM_AT.y = ey;
 }
 function onMouseOut() {
+  if (PANEL_DRAG.active) {
+    endPanelDrag(PANEL_DRAG.currentX);
+  }
   MOUSE.on = 0; MOUSE.x = -99; MOUSE.y = -99; MOUSE.held = null;
 }
 
@@ -21949,7 +22054,23 @@ function onTouchStart(e) {
   var m = touchPos(t);
   MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
   TOUCH = { x: m.x, y: m.y, t: Date.now(), held: 0, id: t.identifier };
+  var panelGrab = false;
+  if (canGrabPanel()) {
+    if (!fullOn()) {
+      var edgeX = PANEL_W - 1 - panShift();
+      if (m.x >= edgeX - 6 && m.x <= edgeX + 6) {
+        startPanelDrag(m.x, m.y, 'toFull', true);
+        panelGrab = true;
+      }
+    } else {
+      if (m.x <= 16) {
+        startPanelDrag(m.x, m.y, 'toNormal', true);
+        panelGrab = true;
+      }
+    }
+  }
   MOUSE.held = { x: m.x, y: m.y, right: 0, drag: 0,
+                 panelGrab: panelGrab,
                  dx: (G.drag ? G.drag.dx : 0), dy: (G.drag ? G.drag.dy : 0),
                  ex: CAM_AT.x, ey: CAM_AT.y };
 }
@@ -21968,6 +22089,10 @@ function onTouchEnd(e) {
   MOUSE.held = null; TOUCH = null;
   if (!press) return;
   MOUSE.on = 0;                        /* a finger stops pointing at anything */
+  if (held && held.panelGrab) {
+    endPanelDrag(MOUSE.x >= 0 ? MOUSE.x : PANEL_DRAG.currentX);
+    return;
+  }
   if (!held || held.drag) {
     /* A shove across the pack is how a finger asks for the next
        container along - see invSwipe.  Anywhere else it was a shove of
@@ -21981,7 +22106,12 @@ function onTouchEnd(e) {
   clickAt(MOUSE.x, MOUSE.y, 0);
   MOUSE.on = 0;
 }
-function onTouchCancel() { TOUCH = null; MOUSE.held = null; MOUSE.on = 0; }
+function onTouchCancel() {
+  if (PANEL_DRAG.active) {
+    endPanelDrag(PANEL_DRAG.currentX);
+  }
+  TOUCH = null; MOUSE.held = null; MOUSE.on = 0;
+}
 
 /* ---------------------------------------------------- two fingers
    A trackpad reports two fingers sliding about as scrolling, and there
@@ -22177,7 +22307,23 @@ function onMouseDown(e) {
      the drag cannot wander out of the dialog it began in. */
   var inBox = (!e.button || e.button === 0) && dialogUp() ? boxAt(m.x, m.y) : null;
   selClear();
+  var panelGrab = false;
+  if ((!e.button || e.button === 0) && canGrabPanel()) {
+    if (!fullOn()) {
+      var edgeX = PANEL_W - 1 - panShift();
+      if (Math.abs(m.x - edgeX) <= 2 || (m.x >= PANEL_W - 3 && m.x <= PANEL_W + 2)) {
+        startPanelDrag(m.x, m.y, 'toFull', false);
+        panelGrab = true;
+      }
+    } else {
+      if (m.x <= 4) {
+        startPanelDrag(m.x, m.y, 'toNormal', false);
+        panelGrab = true;
+      }
+    }
+  }
   MOUSE.held = { x: m.x, y: m.y, right: e.button === 2, drag: 0, sel: inBox,
+                 panelGrab: panelGrab,
                  dx: (G.drag ? G.drag.dx : 0), dy: (G.drag ? G.drag.dy : 0),
                  /* to the fraction, so picking the map up again does not
                     snap it to the nearest square first */
@@ -22189,6 +22335,11 @@ function onMouseUp(e) {
   MOUSE.held = null;
   if (!held) return;
   if (e && e.preventDefault) e.preventDefault();
+  if (held.panelGrab) {
+    var m2 = mousePos(e);
+    endPanelDrag(m2.x >= 0 ? m2.x : PANEL_DRAG.currentX);
+    return;
+  }
   /* That was a shove, not a click.  The picture is left wherever the
      hand put it, up to half a square off the grid; the frame loop eases
      it onto the grid over the next few frames, so it settles rather than
@@ -26424,16 +26575,22 @@ function sprHurt(name, px, py, alpha, ent, shade) {
    The map is not moved to make room: it was always drawn full width and
    simply covered up, so nothing jumps when the panel goes. */
 function panShift() {
-  if (!G.pan) return 0;
+  if (PANEL_DRAG.active) return PANEL_DRAG.shift;
+  if (!G || !G.pan) return 0;
   var f = (Date.now() - G.pan.t) / PAN_SLIDE;
   if (f > 1) f = 1;
   if (f < 0) f = 0;
-  return Math.round(PANEL_W * (G.pan.open ? f : 1 - f));
+  var s = Math.round(PANEL_W * (G.pan.open ? f : 1 - f));
+  if (fullOn() && s >= PANEL_W) {
+    updatePanelPeek();
+    return PANEL_W - peekVis();
+  }
+  return s;
 }
 /* Open or close it, picking up from wherever the slide has got to, so
    letting go halfway through does not snap. */
 function panSet(open) {
-  var now = Date.now(), s = panShift() / PANEL_W;
+  var now = Date.now(), s = clamp(panShift() / PANEL_W, 0, 1);
   /* while F holds it off, nothing else may put it back - not letting go
      of SHIFT, not clicking away, not a key that is neither.  What the
      shifted arrows pushed the view to does go back, though: that was a
@@ -26444,12 +26601,11 @@ function panSet(open) {
   }
   if (!G.pan) {
     if (!open) return;
-    G.pan = { open: 1, t: now, dx: 0, dy: 0 };
+    G.pan = { open: 1, t: Math.round(now - PAN_SLIDE * s), dx: 0, dy: 0 };
     return;
   }
-  if (!!G.pan.open === !!open) { if (open) G.pan.t = Math.min(G.pan.t, now); return; }
   G.pan.open = open ? 1 : 0;
-  G.pan.t = now - PAN_SLIDE * (open ? s : 1 - s);
+  G.pan.t = Math.round(now - PAN_SLIDE * (open ? s : 1 - s));
 }
 /* once it is all the way back in, forget it ever happened */
 function panSettle() {
@@ -27559,9 +27715,11 @@ function fitBars() {
 function drawSidePanel() {
   var shift = panShift();
   if (shift <= 0) { drawPanel(); return; }
+  var edgeW = isPanelEdgeGrabbed() ? 2 : 1;
   if (shift < PANEL_W) {
     rect(-shift, 0, PANEL_W, SH, '#0b0d1c');
-    rect(PANEL_W - 1 - shift, 0, 1, SH, '#2b3352');
+    var edgeX = PANEL_W - 1 - shift;
+    rect(edgeW === 2 ? edgeX - 1 : edgeX, 0, edgeW, SH, '#2b3352');
   }
   /* and the compass, once there is room for it, to say that the arrows
      now move the view rather than you - which is true while SHIFT is
@@ -27576,7 +27734,8 @@ function drawSidePanel() {
 }
 function drawPanel() {
   rect(0, 0, PANEL_W, SH, '#0b0d1c');
-  rect(PANEL_W - 1, 0, 1, SH, '#2b3352');
+  var edgeW = isPanelEdgeGrabbed() ? 2 : 1;
+  rect(edgeW === 2 ? PANEL_W - 2 : PANEL_W - 1, 0, edgeW, SH, '#2b3352');
 
   var foes = battleFoes();
   var bTop = STAT_Y - 3 - foes.length * BATTLE_ROW;
@@ -27852,10 +28011,10 @@ function drawHud() {
      on.  Put it out again rather than make the switch part of the save:
      it is a fact about the screen, not about the rogue. */
   if (!panning()) panSet(1);
-  drawSidePanel();                  /* still slides, the first time */
   drawFullText();
   drawFullStats();
   drawFullFoes();
+  drawSidePanel();
 }
 /* Whatever is trying to kill you, under your own health and read the
    same way: the creature, then how much of it is left.  The panel gives
