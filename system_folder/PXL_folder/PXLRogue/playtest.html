@@ -1094,9 +1094,9 @@ var SHOCK_BLINK_MS = 70, SHOCK_ON = 3;
    With neither set the game still reads the table, because the bin's
    public read needs no key, and keeps new scores on the machine they
    were made on. */
-var HS_BIN = '6a8c44f9da38895dfe0a98c0';
-var HS_KEY = '$2a$10$u00Yu/5x8r.XL2wUZnDaBOVpouSIUvmPtJXgBM6jpMGqOtpMXXO9y';
-var HS_PROXY = '';
+var HS_BIN = '6a8f330fda38895dfe147360';
+var HS_KEY = '';
+var HS_PROXY = 'https://pxlrogue-scores.gundur.workers.dev';
 var HS_MAX = 10;              /* how many the table holds */
 var HS_NAME_MAX = 12;         /* and how long a name may be */
 var HS_KEY_HEADER = 'X-Access-Key';
@@ -9928,8 +9928,8 @@ function hsCan() { return typeof fetch === 'function' && !!HS_BIN; }
    lives here beside the fetching rather than with the screen: dying is
    part of the game and the rules half of it is loaded on its own. */
 function hsPrepare() {
-  G.hsBoard = null; G.hsRead = '';
-  hsFetch(function (list, where) { G.hsBoard = list; G.hsRead = where; });
+  G.hsBoard = null; G.hsRead = ''; G.hsErr = '';
+  hsFetch(function (list, where, err) { G.hsBoard = list; G.hsRead = where; G.hsErr = err || ''; });
 }
 function hsHeaders(extra) {
   var h = extra || {};
@@ -9937,29 +9937,26 @@ function hsHeaders(extra) {
   return h;
 }
 function hsFetch(cb) {
-  if (!hsCan()) { cb(hsLocal(), 'local'); return; }
+  if (!hsCan()) { cb(hsLocal(), 'local', ''); return; }
   var done = 0;
-  var finish = function (list, where) { if (done) return; done = 1; cb(list, where); };
-  /* Having tried and failed is a different thing from never having had
-     anywhere to look, and the screen says which.  Otherwise a bin that
-     cannot be reached looks exactly like a roll nobody has got onto
-     yet, which is the one thing you must not have to guess about. */
-  setTimeout(function () { finish(hsLocal(), 'offline'); }, HS_TIMEOUT_MS);
+  var finish = function (list, where, err) { if (done) return; done = 1; cb(list, where, err || ''); };
+  setTimeout(function () { finish(hsLocal(), 'offline', 'timeout'); }, HS_TIMEOUT_MS);
   try {
-    fetch('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest',
-      { headers: hsHeaders({ 'X-Bin-Meta': 'false' }) })
-      .then(function (r) { return r.ok ? r.json() : null; })
+    var url = HS_PROXY ? HS_PROXY : ('https://api.jsonbin.io/v3/b/' + HS_BIN + '/latest');
+    fetch(url, { headers: hsHeaders({ 'X-Bin-Meta': 'false' }) })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
       .then(function (j) {
-        /* with X-Bin-Meta off the bin answers with the record itself; a
-           proxy or an older bin answers with it wrapped in one */
         var list = j && j.record ? j.record : j;
-        if (!list) { finish(hsLocal(), 'offline'); return; }
+        if (!list) { finish(hsLocal(), 'offline', 'invalid roll data'); return; }
         var t = hsClean(list);
         hsLocalPut(t);
-        finish(t, 'bin');
+        finish(t, 'bin', '');
       })
-      .catch(function () { finish(hsLocal(), 'offline'); });
-  } catch (e) { finish(hsLocal(), 'offline'); }
+      .catch(function (e) { finish(hsLocal(), 'offline', (e && e.message) || 'network error'); });
+  } catch (e) { finish(hsLocal(), 'offline', (e && e.message) || 'network error'); }
 }
 /* Send one run.  Through the proxy if there is one, so the key stays on
    the far side of it; straight at the bin if there is a key here; and
@@ -9968,26 +9965,40 @@ function hsFetch(cb) {
 function hsSubmit(list, entry, cb) {
   var t = hsWith(list, entry);
   hsLocalPut(t);
-  /* Nothing to send it with is a different thing from having tried and
-     failed, and the screen says which: one is how the game is set up and
-     the other is somebody's website being down. */
-  if (!hsCan() || (!HS_PROXY && !HS_KEY)) { cb(t, 'local'); return; }
+  if (!hsCan() || (!HS_PROXY && !HS_KEY)) { cb(t, 'local', ''); return; }
   var done = 0;
-  var finish = function (where) { if (done) return; done = 1; cb(t, where); };
-  setTimeout(function () { finish('offline'); }, HS_TIMEOUT_MS);
+  var finish = function (where, err) { if (done) return; done = 1; cb(t, where, err || ''); };
+  setTimeout(function () { finish('offline', 'timeout'); }, HS_TIMEOUT_MS);
   try {
     var url = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN);
-    /* the proxy is given the one run and works the table out itself,
-       since it is the only one of the two that can be trusted to */
-    var body = HS_PROXY ? { name: hsName(entry.name) || '-', xp: entry.xp | 0,
-                            level: entry.level | 0 } : t;
+    var body = HS_PROXY ? {
+      name: hsName(entry.name) || '-',
+      xp: entry.xp | 0,
+      level: entry.level | 0,
+      depth: entry.depth !== undefined ? (entry.depth | 0) : 1,
+      turns: entry.turns !== undefined ? (entry.turns | 0) : 0
+    } : t;
     fetch(url, {
       method: HS_PROXY ? 'POST' : 'PUT',
       headers: hsHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body)
-    }).then(function (r) { finish(r && r.ok ? 'bin' : 'offline'); })
-      .catch(function () { finish('offline'); });
-  } catch (e) { finish('offline'); }
+    }).then(function (r) {
+      if (r && r.ok) {
+        finish('bin', '');
+      } else {
+        var statusMsg = 'HTTP ' + (r ? r.status : 'error');
+        if (r) {
+          r.json().then(function (data) {
+            finish('offline', (data && (data.error || data.message)) || statusMsg);
+          }).catch(function () {
+            finish('offline', statusMsg);
+          });
+        } else {
+          finish('offline', statusMsg);
+        }
+      }
+    }).catch(function (e) { finish('offline', (e && e.message) || 'network error'); });
+  } catch (e) { finish('offline', (e && e.message) || 'network error'); }
 }
 
 /* -------------------------------------------------------------- shake
@@ -17404,6 +17415,23 @@ function slideEnd(nx, ny, dx, dy) {
    walked, or carried across the ice.  What is on the square gets you
    whichever it was. */
 function landPlayer(nx, ny, how) {
+  var ox = P.x, oy = P.y;
+  var dx = nx - ox, dy = ny - oy;
+  if ((dx || dy) && Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && how !== 'warp' && how !== 'fall') {
+    var curFrame = P.stepFrame || 0;
+    var nextFrame = 1 - curFrame;
+    P.stepAnim = {
+      fx: ox, fy: oy,
+      tx: nx, ty: ny,
+      t: nowMs(),
+      dur: (typeof WALK_MS !== 'undefined' ? WALK_MS : 80),
+      fromFrame: curFrame,
+      toFrame: nextFrame
+    };
+    P.stepFrame = nextFrame;
+  } else {
+    P.stepAnim = null;
+  }
   P.x = nx; P.y = ny;
   P.walkT = nowMs();
   computeVis();
@@ -21830,7 +21858,13 @@ var PAN_HOLD = 0;
    the arrow drawn off the sheet, and the highlights that follow it.  A
    finger has nothing to hover with, and a drawn arrow sitting under it
    would be a lie. */
-function usingMouse() { return LAST_INPUT === 'mouse'; }
+var IS_TOUCH = (typeof window !== 'undefined' && ('ontouchstart' in window)) ||
+               (typeof navigator !== 'undefined' && (navigator.maxTouchPoints > 0 || (navigator.msMaxTouchPoints && navigator.msMaxTouchPoints > 0)));
+function isTouchDevice() {
+  return !!(IS_TOUCH || (typeof window !== 'undefined' && ('ontouchstart' in window)) ||
+         (typeof navigator !== 'undefined' && (navigator.maxTouchPoints > 0 || (navigator.msMaxTouchPoints && navigator.msMaxTouchPoints > 0))));
+}
+function usingMouse() { return !isTouchDevice() && LAST_INPUT === 'mouse'; }
 /* Something you point at squares with, finger or mouse alike.  Anything
    that asks "which square is under it" or "is there a pack to tap on"
    wants this one, or a touch device gets no pack icon, cannot click a
@@ -21891,8 +21925,8 @@ function updatePanelPeek() {
     }
     return;
   }
-  var wantPeek = usingMouse() && MOUSE.on && MOUSE.x >= 0 && MOUSE.x <= 3;
-  if (!wantPeek && PANEL_PEEK.to === 3 && usingMouse() && MOUSE.on && MOUSE.x >= 0 && MOUSE.x <= 4) {
+  var wantPeek = !isTouchDevice() && usingMouse() && MOUSE.on && MOUSE.x >= 0 && MOUSE.x <= 3;
+  if (!wantPeek && PANEL_PEEK.to === 3 && !isTouchDevice() && usingMouse() && MOUSE.on && MOUSE.x >= 0 && MOUSE.x <= 4) {
     wantPeek = true;
   }
   var target = wantPeek ? 3 : 0;
@@ -21972,7 +22006,7 @@ function onMouseMove(e) {
   var m = mousePos(e);
   MOUSE.x = m.x; MOUSE.y = m.y;
   MOUSE.on = m.x >= 0 && m.y >= 0 && m.x < SW && m.y < SH;
-  if (MOUSE.on) LAST_INPUT = 'mouse';
+  if (MOUSE.on && !isTouchDevice()) LAST_INPUT = 'mouse';
   if (PANEL_DRAG.active) {
     PANEL_DRAG.currentX = m.x;
     var pdx = m.x - PANEL_DRAG.startX;
@@ -22023,6 +22057,9 @@ function onMouseMove(e) {
   G.drag.dx = Math.round(ex);
   G.drag.dy = Math.round(ey);
   CAM_AT.x = ex; CAM_AT.y = ey;
+  WALK_STILL_X = 0; WALK_STILL_Y = 0;
+  if (WALK_AT && typeof P !== 'undefined' && P) { WALK_AT.x = P.x; WALK_AT.y = P.y; }
+  if (typeof P !== 'undefined' && P) camSaw();
 }
 function onMouseOut() {
   if (PANEL_DRAG.active) {
@@ -22066,6 +22103,7 @@ function onTouchStart(e) {
   goFullscreen();
   var t = firstTouch(e);
   if (!t) return;
+  IS_TOUCH = true;
   LAST_INPUT = 'touch';
   var m = touchPos(t);
   MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
@@ -22095,6 +22133,7 @@ function onTouchMove(e) {
   if (!ready || !TOUCH) return;
   var t = firstTouch(e);
   if (!t) return;
+  IS_TOUCH = true;
   LAST_INPUT = 'touch';
   onMouseMove({ clientX: t.clientX, clientY: t.clientY });
 }
@@ -22173,6 +22212,9 @@ function onWheel(e) {
   G.drag.dx = Math.round(ex);
   G.drag.dy = Math.round(ey);
   CAM_AT.x = ex; CAM_AT.y = ey;
+  WALK_STILL_X = 0; WALK_STILL_Y = 0;
+  if (WALK_AT && typeof P !== 'undefined' && P) { WALK_AT.x = P.x; WALK_AT.y = P.y; }
+  if (typeof P !== 'undefined' && P) camSaw();
 }
 function wheeling() { return Date.now() - WHEEL_T < WHEEL_HOLD_MS; }
 /* A press held still on one square is the right button.  It is answered
@@ -22195,7 +22237,7 @@ function touchHold() {
    about the size of a real pointer against these tiles, and the rest of
    the cell is there for the pack that rides beside it. */
 function drawPointer() {
-  if (!MOUSE.on || !usingMouse()) return;
+  if (isTouchDevice() || !MOUSE.on || !usingMouse()) return;
   var name = pointerSprite();
   sprClip(name, MOUSE.x, MOUSE.y, name === 'mouse' ? MOUSE_PX : TS, MOUSE_PX);
 }
@@ -23150,7 +23192,10 @@ function camTarget() {
 var WALK_AT = null;
 /* The man has finished crossing his square.  If he is standing in the
    middle of the screen the view takes the glide back from here. */
-function walkArrived() { if (!G.drag) WALK_ON_MAN = 0; }
+function walkArrived() {
+  if (!G.drag || !G.drag.dx) WALK_STILL_X = 0;
+  if (!G.drag || !G.drag.dy) WALK_STILL_Y = 0;
+}
 function camWalkTo() {
   if (typeof P === 'undefined' || !P) return;
   if (!WALK_AT) { WALK_AT = { x: P.x, y: P.y }; return; }
@@ -23160,14 +23205,28 @@ function camWalkTo() {
       (typeof battleNear === 'function' && battleNear())) {
     WALK_AT.x = P.x; WALK_AT.y = P.y; walkArrived(); return;
   }
-  if (Math.abs(dx) < WALK_LAG_SNAP && Math.abs(dy) < WALK_LAG_SNAP) {
-    WALK_AT.x = P.x; WALK_AT.y = P.y; walkArrived(); return;
+  if (WALK_STILL_X) {
+    WALK_AT.x = P.x;
+  } else {
+    if (Math.abs(dx) < WALK_LAG_SNAP) {
+      WALK_AT.x = P.x;
+      if (!G.drag || !G.drag.dx) WALK_STILL_X = 0;
+    } else {
+      WALK_AT.x += dx * WALK_CHASE;
+      WALK_AT.x = clamp(WALK_AT.x, P.x - WALK_LAG_MAX, P.x + WALK_LAG_MAX);
+    }
   }
-  WALK_AT.x += dx * WALK_CHASE;
-  WALK_AT.y += dy * WALK_CHASE;
-  /* never so far behind that you are looking at the wrong room */
-  WALK_AT.x = clamp(WALK_AT.x, P.x - WALK_LAG_MAX, P.x + WALK_LAG_MAX);
-  WALK_AT.y = clamp(WALK_AT.y, P.y - WALK_LAG_MAX, P.y + WALK_LAG_MAX);
+  if (WALK_STILL_Y) {
+    WALK_AT.y = P.y;
+  } else {
+    if (Math.abs(dy) < WALK_LAG_SNAP) {
+      WALK_AT.y = P.y;
+      if (!G.drag || !G.drag.dy) WALK_STILL_Y = 0;
+    } else {
+      WALK_AT.y += dy * WALK_CHASE;
+      WALK_AT.y = clamp(WALK_AT.y, P.y - WALK_LAG_MAX, P.y + WALK_LAG_MAX);
+    }
+  }
 }
 /* how far behind you the view is, in tiles */
 function walkLag() {
@@ -23175,18 +23234,12 @@ function walkLag() {
   return { x: P.x - WALK_AT.x, y: P.y - WALK_AT.y };
 }
 /* Whose glide it is.
-
-   Centred, the view follows you: the world slides past and you stay in
-   the middle of the screen, so the lag belongs to the map.
-
-   Off centre and walking towards the middle, the map is held exactly
-   where the hand left it - camFollow cancels the step against the drag -
-   and the lag must not be put on the map as well, or the picture lurches
-   a tile and crawls back on every single step.  That crawl was the jerk.
-   Off centre, the glide belongs to the man: he walks across a map that
-   does not move at all, which is what was asked for. */
+   Per-axis tracking: when off-centre and walking towards the middle on an axis,
+   the map is held still on that axis (WALK_STILL_X / WALK_STILL_Y).
+   When centered or moving away from center on that axis, the camera follows. */
+var WALK_STILL_X = 0, WALK_STILL_Y = 0;
 var WALK_ON_MAN = 0;
-function manLag() { return WALK_ON_MAN ? walkLag() : { x: 0, y: 0 }; }
+function manLag() { return { x: WALK_STILL_X ? walkLag().x : 0, y: WALK_STILL_Y ? walkLag().y : 0 }; }
 /* ------------------------------------------------------------ the bound
    How far through his run he is, and how far behind the square the rules
    have already put him on he should be drawn.  Nothing while he is not
@@ -23216,7 +23269,12 @@ function dashPhase() {
     flash: 1 - Math.min(1, age / DASH_FLASH_MS)
   };
 }
-function mapLag() { return WALK_ON_MAN ? { x: 0, y: 0 } : walkLag(); }
+function mapLag() {
+  return {
+    x: WALK_STILL_X ? 0 : walkLag().x,
+    y: WALK_STILL_Y ? 0 : walkLag().y
+  };
+}
 /* How far, in pixels, to shift the whole map from where its tiles say it
    is, so that it appears at CAM_AT rather than at the whole-tile offset
    it is drawn on.
@@ -23327,36 +23385,55 @@ function camSaw() { CAM_SEEN = { x: P.x, y: P.y }; }
 function camFollow() {
   var was = CAM_SEEN;
   camSaw();
-  if (!G.drag) return;
-  if (!playerShown(G.drag.dx, G.drag.dy)) { G.drag = null; return; }
-  if (!was) return;
-  /* only a step counts: a fall or a teleport is not walking across the
-     screen, and the view simply goes with you */
+  if (!was) {
+    WALK_STILL_X = 0;
+    WALK_STILL_Y = 0;
+    return;
+  }
   var sdx = P.x - was.x, sdy = P.y - was.y;
-  var hx = 0, hy = 0;
-  if (Math.abs(sdx) === 1 && sdx === Math.sign(G.drag.dx)) hx = sdx;
-  if (Math.abs(sdy) === 1 && sdy === Math.sign(G.drag.dy)) hy = sdy;
-  /* A step that was not absorbed is a step the map goes with, so the
-     glide goes back onto the map. */
-  if (!hx && !hy) { if (sdx || sdy) WALK_ON_MAN = 0; return; }
-  WALK_ON_MAN = 1;
-  /* Hold the map exactly where it is.  The tile offset shrinks by the
-     step, which leaves every square drawn on the pixel it was already
-     on - and CAM_AT has to shrink with it, or the drawing is suddenly a
-     whole tile from its target and slides back over the next few frames.
-     That slide was the jerk: the offset was right and the picture was
-     lurching a square and crawling back every time you stepped towards
-     the middle.
+  if (!sdx && !sdy) return;
 
-     What the world is drawn at comes to (P + CAM_AT) tiles; holding both
-     ends of that sum steady is what "the map does not move" means. */
-  G.drag.dx -= hx; G.drag.dy -= hy;
-  CAM_AT.x -= hx; CAM_AT.y -= hy;
-  if (!G.drag.dx && !G.drag.dy) G.drag = null;
-  /* Arriving in the middle does not hand the glide back at once: the man
-     is still part way across the square he is arriving on, and moving
-     the map under him then is the very lurch this is here to stop.  It
-     goes back when he has actually got there - see camWalkTo. */
+  if (!G.drag) {
+    WALK_STILL_X = 0;
+    WALK_STILL_Y = 0;
+    return;
+  }
+  if (!playerShown(G.drag.dx, G.drag.dy)) {
+    G.drag = null;
+    WALK_STILL_X = 0;
+    WALK_STILL_Y = 0;
+    return;
+  }
+
+  var hx = 0, hy = 0;
+  if (G.drag.dx && Math.abs(sdx) === 1 && sdx === Math.sign(G.drag.dx)) hx = sdx;
+  if (G.drag.dy && Math.abs(sdy) === 1 && sdy === Math.sign(G.drag.dy)) hy = sdy;
+
+  if (hx) {
+    WALK_STILL_X = 1;
+    if (WALK_AT) WALK_AT.x = P.x;
+    G.drag.dx -= hx;
+    CAM_AT.x -= hx;
+  } else if (sdx) {
+    WALK_STILL_X = 0;
+  }
+
+  if (hy) {
+    WALK_STILL_Y = 1;
+    if (WALK_AT) WALK_AT.y = P.y;
+    G.drag.dy -= hy;
+    CAM_AT.y -= hy;
+  } else if (sdy) {
+    WALK_STILL_Y = 0;
+  }
+
+  if (!G.drag.dx && !G.drag.dy) {
+    G.drag = null;
+    CAM_AT.x = 0;
+    CAM_AT.y = 0;
+    WALK_STILL_X = 0;
+    WALK_STILL_Y = 0;
+  }
 }
 
 /* ------------------------------------------------------- walking there
@@ -24144,19 +24221,30 @@ function drawSlots() {
    rather than sitting blank: waiting, asking for a name, showing.  It is
    never a wall: ENTER goes on from any of them. */
 function hsEntryNow() {
-  return { name: '', xp: P.exp | 0, level: P.lv | 0 };
+  return {
+    name: '',
+    xp: P.exp | 0,
+    level: P.lv | 0,
+    depth: (G && G.depth !== undefined) ? (G.depth | 0) : 1,
+    turns: (G && G.turn !== undefined) ? (G.turn | 0) : 0
+  };
 }
 function openScores(from) {
   var e = hsEntryNow();
   G.hs = {
     list: G.hsBoard || null, entry: e, from: from || 'end',
-    typing: 0, sent: 0, where: '', place: 0
+    typing: 0, sent: 0, where: '', place: 0,
+    read: G.hsRead || '', err: G.hsErr || ''
   };
   G.mode = 'score';
   if (G.hs.list) hsReady(G.hs.list);
-  else hsFetch(function (list, where) {
-    G.hsBoard = list; G.hsRead = where;
-    if (G.hs && !G.hs.list) { G.hs.list = list; hsReady(list); }
+  else hsFetch(function (list, where, err) {
+    G.hsBoard = list; G.hsRead = where; G.hsErr = err || '';
+    if (G.hs) {
+      G.hs.read = where;
+      G.hs.err = err || '';
+      if (!G.hs.list) { G.hs.list = list; hsReady(list); }
+    }
   });
 }
 /* the table has arrived: either it wants a name or it does not */
@@ -24178,10 +24266,10 @@ function hsSend() {
   var entry = G.hs.entry;
   if (!hsName(entry.name)) entry.name = 'rogue';
   G.hs.place = hsPlace(G.hs.list, entry);
-  G.hs.sent = 1; G.hs.typing = 0; G.hs.where = 'sending';
-  hsSubmit(G.hs.list, entry, function (t, where) {
+  G.hs.sent = 1; G.hs.typing = 0; G.hs.where = 'sending'; G.hs.err = '';
+  hsSubmit(G.hs.list, entry, function (t, where, err) {
     if (!G.hs) return;
-    G.hs.list = t; G.hs.where = where;
+    G.hs.list = t; G.hs.where = where; G.hs.err = err || '';
     G.hsBoard = t;
   });
 }
@@ -24223,34 +24311,37 @@ function drawScores() {
     hsWith(G.hs.list, G.hs.entry).length :
     ((G.hs && G.hs.list) ? G.hs.list.length : 0);
   rows = Math.max(3, Math.min(HS_MAX, rows));
-  /* The lines under the table: one to leave by, and a second saying what
-     became of the run while it is being named or has just been sent. */
-  var bottomLines = (G.hs && (G.hs.sent || G.hs.typing)) ? 2 : 1;
-  var h = 12 + 10 + rows * 8 + (bottomLines * 8) + 8;
-  var x = ((SW - w) >> 1), y = Math.max(1, ((SH - h) >> 1));
+  var isOffline = (G.hs && G.hs.read === 'offline') || G.hsRead === 'offline';
+  var hasNotice = (G.hs && (G.hs.typing || G.hs.sent)) || isOffline;
+  var h = 12 + rows * 8 + (hasNotice ? 22 : 14);
+  var x = ((SW - w) >> 1), y = ((SH - h) >> 1);
   rect(x, y, w, h, '#0b0d1c');
-  frame(x, y, w, h, '#1f8fd8');
-  textIn('THE TEN BEST', x, w, y + 3, 'y');
-  /* a rule under the heading, so the title reads as a title and not as
-     the first row of the table */
-  rect(x + 4, y + 12, w - 8, 1, '#1f8fd8');
+  frame(x, y, w, h, isOffline ? '#d82b2b' : '#636d85');
+  textIn(isOffline ? 'THE TEN BEST (OFFLINE)' : 'THE TEN BEST', x, w, y + 3, isOffline ? 'R' : 'y');
   hit(x, y, w, h, 'score', 0);
   var list = (G.hs && G.hs.list) || null;
+
   /* Three things can be true here and the screen has to say which:
      the roll has not come back yet, it came back with nobody in it, or
      it came back.  A box with a heading and nothing under it reads as
      something broken. */
   if (!list || (!list.length && !G.hs.typing && !G.hs.sent)) {
-    textIn(!list ? 'reading the roll...' :
-      G.hsRead === 'offline' ? 'the roll could not be reached' :
-      'nobody has come back up yet', x, w, y + 22,
-      G.hsRead === 'offline' ? 'R' : 'c');
+    if (!list) {
+      textIn('reading the roll...', x, w, y + 24, '6');
+    } else if (isOffline) {
+      textIn('the roll could not be reached', x, w, y + 20, 'R');
+      var errDetail = (G.hs && G.hs.err) || G.hsErr || 'network error';
+      textIn('(' + errDetail.slice(0, 22) + ')', x, w, y + 29, 'O');
+    } else {
+      textIn('nobody has come back up yet', x, w, y + 24, '6');
+    }
     if (list && !HS_KEY && !HS_PROXY)
-      textIn('(no roll set up: this machine only)', x, w, y + 32, '4');
+      textIn('(no roll set up: this machine only)', x, w, y + 38, '4');
     textIn(G.hs && (G.hs.from === 'title' || G.hs.from === 'pause') ? 'ENTER to go back' : 'ENTER to rise again',
-      x, w, y + h - 8, ((Date.now() / 500) | 0) % 2 ? 'y' : 'c');
+      x, w, y + h - 9, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
     return;
   }
+
   /* the run being typed in is shown in its place in the table while it
      is being typed, so you can see where you came */
   var shown = list, mine = -1;
@@ -24268,59 +24359,47 @@ function drawScores() {
       for (i = 0; i < shown.length; i++)
         if (mine < 0 && shown[i].xp === (G.hs.entry.xp | 0)) mine = i;
   }
-  /* which column is which, in the colour that column is written in */
-  var hy = y + 17;
-  text('NAME', x + 18, hy, 'c');
-  var xpHdr = 'XP';
-  text(xpHdr, x + w - 12 - textW(xpHdr) - 26, hy, 'y');
-  var lvHdr = 'LV';
-  text(lvHdr, x + w - 8 - textW(lvHdr), hy, 'P');
-
-  var ty = hy + 8;
+  var ty = y + 12;
   for (i = 0; i < shown.length; i++) {
     var e = shown[i], row = i === mine;
-    if (row) rect(x + 2, ty - 1, w - 4, 8, '#1b2a4a');
+    if (row) rect(x + 2, ty - 1, w - 4, 8, '#2b3352');
     var nm = e.name;
     if (row && G.hs.typing) {
       nm = G.hs.entry.name + (((Date.now() / 400) | 0) % 2 ? '_' : '');
       if (!G.hs.entry.name && ((Date.now() / 400) | 0) % 2 === 0) nm = '';
     }
-    /* the top of the roll picked out in gold, the rest of the numbers
-       in the same blue the frame is drawn in */
-    text((i + 1) + '.', x + 5, ty, row ? 'w' : (i === 0 ? 'y' : 'c'));
-    text(nm, x + 18, ty, row ? 'w' : '6');
+    text((i + 1) + '.', x + 5, ty, row ? 'w' : '4');
+    text(nm, x + 18, ty, row ? 'w' : '3');
     var xp = String(e.xp);
     text(xp, x + w - 12 - textW(xp) - 26, ty, row ? 'w' : 'y');
-    text('lv ' + e.level, x + w - 8 - textW('lv ' + e.level), ty, row ? 'w' : 'P');
+    text('lv ' + e.level, x + w - 8 - textW('lv ' + e.level), ty, row ? 'w' : 'c');
     ty += 8;
   }
   if (G.hs.typing) {
-    textIn('type your name, ENTER to set it', x, w, ty + 3, 'y');
+    textIn('type your name, ENTER to set it', x, w, ty + 3, 'c');
     return;
   }
   if (G.hs.sent) {
-    /* Sent, being sent, could not be sent, or never had anywhere to send
-       it: four different things and four different lines.  The roll is
-       kept in one place for everybody, so "kept on this machine" is the
-       game admitting it did not manage that, not the way it works. */
-    textIn(G.hs.where === 'bin' ? 'sent to the roll' :
-      G.hs.where === 'sending' ? 'sending...' :
-      G.hs.where === 'offline' ? 'the roll could not be reached' :
-      'no roll set up: kept on this machine', x, w, ty + 3,
-      G.hs.where === 'bin' ? 'G' : G.hs.where === 'sending' ? 'y' : 'R');
+    if (G.hs.where === 'bin') {
+      textIn('sent to the roll', x, w, ty + 3, 'G');
+    } else if (G.hs.where === 'sending') {
+      textIn('sending...', x, w, ty + 3, '6');
+    } else if (G.hs.where === 'offline') {
+      var syncErr = G.hs.err ? ('sync failed: ' + G.hs.err) : 'sync failed (offline)';
+      textIn(syncErr.slice(0, 24), x, w, ty + 3, 'R');
+    } else {
+      textIn('no roll set up: kept on this machine', x, w, ty + 3, 'O');
+    }
+    ty += 8;
+  } else if (isOffline) {
+    var readErr = (G.hs && G.hs.err) || G.hsErr || 'offline: showing local roll';
+    textIn(('offline: ' + readErr).slice(0, 24), x, w, ty + 3, 'R');
     ty += 8;
   }
   textIn(G.hs.from === 'title' || G.hs.from === 'pause' ? 'ENTER to go back' : 'ENTER to rise again',
-    x, w, ty + 3, ((Date.now() / 500) | 0) % 2 ? 'y' : 'c');
+    x, w, ty + 3, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
 }
 
-/* ------------------------------------------------------------- hints
-   One at a time, in no order you can predict, and never the same one
-   twice in a row. */
-/* Hints are read from the pause menu mid-run and from the title screen
-   before one, and ESC has to go back to whichever it was.  Opened from
-   the title it used to return to a pause menu that did not exist, and
-   the next key pressed fell over. */
 function openHints(from) {
   G.hint = { i: rnd(HINTS.length), from: from || 'pause' };
   G.mode = 'hint';
@@ -25896,10 +25975,13 @@ function monPixel(m, camx, camy) {
       return [VIEW_PX + (a[0] - camx) * TS, VIEW_PY + (a[1] - camy) * TS];
     }
     if (now < t0 + MOVE_ANIM_MS) {
-      var f = (now - t0) / MOVE_ANIM_MS;
       var fx = VIEW_PX + (a[0] - camx) * TS, fy = VIEW_PY + (a[1] - camy) * TS;
       var tx2 = VIEW_PX + (a[2] - camx) * TS, ty2 = VIEW_PY + (a[3] - camy) * TS;
-      return [Math.round(fx + (tx2 - fx) * f), Math.round(fy + (ty2 - fy) * f)];
+      if (now < t0 + MOVE_ANIM_MS / 2) {
+        return [Math.round(fx + (tx2 - fx) * 0.5), Math.round(fy + (ty2 - fy) * 0.5)];
+      } else {
+        return [tx2, ty2];
+      }
     }
     /* it has arrived; if there is another step, hold here until its turn */
     if (i + 1 < m.anim.length && now < m.anim[i + 1][4])
@@ -25911,6 +25993,13 @@ function monPixel(m, camx, camy) {
 
 function tileCX(tx, camx) { return VIEW_PX + (tx - camx) * TS + 4; }
 function tileCY(ty, camy) { return VIEW_PY + (ty - camy) * TS + 4; }
+
+function drawBolt(name, cell, camx, camy) {
+  var bx = cell[0] - camx, by = cell[1] - camy;
+  if (bx < -0.5 || by < -0.5 || bx >= VIEW_W || by >= VIEW_H) return;
+  spr(name, Math.round(VIEW_PX + bx * TS), Math.round(VIEW_PY + by * TS), 1);
+}
+
 /* Blink goes through stone.  Whether there is floor on the other side is
    your problem: all the spell checks is that the distance is within
    reach.  Landing in rock is fatal, and it is meant to be. */
@@ -25924,11 +26013,6 @@ function blinkLanding(x, y) {
   return walkable(x, y) ? 'safe' : 'solid';
 }
 
-function drawBolt(name, cell, camx, camy) {
-  var bx = cell[0] - camx, by = cell[1] - camy;
-  if (bx < 0 || by < 0 || bx >= VIEW_W || by >= VIEW_H) return;
-  spr(name, VIEW_PX + bx * TS, VIEW_PY + by * TS, 1);
-}
 
 /* ---------------------------------------------------- a bolt of lightning
    A row of little sprites is a row of little sprites; lightning is one
@@ -27503,21 +27587,44 @@ function drawMapAt(overX, overY) {
       } else if (G.bolt.mode === 'beam') {
         for (i = 0; i < G.bolt.path.length; i++) drawBolt(name, G.bolt.path[i], camx, camy);
       } else {
-        var step = Math.min(G.bolt.path.length - 1, (age / 40) | 0);
-        drawBolt(name, G.bolt.path[step], camx, camy);
+        var pathLen = G.bolt.path.length;
+        var totalHalfSteps = Math.max(1, (pathLen - 1) * 2);
+        var halfStep = Math.min(totalHalfSteps, (age / 25) | 0);
+        var cellIdx = halfStep >> 1;
+        var isHalf = (halfStep & 1) === 1;
+        if (isHalf && cellIdx + 1 < pathLen) {
+          var c1 = G.bolt.path[cellIdx], c2 = G.bolt.path[cellIdx + 1];
+          drawBolt(name, [(c1[0] + c2[0]) / 2, (c1[1] + c2[1]) / 2], camx, camy);
+        } else {
+          drawBolt(name, G.bolt.path[Math.min(pathLen - 1, cellIdx)], camx, camy);
+        }
       }
     }
   }
   /* The walk cycle belongs to walking.  Standing still, you stand still. */
-  var stepping = P.walkT && nowMs() - P.walkT < WALK_ANIM_MS;
-  var frame = stepping ? (((nowMs() - P.walkT) / 90 | 0) % 2) : 0;
-  /* Off centre the map is held still and the glide is his, so he is
-     drawn where the walk has got to rather than on the square the rules
-     have already put him on. */
-  var mlag = manLag();
+  var playerSprite = (P.stepFrame ? 'hero2' : 'hero');
+  var hpx = VIEW_PX + (P.x - camx) * TS;
+  var hpy = VIEW_PY + (P.y - camy) * TS;
+  if (P.stepAnim && nowMs() - P.stepAnim.t < P.stepAnim.dur) {
+    var sa = P.stepAnim;
+    var dt = nowMs() - sa.t;
+    var isHalfway = dt < (sa.dur / 2);
+    if (isHalfway) {
+      playerSprite = sa.fromFrame ? 'hero2' : 'hero';
+      var midX = (sa.fx + sa.tx) / 2;
+      var midY = (sa.fy + sa.ty) / 2;
+      hpx = Math.round(VIEW_PX + (midX - camx) * TS);
+      hpy = Math.round(VIEW_PY + (midY - camy) * TS);
+    } else {
+      playerSprite = sa.toFrame ? 'hero2' : 'hero';
+      hpx = VIEW_PX + (sa.tx - camx) * TS;
+      hpy = VIEW_PY + (sa.ty - camy) * TS;
+    }
+  } else {
+    P.stepAnim = null;
+  }
+  var frame = (playerSprite === 'hero2') ? 1 : 0;
   var dashRun = dashPhase();
-  var hpx = VIEW_PX + (P.x - camx) * TS - Math.round(mlag.x * TS);
-  var hpy = VIEW_PY + (P.y - camy) * TS - Math.round(mlag.y * TS);
   if (dashRun) {
     hpx = VIEW_PX + Math.round((P.x - camx - dashRun.bx) * TS);
     hpy = VIEW_PY + Math.round((P.y - camy - dashRun.by) * TS);
@@ -27626,8 +27733,12 @@ function drawMapAt(overX, overY) {
     var rf = (nowMs() - G.ret.t) / G.ret.dur;
     if (rf >= 1 || rf < 0) { if (rf >= 1) G.ret = null; }
     else {
-      var rx = G.ret.fx + (G.ret.tx - G.ret.fx) * rf;
-      var ry = G.ret.fy + (G.ret.ty - G.ret.fy) * rf;
+      var rDist = Math.max(Math.abs(G.ret.tx - G.ret.fx), Math.abs(G.ret.ty - G.ret.fy)) || 1;
+      var rSteps = rDist * 2;
+      var rStep = Math.min(rSteps, Math.floor(rf * rSteps));
+      var snappedRf = rStep / rSteps;
+      var rx = G.ret.fx + (G.ret.tx - G.ret.fx) * snappedRf;
+      var ry = G.ret.fy + (G.ret.ty - G.ret.fy) * snappedRf;
       var rvx = Math.round(VIEW_PX + (rx - camx) * TS);
       var rvy = Math.round(VIEW_PY + (ry - camy) * TS);
       if (rvx >= VIEW_PX - shift - TS && rvy >= VIEW_PY - TS && rvx < SW && rvy < SH)
@@ -27644,8 +27755,12 @@ function drawMapAt(overX, overY) {
       var ax = tileCX(G.shot.sx, camx), ay = tileCY(G.shot.sy, camy);
       var bx2 = tileCX(G.shot.ex, camx), by2 = tileCY(G.shot.ey, camy);
       var vx = bx2 - ax, vy = by2 - ay;
+      var shotDist = Math.max(Math.abs(G.shot.ex - G.shot.sx), Math.abs(G.shot.ey - G.shot.sy)) || 1;
+      var shotSteps = shotDist * 2;
+      var shotStep = Math.min(shotSteps, Math.floor(f * shotSteps));
+      var snappedF = shotStep / shotSteps;
       var len = Math.sqrt(vx * vx + vy * vy) || 1;
-      var hx = ax + vx * f, hy = ay + vy * f;
+      var hx = ax + vx * snappedF, hy = ay + vy * snappedF;
       var ux = vx / len, uy = vy / len;
       if (G.shot.spr && IX[G.shot.spr] !== undefined) {
         /* a thrown thing is drawn as itself, tumbling along the line */
