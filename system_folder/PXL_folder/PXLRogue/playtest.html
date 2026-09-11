@@ -8883,6 +8883,8 @@ function surpriseDam(m) {
 }
 function launcher() {
   var it = P.eq.lh;
+  if (it && it.t === 'weapon' && WEAPONS[it.k].launch) return it;
+  it = P.eq.rh;
   return (it && it.t === 'weapon' && WEAPONS[it.k].launch) ? it : null;
 }
 /* Something you can throw with your bare hands.  Only used when you have
@@ -22226,6 +22228,8 @@ function touchHold() {
   if (Date.now() - TOUCH.t < TOUCH_HOLD_MS) return;
   TOUCH.held = 1;
   MOUSE.on = 1;
+  MOUSE.x = TOUCH.x;
+  MOUSE.y = TOUCH.y;
   clickAt(TOUCH.x, TOUCH.y, 1);
 }
 
@@ -22578,6 +22582,9 @@ function clickAt(mx, my, right) {
    into it, onto a thing to pick it up, onto a chest to open it.  The
    right button asks what you want done with whatever is there. */
 function mapClick(mx, my, right) {
+  if (mx !== undefined && my !== undefined) {
+    MOUSE.x = mx; MOUSE.y = my; MOUSE.on = 1;
+  }
   var m = mouseTile();
   if (!m) return;
   if (G.walk) { stopWalk(null); if (!right) return; }
@@ -22693,7 +22700,7 @@ function openCtxMenu(x, y) {
   var opts = [], foe = monAt(L, x, y), it = itemAt(L, x, y);
   var mine = (x === P.x && y === P.y);
   opts.push(['look', 'Look']);
-  if (foe && canSeeMon(foe) && !foe.ally && !mine && canShoot())
+  if (foe && canSeeMon(foe) && !foe.ally && !mine && (canShoot() || launcher()))
     opts.push(['shoot', 'Shoot']);
   /* And from your own square it means what ENTER means out in the
      dungeon: take aim at whatever is in your line of fire.  A finger
@@ -22744,6 +22751,29 @@ function ctxKey(k) {
   if (job === 'shoot') {
     var foe2 = monAt(L, x, y);
     if (!foe2 || !canSeeMon(foe2)) { msg('It is not there now.', '6'); finishMsgs(); return; }
+    var lw = launcher();
+    if (lw) G.throwing = null;
+    var kit = canShoot();
+    if (!kit) {
+      if (lw) {
+        var W = WEAPONS[lw.k];
+        msg('You have no ' + (W && W.ammo ? W.ammo + 's' : 'arrows') + ' to shoot with.', '6');
+      } else {
+        msg('You have nothing to shoot with.', '6');
+      }
+      finishMsgs();
+      return;
+    }
+    if (typeof shotRange === 'function' && Math.max(Math.abs(foe2.x - P.x), Math.abs(foe2.y - P.y)) > shotRange()) {
+      msg('It is out of range.', '6');
+      finishMsgs();
+      return;
+    }
+    if (typeof shotClear === 'function' && !shotClear(P.x, P.y, foe2.x, foe2.y)) {
+      msg('The shot is blocked.', '6');
+      finishMsgs();
+      return;
+    }
     beginAction();
     tick(fireAt(foe2));
     return;
@@ -22831,14 +22861,13 @@ function invClick(h, right) {
        left button could not do at all. */
     var again = (cur.r === h.i.r && cur.c === h.i.c);
     cur.r = h.i.r; cur.c = h.i.c;
-    /* A stone pressed on a touch device during battle immediately goes
-       to throw mode so the player doesn't have to open the menu and
-       select THROW every turn. */
+    /* A stone pressed on a touch device when an enemy is in reach
+       immediately goes to throw mode so the player doesn't have to
+       open the menu and select THROW every turn. */
     var isTouch = ((typeof isTouchDevice === 'function' && isTouchDevice()) || LAST_INPUT === 'touch') && LAST_INPUT !== 'mouse';
-    var inBattle = (typeof battleNear === 'function' && battleNear()) || (typeof battleFoes === 'function' && battleFoes().length > 0);
     var target = bindRef(cursorRef());
     var titem = refGet(target);
-    if (!G.sel && G.invMode !== 'pick' && isTouch && inBattle && titem && isStoneAmmo(titem) && target.kind === 'slot' && (!G.pouch || G.pouch.t !== 'chest')) {
+    if (!G.sel && G.invMode !== 'pick' && isTouch && enemyInReach() && titem && isStoneAmmo(titem) && target.kind === 'slot' && (!G.pouch || G.pouch.t !== 'chest')) {
       beginThrow(titem);
       return;
     }
@@ -23914,6 +23943,22 @@ function nearestTarget() {
     if (d < bd && throwValid(m.x, m.y)) { bd = d; best = m; }
   }
   return best;
+}
+function enemyInReach() {
+  if (typeof nearestTarget === 'function' && nearestTarget()) return true;
+  if (typeof battleNear === 'function' && battleNear()) return true;
+  if (typeof battleFoes === 'function' && battleFoes().length > 0) return true;
+  if (typeof L !== 'undefined' && L && L.mons && typeof P !== 'undefined' && P) {
+    var maxDist = (typeof shotRange === 'function') ? shotRange() : 10;
+    for (var i = 0; i < L.mons.length; i++) {
+      var m = L.mons[i];
+      if (m.ally || m.disguise || (m.hp !== undefined && m.hp <= 0)) continue;
+      if (typeof canSeeMon === 'function' && !canSeeMon(m)) continue;
+      var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
+      if (d <= maxDist) return true;
+    }
+  }
+  return false;
 }
 function aimKey(k) {
   if (k === 'Escape' || k === 'Tab') {
@@ -25187,8 +25232,7 @@ function invSpace() {
   if (!G.sel) {
     if (!titem) return;
     var isTouch = ((typeof isTouchDevice === 'function' && isTouchDevice()) || LAST_INPUT === 'touch') && LAST_INPUT !== 'mouse';
-    var inBattle = (typeof battleNear === 'function' && battleNear()) || (typeof battleFoes === 'function' && battleFoes().length > 0);
-    if (isTouch && inBattle && isStoneAmmo(titem) && target.kind === 'slot' && (!G.pouch || G.pouch.t !== 'chest')) {
+    if (isTouch && enemyInReach() && isStoneAmmo(titem) && target.kind === 'slot' && (!G.pouch || G.pouch.t !== 'chest')) {
       beginThrow(titem);
       return;
     }
