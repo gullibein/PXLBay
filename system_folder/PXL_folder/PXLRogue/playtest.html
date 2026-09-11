@@ -17001,7 +17001,7 @@ function swapWithAlly(m) {
 function playerMove(dx, dy) {
   /* Say which of the several things that stop you is stopping you: a
      bald "You cannot move." is indistinguishable from a bug. */
-  if (P.frozen) {
+  if (P.frozen || P.webbed || P.gummed || P.iced) {
     msg(P.iced ? 'You are frozen solid.'
       : P.webbed ? 'You are stuck in the web.'
       : P.gummed ? 'Your feet are glued in the slime.'
@@ -17010,9 +17010,13 @@ function playerMove(dx, dy) {
       P.gummed ? 'G' : 'c');
     return true;
   }
-  if (P.held && P.heldBy && L.mons.indexOf(P.heldBy) >= 0) {
-    msg('You are being held!', 'R');
-    if (rnd(100) < 35) { P.held = 0; P.heldBy = null; msg('You break free.', 'y'); }
+  if (P.held) {
+    if (P.heldBy && L.mons.indexOf(P.heldBy) >= 0) {
+      msg('You are being held!', 'R');
+      if (rnd(100) < 35) { P.held = 0; P.heldBy = null; msg('You break free.', 'y'); }
+    } else {
+      P.held = 0; P.heldBy = null;
+    }
     return true;
   }
   var nx = P.x + dx, ny = P.y + dy;
@@ -21991,8 +21995,11 @@ function endPanelDrag(mx) {
     }
   }
   PANEL_DRAG.active = false;
+  PANEL_DRAG.dragged = false;
   return true;
 }
+
+var PANEL_SCROLL = { active: false, mode: null, startY: 0, startAt: 0, moved: false };
 
 /* client pixels to buffer pixels */
 function mousePos(e) {
@@ -22009,11 +22016,59 @@ function onMouseMove(e) {
   MOUSE.x = m.x; MOUSE.y = m.y;
   MOUSE.on = m.x >= 0 && m.y >= 0 && m.x < SW && m.y < SH;
   if (MOUSE.on && !isTouchDevice()) LAST_INPUT = 'mouse';
+  if (typeof PANEL_SCROLL !== 'undefined' && PANEL_SCROLL.active && G.mode === 'story' && G.story) {
+    var dy = m.y - PANEL_SCROLL.startY;
+    if (Math.abs(dy) >= 3) {
+      PANEL_SCROLL.moved = true;
+      if (MOUSE.held) MOUSE.held.drag = 1;
+      if (TOUCH) TOUCH.dragged = 1;
+    }
+    var lines = storyLines(), room = storyRoom();
+    var end = Math.max(0, lines.length - room);
+    if (PANEL_SCROLL.mode === 'slider') {
+      var bh = (SH - 8) - 12;
+      var kh = Math.max(4, Math.round(bh * room / lines.length));
+      var trackH = Math.max(1, bh - kh);
+      var trackY = 4 + 6;
+      var ratio = clamp((m.y - trackY - (kh >> 1)) / trackH, 0, 1);
+      G.story.at = Math.round(ratio * end);
+    } else {
+      var lineDelta = Math.round(dy / LH);
+      G.story.at = clamp(PANEL_SCROLL.startAt - lineDelta, 0, end);
+    }
+    return;
+  }
+  if (typeof PANEL_SCROLL !== 'undefined' && PANEL_SCROLL.active && G.mode === 'story' && G.story) {
+    var dy = m.y - PANEL_SCROLL.startY;
+    if (Math.abs(dy) >= 3) {
+      PANEL_SCROLL.moved = true;
+      if (MOUSE.held) MOUSE.held.drag = 1;
+      if (TOUCH) TOUCH.dragged = 1;
+    }
+    var lines = storyLines(), room = storyRoom();
+    var end = Math.max(0, lines.length - room);
+    if (PANEL_SCROLL.mode === 'slider') {
+      var bh = (SH - 8) - 12;
+      var kh = Math.max(4, Math.round(bh * room / lines.length));
+      var trackH = Math.max(1, bh - kh);
+      var trackY = 4 + 6;
+      var ratio = clamp((m.y - trackY - (kh >> 1)) / trackH, 0, 1);
+      G.story.at = Math.round(ratio * end);
+    } else {
+      var lineDelta = Math.round(dy / LH);
+      G.story.at = clamp(PANEL_SCROLL.startAt - lineDelta, 0, end);
+    }
+    return;
+  }
   if (PANEL_DRAG.active) {
     PANEL_DRAG.currentX = m.x;
     var pdx = m.x - PANEL_DRAG.startX;
     var pdy = m.y - PANEL_DRAG.startY;
-    if (Math.abs(pdx) >= 2 || Math.abs(pdy) >= 2) PANEL_DRAG.dragged = true;
+    if (Math.abs(pdx) >= 2 || Math.abs(pdy) >= 2) {
+      PANEL_DRAG.dragged = true;
+      if (MOUSE.held) MOUSE.held.drag = 1;
+      if (TOUCH) TOUCH.dragged = 1;
+    }
     if (PANEL_DRAG.mode === 'toFull') {
       PANEL_DRAG.shift = clamp(-pdx, 0, PANEL_W);
     } else {
@@ -22064,10 +22119,12 @@ function onMouseMove(e) {
   if (typeof P !== 'undefined' && P) camSaw();
 }
 function onMouseOut() {
-  if (PANEL_DRAG.active) {
+  if (typeof PANEL_SCROLL !== 'undefined') PANEL_SCROLL.active = false;
+  if (typeof PANEL_DRAG !== 'undefined' && PANEL_DRAG.active) {
     endPanelDrag(PANEL_DRAG.currentX);
   }
   MOUSE.on = 0; MOUSE.x = -99; MOUSE.y = -99; MOUSE.held = null;
+  TOUCH = null;
 }
 
 /* ============================================================== a finger
@@ -22109,7 +22166,15 @@ function onTouchStart(e) {
   LAST_INPUT = 'touch';
   var m = touchPos(t);
   MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
-  TOUCH = { x: m.x, y: m.y, t: Date.now(), held: 0, id: t.identifier };
+  if (G.mode === 'story' && G.story && m.x >= 4 && m.x <= SW - 4 && m.y >= 4 && m.y <= SH - 4) {
+    var isSlider = m.x >= SW - 18;
+    PANEL_SCROLL = { active: true, mode: isSlider ? 'slider' : 'content', startY: m.y, startAt: G.story.at, moved: false };
+  }
+  if (G.mode === 'story' && G.story && m.x >= 4 && m.x <= SW - 4 && m.y >= 4 && m.y <= SH - 4) {
+    var isSlider = m.x >= SW - 18;
+    PANEL_SCROLL = { active: true, mode: isSlider ? 'slider' : 'content', startY: m.y, startAt: G.story.at, moved: false };
+  }
+  TOUCH = { x: m.x, y: m.y, t: Date.now(), held: 0, id: t.identifier, panelGrab: panelGrab, dragged: 0 };
   var panelGrab = false;
   if (canGrabPanel()) {
     if (!fullOn()) {
@@ -22137,6 +22202,8 @@ function onTouchMove(e) {
   if (!t) return;
   IS_TOUCH = true;
   LAST_INPUT = 'touch';
+  var m = touchPos(t);
+  if (TOUCH && (Math.abs(m.x - TOUCH.x) >= DRAG_SLOP || Math.abs(m.y - TOUCH.y) >= DRAG_SLOP)) TOUCH.dragged = 1;
   onMouseMove({ clientX: t.clientX, clientY: t.clientY });
 }
 function onTouchEnd(e) {
@@ -22144,13 +22211,22 @@ function onTouchEnd(e) {
   if (!ready) { TOUCH = null; MOUSE.held = null; return; }
   var held = MOUSE.held, press = TOUCH;
   MOUSE.held = null; TOUCH = null;
+  if (typeof PANEL_SCROLL !== 'undefined' && PANEL_SCROLL.active) {
+    var scrollDidMove = PANEL_SCROLL.moved;
+    PANEL_SCROLL.active = false;
+    if (scrollDidMove) { MOUSE.on = 0; return; }
+  }
   if (!press) return;
   MOUSE.on = 0;                        /* a finger stops pointing at anything */
   if (held && held.panelGrab) {
     endPanelDrag(MOUSE.x >= 0 ? MOUSE.x : PANEL_DRAG.currentX);
     return;
   }
-  if (!held || held.drag) {
+  if (typeof PANEL_DRAG !== 'undefined' && PANEL_DRAG.active) {
+    endPanelDrag(MOUSE.x >= 0 ? MOUSE.x : PANEL_DRAG.currentX);
+    return;
+  }
+  if (!held || held.drag || press.dragged) {
     /* A shove across the pack is how a finger asks for the next
        container along - see invSwipe.  Anywhere else it was a shove of
        the map and is already done with. */
@@ -22224,7 +22300,9 @@ function wheeling() { return Date.now() - WHEEL_T < WHEEL_HOLD_MS; }
    the press was heard. */
 function touchHold() {
   if (!TOUCH || TOUCH.held) return;
-  if (MOUSE.held && MOUSE.held.drag) return;
+  if (!MOUSE.held || MOUSE.held.drag || MOUSE.held.panelGrab) return;
+  if (TOUCH.dragged || TOUCH.panelGrab) return;
+  if (typeof PANEL_DRAG !== 'undefined' && (PANEL_DRAG.active || PANEL_DRAG.dragged)) return;
   if (Date.now() - TOUCH.t < TOUCH_HOLD_MS) return;
   TOUCH.held = 1;
   MOUSE.on = 1;
@@ -22474,6 +22552,10 @@ function clickAt(mx, my, right) {
     /* Nothing on this one is picked with a finger except going on, and a
        name has to be typed - but a tap must not do nothing at all, so a
        tap anywhere is the same as ENTER once the name is in. */
+    case 'dead':
+    case 'win':
+      openScores();
+      return;
     case 'score':
       if (G.hs && G.hs.typing) return;
       scoreKey('Enter');
@@ -22589,6 +22671,14 @@ function mapClick(mx, my, right) {
   if (!m) return;
   if (G.walk) { stopWalk(null); if (!right) return; }
   if (right) { openCtxMenu(m.x, m.y); return; }
+  if (heldFast()) {
+    var dx = Math.sign(m.x - P.x);
+    var dy = Math.sign(m.y - P.y);
+    beginAction();
+    var moved = playerMove(dx, dy);
+    tick(moved);
+    return;
+  }
   /* Already waiting on the view?  Then this is a change of mind, and it
      is the square you asked for last that you get. */
   if (G.waiting) { G.waiting = { x: m.x, y: m.y }; return; }
@@ -22606,6 +22696,13 @@ function mapClick(mx, my, right) {
 function mapOrder(mx2, my2) {
   var m = { x: mx2, y: my2 };
   beginAction();
+  if (heldFast()) {
+    var dx = Math.sign(m.x - P.x);
+    var dy = Math.sign(m.y - P.y);
+    var moved = playerMove(dx, dy);
+    tick(moved);
+    return;
+  }
   if (!(L.flags[m.y * MAP_W + m.x] & F_SEEN)) {
     /* Into the dark: you cannot know there is a floor there, so this is
        not a destination but a direction - see towardsSpot.  You go that
@@ -24589,9 +24686,9 @@ function drawStory() {
   /* a bar down the right hand edge, so the length of the run is visible */
   if (end) {
     var bh = h - 12, bx = x + w - 3;
-    rect(bx, y + 6, 1, bh, '#2b3352');
+    rect(bx - 1, y + 6, 2, bh, '#2b3352');
     var kh = Math.max(4, Math.round(bh * room / lines.length));
-    rect(bx, y + 6 + Math.round((bh - kh) * top / end), 1, kh, '#636d85');
+    rect(bx - 1, y + 6 + Math.round((bh - kh) * top / end), 2, kh, '#8fa0c0');
   }
   hit(x, y, w, h, 'story', 0);
 }
@@ -28875,8 +28972,17 @@ function drawDeath() {
   textIn(P.gold + ' gold pieces', bx, bw, by + 77, 'y');
   textIn('score ' + computeScore(), bx, bw, by + 86, 'O');
   textIn('deepest: -' + G.maxDepth, bx, bw, by + 95, '4');
-  textIn('ENTER to rise again', bx, bw, by + 110,
-    ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
+  var btnW = 76, btnH = 13;
+  var btnX = bx + ((bw - btnW) >> 1);
+  var btnY = by + 104;
+  var over = usingMouse() && MOUSE.on &&
+    MOUSE.x >= btnX && MOUSE.y >= btnY && MOUSE.x < btnX + btnW && MOUSE.y < btnY + btnH;
+  rect(btnX, btnY, btnW, btnH, over ? '#2b3352' : '#141829');
+  frame(btnX, btnY, btnW, btnH, over ? '#fad039' : '#636d85');
+  var lab = 'Rise again';
+  text(lab, btnX + ((btnW - textW(lab)) >> 1), btnY + 3, over ? 'y' : ((Date.now() / 500) | 0) % 2 ? 'y' : 'w');
+  hit(btnX, btnY, btnW, btnH, 'rise', 0);
+  hit(bx, by, bw, bh, 'dead', 0);
 }
 
 function drawWin() {
