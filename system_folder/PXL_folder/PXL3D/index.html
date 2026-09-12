@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PXL3D - Retro Parametric 3D Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="./assets/index-Sm5ypyXx.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-B8rfCMPw.css">
+</head>
+<body>
+  <!-- Integer Scaled Container -->
+  <div id="screen-container">
+    <div id="app-screen">
+      <!-- Top Title Bar -->
+      <header id="top-bar">
+        <div class="brand">
+          <span class="brand-badge">PXL-3D</span>
+          <span class="brand-sub">PARAMETRIC CSG WORKSTATION</span>
+        </div>
+        <div class="top-status-group">
+          <button id="scale-badge" class="badge badge-btn" title="Click to cycle: 2X, FIT, AUTO, 1X">SCALE: AUTO</button>
+          <button id="btn-fullscreen" class="badge badge-btn" title="Toggle Fullscreen">⛶ FULL</button>
+          <span id="wasm-badge" class="badge badge-warning">WASM: LOADING</span>
+        </div>
+        <div class="top-actions">
+          <button id="btn-open-code" class="btn btn-sm" title="View OpenSCAD Source">SCAD &lt;/&gt;</button>
+          <button id="btn-open-settings" class="btn btn-sm" title="Groq API Key & Settings">⚙ SETUP</button>
+        </div>
+      </header>
+
+      <!-- Main Workstation Layout (800 x 422) -->
+      <main id="main-layout">
+        <!-- Left Pane: Control Panel (280px) -->
+        <aside id="sidebar">
+          <!-- Prompt Input Section -->
+          <section class="prompt-section">
+            <div class="section-header">
+              <span class="section-title">NATURAL LANGUAGE PROMPT</span>
+            </div>
+            <div class="prompt-input-wrapper">
+              <input type="text" id="prompt-input" placeholder="Describe 3D model (e.g. 'sports car', 'shotgun')..." autocomplete="off" />
+              <button id="btn-generate" class="btn btn-primary">
+                <span class="btn-text">GENERATE</span>
+                <span class="btn-spinner" style="display:none;">⏳</span>
+              </button>
+            </div>
+            <div class="prompt-status-row">
+              <span class="status-label">STATUS:</span>
+              <span id="ai-status" class="status-indicator">READY</span>
+            </div>
+          </section>
+
+          <!-- Dynamic Parameters / Form Edit Section -->
+          <section class="params-section">
+            <div class="section-header">
+              <div class="panel-mode-tabs">
+                <button id="tab-mode-params" class="tab-btn" title="Model Parameters">PARAMS</button>
+                <button id="tab-mode-edit" class="tab-btn active" title="Edit individual forms (move, rotate, scale)">EDIT</button>
+              </div>
+              <button id="btn-reset-params" class="btn-link" title="Reset current panel to defaults">RESET</button>
+            </div>
+            <div id="dynamic-params-container" class="params-scroll-area" style="display: none;">
+              <!-- Dynamically populated range sliders and select controls -->
+              <div class="param-placeholder">Enter a prompt above and click GENERATE.</div>
+            </div>
+            <div id="form-edit-container" class="params-scroll-area" style="display: flex;">
+              <!-- Dynamically populated form editor -->
+            </div>
+          </section>
+
+          <!-- Export & Output Bar -->
+          <footer id="sidebar-footer">
+            <button id="btn-export-stl" class="btn btn-success" disabled>
+              <span>⭳ EXPORT STL</span>
+            </button>
+            <button id="btn-export-scad" class="btn btn-secondary" disabled>
+              <span>⭳ SCAD</span>
+            </button>
+          </footer>
+        </aside>
+
+        <!-- Right Pane: 3D Viewport (520px) -->
+        <section id="viewport-pane">
+          <div id="canvas-container">
+            <!-- Three.js Canvas injected here (520x422) -->
+          </div>
+
+          <!-- Viewport HUD Overlay -->
+          <div id="viewport-hud-top">
+            <div id="render-stats" class="hud-text">INIT VIEWPORT...</div>
+            <div class="view-controls">
+              <button class="hud-btn" data-view="fit" title="Fit Model to View">FIT</button>
+              <button class="hud-btn" data-view="iso" title="Isometric View">ISO</button>
+              <button class="hud-btn" data-view="top" title="Top View">TOP</button>
+              <button class="hud-btn" data-view="front" title="Front View">FRN</button>
+              <button class="hud-btn" data-view="reset" title="Reset Camera">RST</button>
+            </div>
+          </div>
+
+          <div id="viewport-hud-bottom">
+            <div class="shader-controls">
+              <button id="btn-toggle-res" class="hud-btn active" title="Toggle Turbo Draft / High-Res Quality">TURBO (14)</button>
+              <button id="btn-toggle-wireframe" class="hud-btn" title="Toggle Wireframe">WIRE</button>
+              <button id="btn-toggle-grid" class="hud-btn active" title="Toggle Ground Grid">GRID</button>
+              <button id="btn-cycle-mat" class="hud-btn" title="Cycle Material Matcap">CLAY</button>
+              <button id="btn-ai-texture" class="hud-btn hud-btn-accent" title="Generate realistic retro textures for model or selection">✦ AI TEXTURE</button>
+            </div>
+            <div id="compilation-stats" class="hud-text compile-tag">COMPILING: --</div>
+          </div>
+
+          <!-- Viewport Loading Overlay -->
+          <div id="viewport-spinner" class="viewport-loader" style="display: none;">
+            <div class="spinner-box">
+              <div class="spinner-pixel"></div>
+              <span id="spinner-text">COMPILING CSG GEOMETRY...</span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Settings Drawer / Modal (Inside 800x450 boundary) -->
+      <div id="settings-modal" class="screen-modal" style="display: none;">
+        <div class="modal-box">
+          <div class="modal-header">
+            <span class="modal-title">⚙ AI BACKEND CONFIGURATION</span>
+            <button id="btn-close-settings" class="modal-close-btn">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="ai-engine-select">3D Generation Engine:</label>
+              <select id="ai-engine-select">
+                <option value="parametric">Parametric CAD (OpenSCAD WASM) - Free, Live Sliders</option>
+                <option value="neural">Neural 3D AI (Meshy / Tripo) - True 3D Polygon Mesh</option>
+              </select>
+            </div>
+
+            <!-- Neural 3D Settings (Meshy / Tripo) -->
+            <div id="neural-settings-group" style="display: none; border-top: 1px dashed var(--border-dim); padding-top: 6px; margin-top: 4px;">
+              <div class="form-group">
+                <label for="neural-provider-select">Neural 3D Provider:</label>
+                <select id="neural-provider-select">
+                  <option value="meshy">Meshy.ai (Text-to-3D)</option>
+                  <option value="tripo">Tripo3D (Text-to-3D)</option>
+                </select>
+              </div>
+              <div class="form-group" id="meshy-key-group">
+                <label for="meshy-api-key">Meshy API Key:</label>
+                <input type="password" id="meshy-api-key" placeholder="msy_..." />
+                <p class="form-help">
+                  Get free starter credits at <a href="https://www.meshy.ai/" target="_blank" style="color:var(--text-accent);">meshy.ai</a>
+                </p>
+              </div>
+              <div class="form-group" id="tripo-key-group" style="display: none;">
+                <label for="tripo-api-key">Tripo3D API Key:</label>
+                <input type="password" id="tripo-api-key" placeholder="tsk_..." />
+                <p class="form-help">
+                  Get free starter credits at <a href="https://www.tripo3d.ai/" target="_blank" style="color:var(--text-accent);">tripo3d.ai</a>
+                </p>
+              </div>
+            </div>
+
+            <!-- Parametric CAD Settings (Gemini / Cloudflare proxy / Groq) -->
+            <div id="parametric-settings-group">
+              <div class="form-group">
+                <label for="parametric-provider-select">Parametric AI Engine:</label>
+                <select id="parametric-provider-select">
+                  <option value="gemini" selected>Google Gemini (Default - 2.0 Flash / Lite)</option>
+                  <option value="proxy">Free Cloudflare Proxy (Groq 120B Fallback)</option>
+                  <option value="groq">Groq Cloud (Direct API Key)</option>
+                </select>
+              </div>
+
+              <!-- Gemini Sub-Settings -->
+              <div id="gemini-settings-subgroup">
+                <div class="form-group">
+                  <label for="gemini-model-select">Gemini Model:</label>
+                  <select id="gemini-model-select">
+                    <option value="gemini-3.5-flash-lite" selected>Gemini 3.5 Flash-Lite (Fastest: ~1.5s, Recommended)</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash (Thinking Mode: ~30-60s)</option>
+                    <option value="gemini-3.8-flash">Gemini 3.8 Flash (High Capacity)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="proxy-url-input">Cloudflare Proxy Backend (Default):</label>
+                  <input type="text" id="proxy-url-input" placeholder="https://pxl3d-proxy.gundur.workers.dev/" />
+                  <p class="form-help">
+                    Active proxy holding your Gemini API key secret. Zero key entry needed by users.
+                  </p>
+                </div>
+                <div class="form-group">
+                  <label for="gemini-api-key">Personal Gemini API Key (Optional Direct Override):</label>
+                  <div class="input-with-toggle">
+                    <input type="password" id="gemini-api-key" placeholder="Leave blank to use default Cloudflare proxy" autocomplete="off" />
+                    <button type="button" id="btn-toggle-gemini-key-vis" class="btn btn-sm">👁</button>
+                  </div>
+                  <button type="button" id="btn-clear-gemini-key" class="btn btn-xs btn-secondary" style="margin-top: 3px; align-self: flex-start;">
+                    ✓ Clear Key (Use Cloudflare Proxy)
+                  </button>
+                  <p class="form-help">
+                    Free tier, no credit card required at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--text-accent);">aistudio.google.com/apikey</a>
+                  </p>
+                </div>
+              </div>
+
+              <!-- Proxy Sub-Settings -->
+              <div id="proxy-settings-subgroup" style="display: none;">
+                <div class="form-group">
+                  <label for="proxy-url-input-alt">Secure Cloudflare Proxy URL:</label>
+                  <input type="text" id="proxy-url-input-alt" placeholder="https://pxl3d-proxy.gundur.workers.dev/" disabled />
+                  <p class="form-help">
+                    Free proxy endpoint. No API key required.
+                  </p>
+                </div>
+              </div>
+
+              <!-- Groq Sub-Settings -->
+              <div id="groq-settings-subgroup" style="display: none;">
+                <div class="form-group">
+                  <label for="groq-api-key">Personal Groq API Key:</label>
+                  <div class="input-with-toggle">
+                    <input type="password" id="groq-api-key" placeholder="gsk_..." autocomplete="off" />
+                    <button type="button" id="btn-toggle-key-visibility" class="btn btn-sm">👁</button>
+                  </div>
+                  <button type="button" id="btn-use-proxy-default" class="btn btn-xs btn-secondary" style="margin-top: 3px; align-self: flex-start;">
+                    ✓ Clear Key (Use Cloudflare Proxy)
+                  </button>
+                </div>
+                <div class="form-group">
+                  <label for="groq-model-select">Groq Model:</label>
+                  <select id="groq-model-select">
+                    <option value="openai/gpt-oss-120b">GPT-OSS 120B (Default, Recommended)</option>
+                    <option value="qwen/qwen3.8-27b">Qwen 3.8 27B (Fast)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-save-settings" class="btn btn-primary">SAVE SETTINGS</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Code Inspector Drawer (Inside 800x450 boundary) -->
+      <div id="code-drawer" class="screen-modal" style="display: none;">
+        <div class="modal-box code-modal-box">
+          <div class="modal-header">
+            <span class="modal-title">OPENSCAD TEMPLATE INSPECTOR</span>
+            <div class="modal-header-actions">
+              <button id="btn-copy-scad" class="btn btn-xs">COPY</button>
+              <button id="btn-close-code" class="modal-close-btn">✕</button>
+            </div>
+          </div>
+          <div class="modal-body code-body">
+            <pre><code id="scad-code-display">// OpenSCAD code will appear here...</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Part Prompt Modal (Double-Click Item to Modify) -->
+      <div id="part-prompt-modal" class="screen-modal" style="display: none;">
+        <div class="modal-box part-modal-box">
+          <div class="modal-header">
+            <span id="part-modal-title" class="modal-title">✎ MODIFY PART</span>
+            <button id="btn-close-part-modal" class="modal-close-btn" title="Close (Esc)">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="part-info-badge">
+              <span>TARGET PART:</span>
+              <span id="part-modal-name">--</span>
+            </div>
+            <div class="form-group">
+              <label for="part-prompt-input">Prompt for this part only (rest of model remains untouched):</label>
+              <textarea id="part-prompt-input" class="part-prompt-textarea" placeholder="e.g. 'Make it an armored knight visor with horns' or 'Replace with a jet thruster'"></textarea>
+            </div>
+            <div class="quick-chips-row">
+              <span style="font-size: 8.5px; color: var(--text-muted); align-self: center;">QUICK IDEAS:</span>
+              <button type="button" class="quick-chip" data-text="Make it bigger, curved and more organic">Bigger & Curved</button>
+              <button type="button" class="quick-chip" data-text="Add sharp spikes and armor plates">Spike Armor</button>
+              <button type="button" class="quick-chip" data-text="Make it robotic with glowing panel vents and antenna">Robot / Vents</button>
+              <button type="button" class="quick-chip" data-text="Make it sleek, tapered and streamlined">Sleek Tapered</button>
+              <button type="button" class="quick-chip" data-text="Add horns or ears">Horns / Ears</button>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <span id="part-modal-status" class="modal-status-text">READY</span>
+            <div style="display: flex; gap: 6px;">
+              <button id="btn-cancel-part-modal" class="btn btn-secondary btn-sm">CANCEL</button>
+              <button id="btn-submit-part-prompt" class="btn btn-primary btn-sm">
+                <span class="btn-text">⚡ GENERATE</span>
+                <span class="btn-spinner" style="display: none;">⏳</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -5,6 +5,13 @@
     "isDirectory": true,
     "children": [
       {
+        "name": "PXL3D - Retro Parametric 3D Generator",
+        "path": "PXL_folder/PXL3D",
+        "isDirectory": false,
+        "isApp": true,
+        "url": "system_folder/PXL_folder/PXL3D/index.html"
+      },
+      {
         "name": "PXLRogue",
         "path": "PXL_folder/PXLRogue",
         "isDirectory": false,
