@@ -1165,21 +1165,37 @@ var HS_PROXY = 'https://pxlrogue-scores.gundur.workers.dev';
 var HS_MAX = 10;              /* how many the table holds */
 var HS_NAME_MAX = 12;         /* and how long a name may be */
 var HS_KEY_HEADER = 'X-Access-Key';
-var HS_LOCAL = 'rogue8.scores';
+/* No HS_LOCAL any more: the roll is the roll or it is nothing at all.
+   See "THERE IS NO COPY KEPT ON THIS MACHINE" in part2_game.js. */
 /* The roll's column headings and the rule under them: one row of eight
    pixels plus the rule's own. */
 var HS_HEAD_H = 9;
 var HS_RULE_COL = '#1f8fd8';
-/* how long to wait for the table before trying again */
-var HS_TIMEOUT_MS = 4000;
+/* how long to wait for one go at the table before trying again */
+var HS_TIMEOUT_MS = 1500;
 /* And how many times to ask before saying it cannot be reached.  One slow
    answer is not a website being down - it is a website being slow, which
    is the ordinary case on somebody's phone on a train - and a table that
-   said OFFLINE in red the first time four seconds went by said it several
-   times an evening while the roll was there all along.  Three goes, four
-   seconds apiece, and an answer that arrives late still wins: the asking
-   is what is repeated, not the giving up. */
+   said OFFLINE in red the first time a few seconds went by said it several
+   times an evening while the roll was there all along.  An answer that
+   arrives late still wins: the asking is what is repeated, not the giving
+   up. */
 var HS_TRIES = 3;
+/* THE WHOLE OF WHAT IT MAY SPEND, however the goes fall out.  Three goes
+   of four seconds was twelve seconds of "reading the roll..." over a
+   gravestone, which is not waiting, it is a game that has stopped - and it
+   was the LAST thing anybody saw of a run.  A few seconds of trying, and
+   then it says it cannot be reached and means it.
+
+   Kept as a total rather than left to come out of the goes: the number
+   that matters to whoever is watching is how long before they are told,
+   and a budget says that where tries x timeout only implies it. */
+var HS_GIVE_UP_MS = 5000;
+/* Three goes of 1500 is 4500, which fits inside the 5000 with room to
+   spare: all three goes still happen - a slow answer is still not called a
+   dead website - and the whole thing is over in well under the few seconds
+   asked for.  The two numbers have to be chosen together, and the check
+   "three goes at the roll" fails the moment they are not. */
 var GLOW_FIRE = '#ff8c2a', GLOW_BLAST = '#ffc266', GLOW_BOLT = '#5aa0ff';
 var GLOW_WASH = 0.18;
 /* A beam out of a wand is a light in the air rather than a fire on the
@@ -3244,6 +3260,8 @@ var SCROLLS = [
   { n: 'remove curse', p: 7, w: 105, pick: 1 },
   { n: 'aggravate monsters', p: 3, w: 20 },
   { n: 'protect armor', p: 3, w: 250, pick: 1 },
+  /* the same ball of water the shield gives, out of a page, once */
+  { n: 'water shield', p: 5, w: 190 },
   { n: 'summon aid', p: 5, w: 320 },
   { n: 'light', p: 9, w: 90 },
   { n: 'blank paper', p: 6, w: 5 },
@@ -3417,8 +3435,24 @@ var SHIELDS = [
   { n: 'kite shield', gen: 'shield', a: 2, p: 26, w: 60, s: 'shield2' },
   { n: 'tower shield', gen: 'shield', a: 3, p: 16, w: 120, s: 'shield3' },
   { n: 'warded shield', gen: 'shield', a: 2, p: 14, w: 280, s: 'shield2', prop: 'sustain strength' },
-  { n: 'mirror shield', gen: 'shield', a: 2, p: 14, w: 320, s: 'shield3', prop: 'see invisible' }
+  { n: 'mirror shield', gen: 'shield', a: 2, p: 14, w: 320, s: 'shield3', prop: 'see invisible' },
+  /* ----------------------------------------------------- the water shield
+     The one shield you DO something with.  Raised, it wraps you in a ball
+     of water: nothing that burns can touch you, and the ground round your
+     feet is soaked as you go - which puts fires out and leaves puddles
+     behind you, and a fire-breather standing in one cannot breathe.
+
+     Its plus is how long it holds, not how hard it hits: see waterShieldTurns.
+     One use, and it winds itself back up over WATER_SHIELD_WIND turns, the
+     way a ring does. */
+  { n: 'water shield', gen: 'shield', a: 2, p: 10, w: 300, s: 'shield2',
+    water: 1, charges: 1 }
 ];
+/* HOW LONG THE BALL OF WATER HOLDS, and how long it takes to be worth
+   raising again.  Three turns at worst and five at best: long enough to
+   walk through a dragon's breath and not long enough to walk a floor in. */
+var WATER_SHIELD_TURNS = [3, 5];
+var WATER_SHIELD_WIND = 250;    /* turns to wind one use back up */
 
 /* What turns up when the dungeon decides to leave something lying about.
    Consumables carry the game: you will find several potions and scrolls
@@ -3962,6 +3996,13 @@ function clearsForTrap(d) { return isMoss(d) || isRubble(d) || isBones(d); }
 function isLitter(d) {
   return isMoss(d) || isRubble(d) || isBones(d) || d === 'skull';
 }
+/* HOW THICKLY THE BONES LIE ROUND THE SHRINE.  It was 55, which left the
+   ring half made as often as not - and the one time it came up whole was
+   the time it read as what it is: a place people came to, and did not all
+   come away from.  A thing that is only sometimes striking is worth making
+   reliable; the squares that already hold something are skipped anyway, so
+   this never buries loot and never paints over the cracks. */
+var SHRINE_BONES_PCT = 85;
 /* how often moss creeps up an ordinary wall, and up a mossy one */
 var MOSS_WALL_PCT = 2, MOSS_WALL_MOSSY_PCT = 18;
 /* how much bare stone a cave of moss keeps, for the moss to thin against */
@@ -4345,6 +4386,7 @@ var LORE = {
     'remove curse': 'A prayer, worn soft where somebody has run a thumb over it.',
     'aggravate monsters': 'A page of noise: every line a shout set down in ink.',
     'protect armor': 'A short charm for keeping the weather off metal.',
+    'water shield': 'Four lines about a river that would not let its people burn.',
     'summon aid': 'A name, written three times, and a promise underneath it.',
     'light': 'The page is faintly warm, and brighter than the room it is read in.',
     'blank paper': 'Good paper, and not a mark on it. Somebody meant to write something here.',
@@ -4440,7 +4482,8 @@ var LORE = {
     'kite shield': 'Long and tapered, made to cover a man from shoulder to knee.',
     'tower shield': 'A wall you carry. Slow to move and hard to get past.',
     'warded shield': 'Painted with a sign that whatever it is meant for evidently respects.',
-    'mirror shield': 'Polished until it hurts to look at. Some things do not like their own reflection.'
+    'mirror shield': 'Polished until it hurts to look at. Some things do not like their own reflection.',
+    'water shield': 'The boss is a carved wave, and the metal is always cold and a little wet.'
   },
   food: {
     'food ration': 'Hard bread, dried meat and something in wax paper. A proper meal.',
@@ -5307,7 +5350,8 @@ function makeShrine(L, r, depth) {
     if (L.tiles[by * MAP_W + bx] !== FLOOR) continue;
     if (itemAt(L, bx, by)) continue;          /* never bury the loot */
     if (L.decor[by * MAP_W + bx]) continue;   /* nor paint over the cracks */
-    if (rnd(100) < 55) L.decor[by * MAP_W + bx] = rnd(2) ? boneHeap() : 'skull';
+    if (rnd(100) < SHRINE_BONES_PCT)
+      L.decor[by * MAP_W + bx] = rnd(2) ? boneHeap() : 'skull';
   }
   r.special = 'shrine';
   /* and the light that comes into it from above - see BEAM_COL.  A room
@@ -9507,6 +9551,12 @@ function mkItem(t, k) {
     it.ch = RINGS[k].charges === undefined ? RING_CHARGES : RINGS[k].charges;
     it.wind = 0;
   }
+  /* And the one shield that is pressed rather than merely worn comes wet:
+     its charge and its own clock, the same two fields a ring keeps. */
+  if (t === 'shield' && SHIELDS[k] && SHIELDS[k].water) {
+    it.ch = SHIELDS[k].charges === undefined ? 1 : SHIELDS[k].charges;
+    it.wind = 0;
+  }
   return it;
 }
 function pouchCount(p) {
@@ -10329,7 +10379,7 @@ function newPlayer() {
        weight of a run-up while one blow of it is being struck */
     dashCd: 0, dashBlow: 0, dashRun: null,
     seeinv: 0, monsight: 0, scare: 0, confuseTouch: 0, aggravate: 0, fireShield: 0,
-    unseen: 0, rage: 0, fireproof: 0,
+    unseen: 0, rage: 0, fireproof: 0, wshield: 0,
     /* the two flasks that argue about your hands */
     fine: 0, keen: 0, inept: 0,
     perks: {}, wade: 0, freeIdent: 0, abstCtr: 0, digCtr: 0, webbed: 0,
@@ -11308,6 +11358,7 @@ function playerEffects() {
   if (P.seeinv) out.push(['seeing invisible (' + P.seeinv + ')', 'c']);
   if (P.unseen) out.push(['unseen (' + P.unseen + ')', 'c']);
   if (P.rage) out.push(['berserk (' + P.rage + ')', 'R']);
+  if (P.wshield) out.push(['water shield (' + P.wshield + ')', 'c']);
   if (P.fireproof) out.push(['fireproof (' + P.fireproof + ')', 'O']);
   if (P.fireShield) out.push(['ringed in fire (' + P.fireShield + ')', 'O']);
   if (P.monsight) out.push(['monster sight (' + P.monsight + ')', 'c']);
@@ -11436,6 +11487,28 @@ function lookAt(x, y) {
     if (tt === FLOOR || tt === CORR) return out;
   }
 
+  /* A SQUARE THAT DOES SOMETHING ELSE SAYS SO.  TILE_INFO is a fact about a
+     KIND of square, and two squares of holy water are not the kind they look
+     like: the shrine takes a piece of your health for lifting your curses,
+     and the fount names a potion.  Both read "A holy spring. Standing in it
+     mends you." - which is true of every other square of it on the floor and
+     a plain lie on these two, and the shrine does the opposite of what it
+     said.  Said once it is used, too: what it WILL do and what it HAS done
+     are different sentences. */
+  if (tt === HOLY && L.shrine && L.shrine.x === x && L.shrine.y === y) {
+    out.push('A shrine. Standing in it lifts');
+    out.push(L.shrine.used ? 'curses - and this one is spent.'
+                           : 'every curse you carry.');
+    if (!L.shrine.used) out.push('It costs you ' + SHRINE_COST + ' max hp, for good.');
+    return out;
+  }
+  if (tt === HOLY && L.alchemy && L.alchemy.x === x && L.alchemy.y === y) {
+    out.push("An alchemist's fount. Standing");
+    out.push(L.alchemy.used ? 'in it told you what one potion'
+                            : 'in it names one potion you');
+    out.push(L.alchemy.used ? 'was. It is water now.' : 'carry and have not drunk.');
+    return out;
+  }
   var tinfo = TILE_INFO[tt];
   if (tt === BRIDGE) {
     out.push('A plank bridge.');
@@ -11800,22 +11873,22 @@ function hsPlace(list, entry) {
   return 0;
 }
 
-/* --- the copy kept on this machine ---------------------------------
-   The table is read from the bin when there is a bin to read, and this
-   is what stands in for it when there is not: no network, no key, a
-   browser with storage turned off.  It is also what makes the table work
-   at all for somebody who has taken the file home and is playing it off
-   their own disk. */
-function hsLocal() {
-  try {
-    var raw = window.localStorage.getItem(HS_LOCAL);
-    return hsClean(raw ? JSON.parse(raw) : []);
-  } catch (e) { return []; }
-}
-function hsLocalPut(list) {
-  try { window.localStorage.setItem(HS_LOCAL, JSON.stringify(hsClean(list))); return true; }
-  catch (e) { return false; }
-}
+/* --- THERE IS NO COPY KEPT ON THIS MACHINE -------------------------
+   There used to be, and it stood in whenever the roll could not be read:
+   no network, no key, storage turned off.  It was a comfortable lie.  A
+   table of YOUR OWN ten best runs, drawn under the heading THE TEN BEST,
+   is a screen that says everything is fine when nothing has been reached -
+   and the whole point of the roll is to tell you whether anybody else is
+   playing.  Shown a local one you cannot tell.
+
+   Worse, it was judged against: your own ten best runs are a harder table
+   to get onto than the real one, so a run that belonged on the roll was
+   turned away by a list that only ever had you in it.
+
+   So there is none.  Unreachable is drawn as unreachable, with nothing
+   under it, and a run made while it is unreachable is said plainly to
+   have gone nowhere.  An empty screen that is honest beats a full one
+   that is not. */
 
 /* --- the bin -------------------------------------------------------
    Both of these hand back through a callback and neither of them ever
@@ -11850,17 +11923,27 @@ function hsHeaders(extra) {
    has already handed on from handing on twice (a go times out, the next
    starts, and the timed-out fetch then rejects on its own). */
 function hsFetch(cb) {
-  if (!hsCan()) { cb(hsLocal(), 'local', ''); return; }
+  if (!hsCan()) { cb(null, 'offline', 'no network in this browser'); return; }
   var done = 0, asked = 0;
+  var began = nowMs();
   var finish = function (list, where, err) { if (done) return; done = 1; cb(list, where, err || ''); };
+  /* THE STOP IS IN THE GOES THEMSELVES, not in a clock of its own.  Three
+     goes of HS_TIMEOUT_MS is all the time there is, and HS_GIVE_UP_MS is
+     the promise those two numbers have to keep - the probe checks that they
+     do.  A fourth timer running alongside them would only be a second way
+     of saying the same thing, and it made the goes hard to tell apart for
+     anything watching the clocks. */
   function attempt() {
     var mine = ++asked, spent = 0;
     G.hsTry = mine;
     var fail = function (err) {
       if (done || spent) return;
       spent = 1;
-      if (mine < HS_TRIES) { attempt(); return; }
-      finish(hsLocal(), 'offline', err || 'network error');
+      /* another go only if there is one left AND time to have it in */
+      if (mine < HS_TRIES && nowMs() - began <= HS_GIVE_UP_MS - HS_TIMEOUT_MS) {
+        attempt(); return;
+      }
+      finish(null, 'offline', err || 'network error');
     };
     setTimeout(function () { fail('timeout'); }, HS_TIMEOUT_MS);
     try {
@@ -11873,9 +11956,7 @@ function hsFetch(cb) {
         .then(function (j) {
           var list = j && j.record ? j.record : j;
           if (!list) { fail('invalid roll data'); return; }
-          var t = hsClean(list);
-          hsLocalPut(t);
-          finish(t, 'bin', '');
+          finish(hsClean(list), 'bin', '');
         })
         .catch(function (e) { fail((e && e.message) || 'network error'); });
     } catch (e) { fail((e && e.message) || 'network error'); }
@@ -11895,11 +11976,16 @@ function hsFetch(cb) {
    by playing another. */
 function hsSubmit(list, entry, cb) {
   var t = hsWith(list, entry);
-  hsLocalPut(t);
-  if (!hsCan() || (!HS_PROXY && !HS_KEY)) { cb(t, 'local', ''); return; }
+  /* Nowhere to send it and nowhere to keep it: the run is gone, and saying
+     so is the only honest thing left.  `t` still goes back so the screen can
+     show where the run WOULD have come, which is worth seeing - but the
+     screen says it was not sent, and nothing is written down anywhere. */
+  if (!hsCan() || (!HS_PROXY && !HS_KEY)) { cb(t, 'offline', 'nowhere to send it'); return; }
   var done = 0;
   var finish = function (where, err) { if (done) return; done = 1; cb(t, where, err || ''); };
-  setTimeout(function () { finish('offline', 'timeout'); }, HS_TIMEOUT_MS);
+  /* the send gets the whole budget in one go: it is asked once, because
+     asking twice puts the same run on the roll twice */
+  setTimeout(function () { finish('offline', 'timeout'); }, HS_GIVE_UP_MS);
   try {
     var url = HS_PROXY || ('https://api.jsonbin.io/v3/b/' + HS_BIN);
     var body = HS_PROXY ? {
@@ -13375,6 +13461,34 @@ function spillWater(x, y, holy) {
   }
   if (cells.length) computeVis();
   return cells.length;
+}
+/* ONE SQUARE WETTED, and the eight round it.  spillWater lays a puddle of
+   its own size wherever a flask breaks; this is the smaller thing the water
+   shield does every turn it holds - the ground you are standing on and what
+   is next to it, and nothing further.  Same bookkeeping, so a puddle laid
+   this way dries the same way and puts out the same fires. */
+function wetOne(x, y) {
+  if (!puddleCanCover(x, y)) return 0;
+  var j = y * MAP_W + x;
+  L.temp = L.temp || {};
+  L.temp[j] = { under: L.tiles[j], puddle: 1,
+                turns: PUDDLE_TURNS_MIN + rnd(PUDDLE_TURNS_MAX - PUDDLE_TURNS_MIN + 1) };
+  L.tiles[j] = WATER;
+  for (var q = L.clouds.length - 1; q >= 0; q--) {
+    var cl = L.clouds[q];
+    if (cl.kind === 'fire' && cl.x === x && cl.y === y) {
+      L.clouds.splice(q, 1);
+      if (L.burning) delete L.burning[j];
+    }
+  }
+  return 1;
+}
+function wetRound(x, y) {
+  var n = wetOne(x, y), d;
+  for (d = 0; d < DIR8.length; d++)
+    n += wetOne(x + DIR8[d][0], y + DIR8[d][1]);
+  if (n) computeVis();
+  return n;
 }
 /* The stream runs on under a bridge, so a current in the water crosses
    from one bank to the other even though the planks themselves are dry.
@@ -15857,7 +15971,7 @@ function perkElemental(dm, kind) {
 function resistPlayer(dm, kind) {
   /* An ember mushroom is not a matter of degree: while it lasts, fire
      does nothing to you at all. */
-  if (kind === 'fire' && P.fireproof > 0) return 0;
+  if (kind === 'fire' && (P.fireproof > 0 || P.wshield > 0)) return 0;
   var id = PERK_FOR_KIND[kind];
   if (!id || !hasPerk(id)) return dm;
   return softenDamage(dm, PERK_RESIST);
@@ -16936,17 +17050,42 @@ function monWeb(m) {
   return true;
 }
 
-/* A half dragon spits fire from across the room, but not with its feet
-   in water and not with a flask of it running off its back. */
-function monFireball(m) {
-  if (m.cancel || m.def.sp !== 'fireball') return false;
-  if (m.cast > 0) { m.cast--; return false; }
+/* ============================ MAY IT BREATHE FIRE AT YOU AT ALL?
+   One question for every fire-breather in the dungeon - the dragon and the
+   half dragon - so a rule cannot be true of one and false of the other.
+   It was: the half dragon would not spit with its feet in water and the
+   dragon would, and water thrown over a half dragon stopped it while the
+   same flask over a dragon did nothing whatever.
+
+   AND IT HAS TO SEE YOU.  Neither of them asked.  A half dragon in a pitch
+   dark room could not see the man three squares away and spat fire at him
+   anyway, turn after turn, from somewhere he could not see either - which
+   is not a fight, it is being shot at by the dark.  Everything else in the
+   dungeon has always had to see you to come for you (monSeesPlayer); the
+   two things that attack from across the room were the two that never
+   asked.
+
+   The dousing is counted down HERE, once, whether or not it breathes -
+   otherwise a soaked dragon that never got a clear shot would stay soaked
+   for ever. */
+function canBreatheFire(m) {
+  if (!m || m.cancel) return false;
   if (m.doused > 0) {
     m.doused--;
     if (m.doused === 0 && canSeeMon(m)) msg(cap(monShort(m)) + ' steams dry.', '6');
     return false;
   }
-  if (isWater(m.x, m.y)) return false;         /* standing in the stuff */
+  /* wading, or standing in a puddle somebody threw at it */
+  if (isWater(m.x, m.y)) return false;
+  /* and it aims at what it can SEE */
+  return monSeesPlayer(m);
+}
+/* A half dragon spits fire from across the room, but not with its feet
+   in water and not with a flask of it running off its back. */
+function monFireball(m) {
+  if (m.cancel || m.def.sp !== 'fireball') return false;
+  if (m.cast > 0) { m.cast--; return false; }
+  if (!canBreatheFire(m)) return false;
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
   if (d < 2 || d > FIREBALL_RANGE) return false;
   if (!shotClear(m.x, m.y, P.x, P.y)) return false;
@@ -17167,6 +17306,8 @@ function monRanged(m) {
   if (monWitch(m)) return true;
   if (monFireball(m)) return true;
   if (m.cancel || m.def.sp !== 'flame') return false;
+  /* the same question the half dragon answers - see canBreatheFire */
+  if (!canBreatheFire(m)) return false;
   var d = Math.max(Math.abs(m.x - P.x), Math.abs(m.y - P.y));
   if (d < 2 || d > RANGED_BREATH_RANGE) return false;
   if (!shotClear(m.x, m.y, P.x, P.y)) return false;
@@ -17698,6 +17839,19 @@ function ringWind(it) {
 }
 function windRings() {
   var all = carriedItems(), i;
+  /* THE WATER SHIELD WINDS ITSELF BACK UP TOO.  Not a ring, but the same
+     bargain - one use, and then a long wait - so it is wound here rather
+     than by a second clock somewhere else that would drift from this one. */
+  for (i = 0; i < all.length; i++) {
+    var ws = all[i];
+    if (!ws || !isWaterShield(ws)) continue;
+    if ((ws.ch | 0) >= 1) { ws.wind = 0; continue; }
+    ws.wind = (ws.wind || 0) + 1;
+    if (ws.wind < WATER_SHIELD_WIND) continue;
+    ws.wind = 0;
+    ws.ch = 1;
+    msg('The water shield is wet again.', 'c');
+  }
   for (i = 0; i < all.length; i++) {
     var it = all[i];
     if (!it || it.t !== 'ring') continue;
@@ -17777,6 +17931,16 @@ function upkeep() {
   if (P.rage > 0) {
     P.rage--;
     if (P.rage === 0) msg('The red haze lifts. Your arm is your own again.', 'y');
+  }
+  /* ================================== THE BALL OF WATER, while it holds
+     Nothing that burns can touch you (see resistPlayer), and the ground
+     round your feet is soaked as you go: fires on those squares go out, and
+     what is left is a puddle - which is why walking up to a dragon with it
+     up shuts the dragon's breath off as well as your own burning. */
+  if (P.wshield > 0) {
+    P.wshield--;
+    wetRound(P.x, P.y);
+    if (P.wshield === 0) msg('The water falls away from you.', 'c');
   }
   if (P.fireproof > 0) {
     P.fireproof--;
@@ -20265,7 +20429,13 @@ function wallJet(tx, ty) {
     path.push([px, py]);
     if (px === tx && py === ty) break;
   }
-  G.bolt = { path: path, kind: 'fire', mode: 'beam',
+  /* WHERE IT COMES FROM, said out loud.  A wand's beam leaves your hand, so
+     the drawing took "the start" to be the man - and a jet out of a wall at
+     a CREATURE has nothing to do with where you are standing.  It was drawn
+     from your own square to the creature's: a long diagonal streak across
+     the room and off the screen, out of nothing, hurting nobody.  G.shot has
+     carried both of its ends all along; this now does too. */
+  G.bolt = { path: path, from: [best[0], best[1]], kind: 'fire', mode: 'beam',
              dir: [-best[2], -best[3]], t: beatNow() };
   sound('boom');
   return best;
@@ -21224,6 +21394,16 @@ function readScroll(it) {
       msg('The parchment waits for you to choose something.', 'c');
       G.queuePick = { kind: n, k: k };
       return true;                       /* identified only after the pick */
+    /* The page does what the shield does, once: the same ball of water and
+       the same count of turns, worked out the same way so the two cannot
+       come to mean different things. */
+    case 'water shield': {
+      var wt = waterShieldTurns(null);
+      P.wshield = Math.max(P.wshield || 0, wt);
+      wetRound(P.x, P.y);
+      msgGain('Water rises round you and hangs there.', 'c', wt + ' turns', 'c');
+      break;
+    }
     case 'scare monster': {
       var sc = rnd(10) + 10;
       P.scare += sc;
@@ -22524,7 +22704,7 @@ function throwAtSquare(it, tx, ty, noFumble) {
     if (victim) {
       /* Water puts a fire breather out.  It is not damage - it is the
          difference between being shot at from across the room and not. */
-      if (victim.def.sp === 'fireball') {
+      if (victim.def.sp === 'fireball' || victim.def.sp === 'flame') {
         victim.doused = DOUSED_TURNS;
         victim.state = 2; victim.disguise = 0;
         msgFight(fightLine('Water runs over ', monShort(victim), '.'),
@@ -23434,11 +23614,48 @@ function identifyItem(it) {
 }
 
 /* ---------------------------------------------------------- use */
+/* ================================================== THE WATER SHIELD
+   Is this the shield that does something?  Asked of the thing itself, so
+   nothing has to know which row of the table it is. */
+function isWaterShield(it) {
+  return !!(it && it.t === 'shield' && SHIELDS[it.k] && SHIELDS[it.k].water);
+}
+/* HOW LONG THE BALL OF WATER HOLDS.  Three turns at worst and five at
+   best, and the shield's own enchantment is what walks it up between them
+   - "depending on how great the water enchantment is", which is the plus on
+   the shield.  A scroll has no plus, so it gives the worst of it; `null`
+   is how it asks. */
+function waterShieldTurns(it) {
+  var lo = WATER_SHIELD_TURNS[0], hi = WATER_SHIELD_TURNS[1];
+  var plus = (it && it.ap) ? it.ap : 0;
+  if (plus < 0) plus = 0;
+  return Math.min(hi, lo + plus);
+}
+function raiseWaterShield(it) {
+  if (squibbed('shield')) return false;
+  if (P.eq.lh !== it) { msg('It works in your hand, not in the pack.', '6'); return false; }
+  if ((it.ch | 0) <= 0) {
+    msg('The shield is dry. It is not ready again yet.', '6');
+    return false;
+  }
+  it.ch--;
+  it.wind = 0;
+  it.known = 1;
+  var wt = waterShieldTurns(it);
+  P.wshield = Math.max(P.wshield || 0, wt);
+  wetRound(P.x, P.y);
+  msgGain('The shield throws up a ball of water round you.', 'c', wt + ' turns', 'c');
+  return true;
+}
 function useItem(it) {
   if (!it) return { took: false };
   /* A stone has one obvious use, and it is not being worn.  ENTER on it
      does what the menu's Throw does. */
   if (it.t === 'weapon' && WEAPONS[it.k].thrown) return { took: false, hurl: it };
+  /* A shield you DO something with.  The only piece of armour that is
+     pressed rather than merely worn, so it is answered before the switch
+     rather than inside a case that is about wearing things. */
+  if (isWaterShield(it)) return { took: raiseWaterShield(it) };
   switch (it.t) {
     case 'potion': return { took: quaff(it) };
     case 'scroll': return { took: readScroll(it) };
@@ -25033,6 +25250,7 @@ function clickAt(mx, my, right) {
       return;
     case 'score':
       if (G.hs && G.hs.typing) return;
+      if (hsHolds()) return;                     /* the tap that opened it */
       scoreKey('Enter');
       return;
     case 'hint':
@@ -26279,6 +26497,46 @@ function glanceFrame() {
            y: Math.round(GLANCE.y - P.y + (VIEW_H >> 1) - (sy[0] + sy[1]) / 2) };
 }
 var LOOK_ZERO = { x: 0, y: 0 };
+/* ------------------------------------------- THE VIEW FOLLOWS THE CURSOR
+   A bow carries ten squares and the glass shows nine ahead of you, so the
+   far end of your own range was off the screen: the cursor went there, as
+   it always could, and there was nothing to see when it arrived.  Which
+   reads - correctly - as a cursor that will not go any further.
+
+   So while a cursor is up on the map, the view keeps it in sight.  It is
+   worked out from the framing already in force and moves the LEAST it can:
+   a cursor comfortably on the glass moves nothing at all, which is the same
+   rule everything else here obeys.  The man goes off the edge rather than
+   the cursor if it comes to it - you are pointing at the square, and a
+   square you cannot see is not one you can aim at.
+
+   One function for all three cursors - the throw, the blink and the look -
+   because they are one thing: a square you are moving about the map with
+   the arrows. */
+var CURSOR_EDGE = 1;            /* and not hard against the frame */
+function cursorAt() {
+  if (typeof G === 'undefined' || !G) return null;
+  if (G.mode === 'aim' && G.aimSq) return G.aimSq;
+  if (G.mode === 'blink' && G.bl) return G.bl;
+  if (G.mode === 'look' && G.look) return G.look;
+  return null;
+}
+function cursorFrame() {
+  var c = cursorAt();
+  if (!c || typeof P === 'undefined' || !P) return null;
+  var sx = viewSpanX(), sy = viewSpanY();
+  var hx = VIEW_W >> 1, hy = VIEW_H >> 1;
+  var ox = LOOK_AT.x, oy = LOOK_AT.y;
+  /* where the cursor sits with the view as it stands: a BIGGER offset
+     moves the map left, so it takes it off the top of this sum */
+  var vx = c.x - P.x + hx - ox, vy = c.y - P.y + hy - oy;
+  if (vx < sx[0] + CURSOR_EDGE) ox -= (sx[0] + CURSOR_EDGE) - vx;
+  else if (vx > sx[1] - CURSOR_EDGE) ox += vx - (sx[1] - CURSOR_EDGE);
+  if (vy < sy[0] + CURSOR_EDGE) oy -= (sy[0] + CURSOR_EDGE) - vy;
+  else if (vy > sy[1] - CURSOR_EDGE) oy += vy - (sy[1] - CURSOR_EDGE);
+  if (ox === LOOK_AT.x && oy === LOOK_AT.y) return null;   /* nothing to do */
+  return { x: ox, y: oy };
+}
 /* Where the view wants to be, before the hand is taken into account.  The
    hand wins: while the map has been dragged or pushed with the arrows,
    the view is where you put it and nothing frames anything. */
@@ -26307,7 +26565,7 @@ function lookOffset() {
      there is no jump when the map is picked up.  What was wrong was
      leaving the other two adding themselves as well. */
   if (G.drag) return LOOK_ZERO;
-  return glanceFrame() || LOOK_AT;
+  return glanceFrame() || cursorFrame() || LOOK_AT;
 }
 /* Is a square of the map on the glass as the view stands now? */
 function onGlass(mx, my) {
@@ -26760,7 +27018,16 @@ function walkTick() {
   var w = G.walk;
   /* the reasons to stop, all of them checked before the step */
   if (heldFast()) { stopWalk('You cannot move.'); return; }
-  if (G.perkPick) { G.walk = null; return; }
+  /* ONLY WHEN THE BOX IS ACTUALLY ABOUT TO OPEN.  A perk PENDING is not a
+     reason to refuse to move: perkReady waits for nothing hostile to be in
+     sight, and you level up IN a fight, so a pending choice can sit there
+     for as long as the fight lasts.  This cancelled every walk for the whole
+     of that - and on a touchscreen EVERY move is a walk, there being no
+     arrow keys, so the game stopped dead: no box, because something was
+     still in sight, and no way to move, because the pending box ate every
+     tap.  With a keyboard it went unnoticed for months, because the arrows
+     step you directly and are not a walk at all. */
+  if (perkReady()) { G.walk = null; return; }
   if (P.hp < w.hp) { stopWalk(null); return; }
   if (G.hungerState >= 2 && G.hungerState > w.hunger) { stopWalk(null); return; }
   var foe = watchedByFoe(w.known);
@@ -27192,7 +27459,10 @@ function aimKey(k) {
   if (!d) return;
   var nx = clamp(G.aimSq.x + d[0], 0, MAP_W - 1);
   var ny = clamp(G.aimSq.y + d[1], 0, MAP_H - 1);
-  if (Math.max(Math.abs(nx - P.x), Math.abs(ny - P.y)) <= SHOT_RANGE) {
+  /* shotRange(), not SHOT_RANGE: a long bow carries further and the
+     marksman further still, and throwValid has always known that.  The
+     cursor stopped at ten while the shot itself would have gone twelve. */
+  if (Math.max(Math.abs(nx - P.x), Math.abs(ny - P.y)) <= shotRange()) {
     G.aimSq.x = nx; G.aimSq.y = ny;
   }
 }
@@ -27509,6 +27779,12 @@ function openScores(from) {
   var e = hsEntryNow();
   G.hs = {
     list: G.hsBoard || null, entry: e, from: from || 'end',
+    at: nowMs(),
+    /* Has the reading FINISHED - not "did a list arrive".  A read that
+       could not reach the roll now brings back nothing at all, and "no
+       list" would otherwise mean "still coming" for ever, which would hold
+       the keys down and trap you on the screen. */
+    done: 0,
     typing: 0, sent: 0, where: '', place: 0,
     read: G.hsRead || '', err: G.hsErr || ''
   };
@@ -27525,10 +27801,11 @@ function openScores(from) {
      a roll you have seen does not blink out to "reading the roll..."
      and back; and hsReady is asked once, off whichever list arrives
      first, so it cannot ask you for your name twice. */
-  if (G.hs.list) hsReady(G.hs.list);
+  if (G.hs.list) hsReady(G.hs.list, G.hsRead);
   hsFetch(function (list, where, err) {
     G.hsBoard = list; G.hsRead = where; G.hsErr = err || '';
     if (!G.hs) return;
+    G.hs.done = 1;
     G.hs.read = where;
     G.hs.err = err || '';
     /* a run already sent has a table of its own with that run in it -
@@ -27542,12 +27819,36 @@ function openScores(from) {
        one case where it is better than nothing. */
     if (!first && where !== 'bin') return;
     G.hs.list = list;
-    if (first) hsReady(list);
+    /* ASKED OFF THE REAL ROLL, not off whichever list got here first.
+       Asking ONCE is right - nobody should be asked for their name twice -
+       but the list that arrives first can be this machine's own copy,
+       handed back by a read that could not reach the roll.  That copy is
+       your own ten best runs and nobody else's, so it can refuse a run the
+       real roll would have taken, and then the real roll arriving changed
+       nothing because the question had already been asked.  A run refused
+       that way is lost for good.
+
+       So the bin's answer is taken whenever it comes, unless you are
+       already typing - taking the box away from somebody mid-name would be
+       its own small cruelty, and it costs nothing to leave it: the roll
+       itself decides what goes on it, and a run sent that does not make it
+       is simply dropped at the far end. */
+    if (first || (where === 'bin' && !G.hs.typing)) hsReady(list, where);
   });
 }
 /* the table has arrived: either it wants a name or it does not */
-function hsReady(list) {
+function hsReady(list, where) {
   if (!G.hs || G.hs.sent) return;
+  /* ONLY AGAINST THE ROLL ITSELF.  Not reached is not the same as empty:
+     an empty roll takes anybody, so judging a run against NOTHING would ask
+     every dying player for a name and then have nowhere to send it.
+     Unreached means unknown, and unknown is not a yes.
+
+     Having a list is the whole test, now that there is no copy kept on this
+     machine: a list can only have come from the roll, so holding one is
+     knowing.  It used to be worth asking WHERE, because the answer might
+     have been your own ten best runs wearing the roll's clothes. */
+  if (!list) { G.hs.typing = 0; G.hs.place = 0; return; }
   /* Read from the title screen, or read from the pause menu without
      ending the run, it is a table and nothing else.  There is no run to
      put in it yet either way - the rogue standing on the splash has not
@@ -27597,6 +27898,25 @@ function hsLeave() {
   if (from === 'title' || from === 'pause') { G.mode = from; return; }
   newGame(false);
 }
+/* IS THE ROLL STILL COMING?  Nothing that leaves the screen may be acted
+   on until it has arrived, because leaving is how a run is thrown away. */
+function hsWaiting() { return !!(G.hs && !G.hs.sent && !G.hs.done && !G.hs.list); }
+/* ONLY WHEN THERE IS A RUN TO LOSE.  Read from the title screen or from the
+   pause menu it is a table and nothing else - leaving it goes back to where
+   you were and costs nothing, so holding the key there would be a game
+   ignoring you for no reason at all. */
+function hsAtStake() { return !!(G.hs && G.hs.from === 'end'); }
+/* And how long after the screen opens a key is treated as the tail of the
+   press that OPENED it.  A key held down on the gravestone repeats thirty
+   times a second: the first repeat opens the roll and the second leaves it,
+   and the player never sees the table at all. */
+var HS_GUARD_MS = 500;
+function hsSettling() {
+  return !!(G.hs && !G.hs.sent && nowMs() - (G.hs.at || 0) < HS_GUARD_MS);
+}
+/* the two together: the only condition under which a key that leaves is
+   swallowed rather than obeyed */
+function hsHolds() { return hsAtStake() && (hsWaiting() || hsSettling()); }
 function scoreKey(k) {
   if (G.hs && G.hs.typing) {
     if (k === 'Enter') { hsSend(); return; }
@@ -27611,8 +27931,23 @@ function scoreKey(k) {
       G.hs.entry.name += k;
     return;
   }
-  if (k === 'Enter' || k === ' ' || k === 'Escape' || k === 'r' || k === 'R')
+  /* THE ONE PLACE A RUN IS THROWN AWAY, and it was standing wide open.
+
+     ENTER on the gravestone opens the roll; the roll takes a moment to come;
+     and until it comes nobody is typing, so the very next ENTER left again -
+     taking the run with it, before the table it belonged on had even
+     arrived.  A key HELD on the gravestone did it by itself, one repeat
+     opening the roll and the next leaving it, and a player who simply
+     pressed ENTER twice did it every time.  The screen invited it, too: it
+     drew "ENTER to rise again" along the bottom while it was still reading.
+
+     So: not while the roll is still coming, and not in the half second after
+     the screen opens.  You can always leave - a moment later, or with a
+     second, deliberate press. */
+  if (k === 'Enter' || k === ' ' || k === 'Escape' || k === 'r' || k === 'R') {
+    if (hsHolds()) return;
     hsLeave();
+  }
 }
 function drawScores() {
   /* Ten rows at eight pixels apiece, a heading and two lines under them:
@@ -27645,24 +27980,35 @@ function drawScores() {
      it came back.  A box with a heading and nothing under it reads as
      something broken. */
   if (!list || (!list.length && !G.hs.typing && !G.hs.sent)) {
-    if (!list) {
+    /* THREE THINGS CAN BE TRUE, and which one it is matters more than what
+       is under the heading.  Unreached is drawn as unreached with NOTHING
+       under it: there is no copy on this machine any more to fill the space
+       with, and filling it was the whole trouble - a table of your own ten
+       best runs under the words THE TEN BEST is a screen that says all is
+       well when nothing has been reached. */
+    if (isOffline) {
+      textIn('the roll could not be reached', x, w, y + 20, 'R');
+      var errDetail = (G.hs && G.hs.err) || G.hsErr || 'network error';
+      textIn('(' + errDetail.slice(0, 22) + ')', x, w, y + 29, 'O');
+      /* and what that cost, said plainly rather than left to be guessed */
+      if (hsAtStake())
+        textIn('your run was not sent', x, w, y + 40, 'O');
+    } else if (!list) {
       /* Three goes at four seconds is twelve seconds of this line, and a
          line that does not change for twelve seconds reads as a game
          that has stopped.  It says which go it is on without saying so
          in numbers. */
       textIn(G.hsTry > 1 ? 'still reading the roll...' : 'reading the roll...',
         x, w, y + 24, '6');
-    } else if (isOffline) {
-      textIn('the roll could not be reached', x, w, y + 20, 'R');
-      var errDetail = (G.hs && G.hs.err) || G.hsErr || 'network error';
-      textIn('(' + errDetail.slice(0, 22) + ')', x, w, y + 29, 'O');
     } else {
       textIn('nobody has come back up yet', x, w, y + 24, '6');
     }
-    if (list && !HS_KEY && !HS_PROXY)
-      textIn('(no roll set up: this machine only)', x, w, y + 38, '4');
-    textIn(G.hs && (G.hs.from === 'title' || G.hs.from === 'pause') ? 'ENTER to go back' : 'ENTER to rise again',
-      x, w, y + h - 9, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
+    /* and it does not offer a key it is about to refuse */
+    if (hsWaiting() && hsAtStake())
+      textIn('one moment...', x, w, y + h - 9, '4');
+    else
+      textIn(G.hs && (G.hs.from === 'title' || G.hs.from === 'pause') ? 'ENTER to go back' : 'ENTER to rise again',
+        x, w, y + h - 9, ((Date.now() / 500) | 0) % 2 ? 'c' : 'B');
     return;
   }
 
@@ -28137,10 +28483,12 @@ function lookKey(k) {
   var d = keyDir(k);
   if (!d) return;
   G.look.lines = null;                    /* moving closes the box */
-  /* it stays on the part of the map you can actually see */
-  var camx = P.x - (VIEW_W >> 1), camy = P.y - (VIEW_H >> 1);
-  G.look.x = clamp(G.look.x + d[0], Math.max(0, camx), Math.min(MAP_W - 1, camx + VIEW_W - 1));
-  G.look.y = clamp(G.look.y + d[1], Math.max(0, camy), Math.min(MAP_H - 1, camy + VIEW_H - 1));
+  /* THE MAP, not the camera.  Both of these used to be clamped to whatever
+     the view happened to be showing, which is the same fault by a different
+     route: the cursor stopped at the edge of the screen instead of the
+     screen following the cursor.  See cursorFrame. */
+  G.look.x = clamp(G.look.x + d[0], 0, MAP_W - 1);
+  G.look.y = clamp(G.look.y + d[1], 0, MAP_H - 1);
 }
 /* The blinking square itself belongs on the map and turns with it; the
    words about it do not - see drawMapBoxes. */
@@ -28650,6 +28998,11 @@ function itemActions(it, ref) {
        you had identified it.  What the ring does is in its description,
        once you know; the menu only offers to press it. */
     case 'ring': out.push(['use', 'Press it']); break;
+    /* the one piece of armour with a verb of its own */
+    case 'shield':
+      if (typeof isWaterShield === 'function' && isWaterShield(it) &&
+          ref.kind === 'eq') out.push(['use', 'Raise the water']);
+      break;
     case 'pouch': out.push(['use', 'Open']); break;
     case 'pin': out.push(['use', 'Pin it on']); break;
     /* it goes down where you are standing, so the verb is the whole of
@@ -29422,7 +29775,13 @@ function boltPoints(b, camx, camy, phase) {
   if (!p.length) return null;
   var dx = b.dir ? b.dir[0] : 1, dy = b.dir ? b.dir[1] : 0;
   var half = TS >> 1;
-  var x0 = VIEW_PX + (P.x - camx) * TS + half, y0 = VIEW_PY + (P.y - camy) * TS + half;
+  /* THE END IT COMES FROM.  The man, for anything that leaves his hand -
+     which is every wand and every ring - and the nozzle for a jet out of a
+     wall, which may be aimed at something that is not him.  Taking the man
+     as the start unconditionally drew a flame from his own feet to whatever
+     a trap had gone off under, halfway across the floor. */
+  var src = b.from || [P.x, P.y];
+  var x0 = VIEW_PX + (src[0] - camx) * TS + half, y0 = VIEW_PY + (src[1] - camy) * TS + half;
   var end = p[p.length - 1];
   var x1 = VIEW_PX + (end[0] - camx) * TS + half, y1 = VIEW_PY + (end[1] - camy) * TS + half;
   var n = p.length * st.segs;
@@ -29628,7 +29987,13 @@ function floorSprite(mx, my) {
     if (L.roomAt && mx >= 0 && my >= 0 && mx < MAP_W && my < MAP_H) {
       var ri = L.roomAt[my * MAP_W + mx];
       var boards = (ri >= 0 && L.rooms) ? floorOfRoom(L.rooms[ri]) : null;
-      if (boards) return (tileHash(mx, my) & 1) ? boards + '2' : boards;
+      /* A HERRINGBONE IS NOT A SCATTER.  The two cells make the pattern
+         only if they ALTERNATE - so the same board is never laid beside
+         itself, along a row or down a column - and a hash cannot do that:
+         it deals each square independently, so about half of them end up
+         next to their own twin and the floor reads as noise in two browns.
+         The parity of the square is the whole rule, and it is free. */
+      if (boards) return ((mx + my) & 1) ? boards + '2' : boards;
     }
     /* then the level: a floor paved in marble is dealt from that PAIR and
        nothing else - the three flagstones are the ordinary dungeon's own
@@ -31651,6 +32016,7 @@ function drawStats() {
   if (P.hallu) fl.push('Halu');
   if (P.haste) fl.push('Fast');
   if (P.rage) fl.push('Rage');
+  if (P.wshield) fl.push('Water shield');
   if (P.fireproof) fl.push('Fireproof');
   if (P.frozen) fl.push('Stuck');
   if (P.scare) fl.push('Scare');
@@ -32418,13 +32784,19 @@ var HELP = [
   ['ESC', 'restart, help, or leave'],
   ['', ''],
   ['IN THE PACK', ''],
-  ['SPACE', 'menu: wield, wear, drop, move, use'],
-  ['ENTER', 'do the obvious thing at once'],
-  ['ESC', 'back out / close pouch'],
-  ['BUTTONS', 'walk down below the squares'],
-  ['TOP ROW', 'R.hand  body  L.hand  head  feet'],
-  ['MARKS', 'z asleep  ? hunting  ! seen  + ally'],
-  ['RUNES', 'some sleep until the item is known']
+  /* WHAT THE TWO KEYS ACTUALLY DO, said as verbs.  SPACE opens the menu on
+     whatever is under the cursor - out in the dungeon the same key waits a
+     turn, and one line says both.  ENTER does the obvious thing at once,
+     and "the obvious thing" was not an instruction anybody could act on;
+     these are the five things it turns out to be. */
+  ['SPACE', 'wait  /  open the menu on it'],
+  ['ENTER', 'equip, throw, use, drink, read'],
+  ['ESC', 'back out / close pouch']
+  /* The four rows that used to follow - BUTTONS, TOP ROW, MARKS, RUNES -
+     are gone.  They described the screen rather than telling you how to
+     play it, and the first of them ("walk down below the squares") did not
+     parse at all.  The pack shows its own rows; the marks over a creature's
+     head are in its description; a rune says what it is once it is known. */
 ];
 /* Two lines over the map, because the answer is about the square you are
    standing on and you should still be able to see it. */
