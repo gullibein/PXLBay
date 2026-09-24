@@ -445,6 +445,13 @@ var SPILL_RANGE = 3;
 /* Seen with night eyes, a dark room is all there to be read - but it is
    still a dark room, and it should look like one. */
 var NIGHT_SHADE = 0.55;
+/* LINES OF SIGHT DRAWN AS LINES.  What you can see is still decided a
+   square at a time - that is the rule, and nothing about it changes - but
+   the edge of it is drawn as the straight shadow a wall, a corner or a
+   pillar would really throw from where you are standing, so a square
+   half hidden behind a corner is drawn half in shadow.  See
+   drawSightShadows.  0 puts the square edges back. */
+var LINEAR_SIGHT = 1;
 /* Three stages of light.  Close to you it is as bright as it gets; out
    at the edge of what you can see it is dimmer, so you can tell where
    your sight is about to run out; and beyond that is what you remember
@@ -1273,6 +1280,11 @@ var CAP_LIGHT_FULL = 0, CAP_LIGHT_DIM = 4.5, CAP_RIM_FADE = 1;
    one and the fall between them is gone */
 var CAP_SPACING = 6;
 var CAP_LIGHT_MUL = 0.95;      /* the cave has nothing else to see by */
+/* HOLY WATER GLOWS, faintly.  A steady pale light off every square of a
+   holy pool, the cap's arithmetic at a far smaller reach and strength:
+   a pool should be something you notice in a dark room, not a lamp. */
+var GLOW_HOLY_LIGHT = '#a8d8ff';
+var HOLY_LIGHT_DIM = 2, HOLY_RIM_FADE = 1, HOLY_LIGHT_MUL = 0.4;
 /* Which mushrooms glow: the ones growing in the cave.  A cap in your
    pack, or one lying in an ordinary dungeon room, is just a mushroom -
    the light is the cavern's and it belongs to the cavern.  Data, and so
@@ -1687,6 +1699,12 @@ var BARREL_DAMAGE = [6, 10];  /* a barrel of powder, not a stick */
    squares, walls included, and lights any other barrel it reaches - so a
    powder room comes down in a cascade you can watch and outrun. */
 var BARREL_FUSE = 1, BARREL_BLAST = 2;
+/* THE RHYTHM OF A CHAIN.  Barrels that catch together go up in the same
+   round, and they go up one after another at least this far apart - a
+   row of bangs rather than one bang with a lot of cells.  Each flash
+   lasts BLAST_FLASH_MS, so at this spacing every one is still burning
+   when the next goes, which is what reads as the whole store going up. */
+var BARREL_CHAIN_MS = 150;
 /* A stick of dynamite lying on the floor catches from any flame beside
    it, and then it is the same bargain a barrel offers: one round to be
    somewhere else.  It blinks white through that round so the round is
@@ -2135,8 +2153,13 @@ function shadeFamily(cells, shades) {
 var FOODS = [
   { n: 'food ration', pl: 'food rations', feed: [1100, 300], p: 30, w: 2,
     s: 'food', line: 'Yum, that tasted good.', col: 'G' },
-  /* the old mold ball, still the thing you eat when there is nothing else */
-  { n: 'mold ball', pl: 'mold balls', feed: [700, 300], p: 14, w: 4,
+  /* The old mold ball, still the thing you eat when there is nothing else -
+     and worth a fifth of a stomach, exactly: 400 of FOOD_MAX.  It was 700
+     to 999, which is a meal, and a lump of cave mold is not a meal.  At
+     under 700 it counts as a snack, which is what it is: it takes the edge
+     off and does not reset the clock.  (FOOD_MAX is declared below this
+     table, so the figure is written out; the rules suite holds it to 20%.) */
+  { n: 'mold ball', pl: 'mold balls', feed: [400, 0], p: 14, w: 4,
     s: 'fruit', line: 'Yuk, this tastes awful.', col: 'g' },
   /* Five mushrooms grow down here and only one of them is only food.
      They are told apart by their colour, and which colour does what is
@@ -4451,7 +4474,7 @@ function hintMarks(i) {
 var HINTS = [
   "It's easier to hit far away enemies with arrows or throwing weapons. Once they get closer than four squares, they are harder to hit.",
   'Step out of a creature\u2019s sight for two turns and it loses track of you. Come back at it and the first blow catches it off guard.',
-  'Water slows you down, and also most enemies. Flying things, ghosts and snakes travel through it unbothered.',
+  'You move slower in water and so do most monsters. You can use this to your advantage.',
   'A fall onto moss, rubble or a rug hurts less than a fall onto stone. Falling into water hurts least of all.',
   'A spear or a throwing dagger can be hurled at range and picked up again afterwards.',
   'Bows and crossbows both take arrows. There is no need to carry two kinds.',
@@ -6139,27 +6162,11 @@ function addHolyPool(L) {
       if (L.tiles[k] === FLOOR && !L.decor[k]) L.decor[k] = 'kerb';
     }
   }
-  /* AND THE BONES ROUND IT, the way the shrine has them.  This pool had a
-     kerb and nothing else, so two "shrines" in a row read as bare - the
-     bones are what say people came here.  They go on the ring OUTSIDE the
-     dressed stone: the kerb is the lip of the pool and stays whole. */
-  var lip = {}, b, bx, by, ddx, ddy;
-  for (i = 0; i < cells.length; i++)
-    for (ddy = -1; ddy <= 1; ddy++) for (ddx = -1; ddx <= 1; ddx++)
-      lip[(cells[i][1] + ddy) * MAP_W + (cells[i][0] + ddx)] = 1;
-  for (b in lip) {
-    var bi = b | 0;
-    bx = bi % MAP_W; by = (bi / MAP_W) | 0;
-    for (ddy = -1; ddy <= 1; ddy++) for (ddx = -1; ddx <= 1; ddx++) {
-      var ox = bx + ddx, oy = by + ddy, oj = oy * MAP_W + ox;
-      if (ox < 1 || oy < 1 || ox >= MAP_W - 1 || oy >= MAP_H - 1) continue;
-      if (lip[oj]) continue;                    /* the kerb keeps its stone */
-      if (L.tiles[oj] !== FLOOR || L.decor[oj]) continue;
-      if (ox === L.stair.x && oy === L.stair.y) continue;
-      if (rnd(100) < SHRINE_BONES_PCT)
-        L.decor[oj] = rnd(2) ? boneHeap() : 'skull';
-    }
-  }
+  /* NO BONES ROUND IT.  They were laid here once, the way the shrine has
+     them - and that made every holy pool read as the shrine.  The bones
+     are what say THIS is the place that takes something from you: the
+     shrine that lifts your curses for a piece of your health.  A pool of
+     holy water only mends you, and nobody died at it. */
   L.holy = { x: cells[0][0], y: cells[0][1], n: cells.length };
   return true;
 }
@@ -11833,6 +11840,9 @@ function packLevel(lv) {
     if (k === 'tiles' || k === 'flags' || k === 'roomAt') continue;
     if (k === 'mons') continue;
     if (k === 'litMap' || k === 'darkMap' || k === 'shade') continue;   /* stored as bytes */
+    /* a ghost is a turn still being played back - see leaveGhost - and a
+       save is taken between turns, never in the middle of one */
+    if (k === 'goneAt' || k === 'held') continue;
     o[k] = lv[k];
   }
   o.tiles = b64FromBytes(lv.tiles);
@@ -11918,7 +11928,10 @@ function packRun() {
                walk: 1,
                bl: 1, look: 1, pause: 1, choice: 1, perkPick: 1, textSel: 1,
                queuePick: 1, pickJob: 1, aimSq: 1, slots: 1, hint: 1, pan: 1,
-               hs: 1, hsBoard: 1, hsRead: 1, hsTry: 1, shake: 1 };
+               hs: 1, hsBoard: 1, hsRead: 1, hsTry: 1, shake: 1,
+               /* a key pressed during a push, waiting its turn - restored,
+                  it would take a step on its own the moment you loaded */
+               pushNext: 1 };
   for (k in G) if (!skip[k]) g[k] = G[k];
   var floors = {}, d;
   for (d in G.floors) floors[d] = packLevel(G.floors[d]);
@@ -11975,6 +11988,14 @@ function mendRun() {
   /* the pack is a fixed number of squares, however many it had then */
   if (!P.slots) P.slots = [];
   while (P.slots.length < N_SLOTS) P.slots.push(null);
+  /* A run saved before the first-bow notice existed, already carrying a
+     bow, has found one: telling him so on the first frame after loading
+     would be news from long ago. */
+  if (!G.bowFound) {
+    var had = carriedItems();
+    for (i = 0; i < had.length; i++)
+      if (had[i] && had[i].t === 'weapon' && WEAPONS[had[i].k] && WEAPONS[had[i].k].launch) { G.bowFound = 1; break; }
+  }
   /* A trap that is no row of the table.  An earlier build lifted a trap
      out of a loaded game and wrote row -1 of ten into the pack; nothing
      can say WHICH trap that was, because the one thing that knew was the
@@ -12288,6 +12309,113 @@ function hsSubmit(list, entry, cb) {
   } catch (e) { finish('offline', (e && e.message) || 'network error'); }
 }
 
+/* ------------------------------------------ the picture before the bang
+
+   "If explosions break down walls, the walls are broken BEFORE we see the
+   explosion."  They were: a turn is worked out the instant the key goes
+   down, so a stick of dynamite in the air had already taken the wall out
+   - and the room behind it was already lit, already seen, already drawn -
+   while the stick was still crossing the floor.  The third barrel of a
+   chain did the same a beat before its own bang.
+
+   The rules have to change at once; the PICTURE must not.  So an
+   explosion that changes the ground takes a copy of everything the
+   drawing reads about the ground - the squares, what is on them, what you
+   can see and remember, where the light is - and the renderer draws from
+   that copy until the moment of the bang (see heldPicture).  Several
+   bangs in a round each hold the picture as it was just before them, and
+   at any moment the one drawn is the one belonging to the next bang still
+   to come.
+
+   Nothing about a creature or an item is held: they are drawn by their
+   own positions and their own stamps, which have always been right.  A
+   hold is dropped the moment a new order is given (dropHeldPictures),
+   because an order cuts the last turn's playback short and a picture of
+   the world from before it would then be simply wrong. */
+function holdPicture(at) {
+  if (!L || !L.tiles || !(at > nowMs())) return;
+  var now = nowMs(), keep = [], i, k;
+  for (i = 0; i < (L.held || []).length; i++) if (L.held[i].at > now) keep.push(L.held[i]);
+  var copy = function (o) { var c = {}; for (k in (o || {})) c[k] = o[k]; return c; };
+  var arr = function (a) { return a ? a.slice() : a; };
+  keep.push({ at: at,
+              tiles: arr(L.tiles), flags: arr(L.flags), roomAt: arr(L.roomAt),
+              litMap: arr(L.litMap), darkMap: arr(L.darkMap),
+              decor: copy(L.decor), decorFacing: copy(L.decorFacing),
+              locks: copy(L.locks), sealed: copy(L.sealed), doorMat: copy(L.doorMat),
+              torchSeen: copy(L.torchSeen), torches: arr(L.torches) });
+  L.held = keep;
+}
+function dropHeldPictures() { if (L) L.held = []; }
+/* the parts of a level a held picture stands in for */
+var HELD_KEYS = ['tiles', 'flags', 'roomAt', 'litMap', 'darkMap', 'decor', 'decorFacing',
+                 'locks', 'sealed', 'doorMat', 'torchSeen', 'torches'];
+
+/* ------------------------------ gone from the rules, not yet from the picture
+
+   A turn is worked out in one go and played back afterwards, so a thing
+   the rules take away mid-turn is taken away at the very start of the
+   playback - and the thing that took it may not be drawn for a beat yet.
+   The third barrel of a chain was deleted when the round was worked out
+   and blew up 300ms later: for 300ms there was no barrel on its square
+   and no fire either, and then a bang out of bare floor.
+
+   `L.showAt` is the other half of this and has been here a long time: a
+   thing laid mid-turn is not drawn before its moment.  A ghost is a thing
+   REMOVED mid-turn, still drawn until its moment - the barrel standing
+   there with its fuse burning until the instant it goes up.  The renderer
+   draws them and throws each one away the moment it has passed. */
+function leaveGhost(x, y, what, name, at, fuse) {
+  if (!L) return;
+  var now = nowMs(), keep = [], i;
+  for (i = 0; i < (L.goneAt || []).length; i++) if (L.goneAt[i].at > now) keep.push(L.goneAt[i]);
+  if (at > now) keep.push({ x: x, y: y, what: what, name: name, at: at, fuse: fuse ? 1 : 0 });
+  L.goneAt = keep;
+}
+
+/* ------------------------------------------------- the flash of a bang
+
+   G.splash was ONE slot, and every explosion overwrote it.  That was fine
+   while only one thing went off in a turn, and it is not what a row of
+   barrels does: they catch together, their fuses run out together, and
+   they go up in the same round a beat apart.  Each one wrote over the
+   last - and the last, stamped furthest into the future, replaced the
+   others before a single one of them had been drawn.  Reported exactly
+   as it looks: "When lighting up powder barrels, I only see one barrel's
+   explosion."  Five went up; one was drawn.
+
+   So a splash is added through `addSplash`, which keeps the ones already
+   there by linking them behind it, and the drawing and the light walk the
+   whole chain (`liveSplashes`).  G.splash is still the NEWEST one, so
+   everything that asks "what just went off" - a good many checks among
+   them - reads exactly what it always read; and setting it by hand to
+   one splash, or to nothing, still means exactly that, since a splash
+   nobody linked has nothing behind it. */
+var SPLASH_KEEP = 32;
+function addSplash(s) {
+  s.prev = (G && G.splash) || null;
+  G.splash = s;
+  /* and never longer than SPLASH_KEEP, whether or not anything has drawn
+     it - a check can set off a thousand bangs without ever drawing one */
+  var n = 1, q = s;
+  while (q.prev && n < SPLASH_KEEP) { q = q.prev; n++; }
+  q.prev = null;
+  return s;
+}
+function splashLife(s) { return s.kind === 'zap' ? shockLife(s) : BLAST_FLASH_MS; }
+/* every splash still to come or still showing, newest first - and the
+   ones that have finished are put away, so the chain cannot grow */
+function liveSplashes() {
+  var out = [], s = G.splash, n = 0, now = nowMs(), i;
+  while (s && n++ < SPLASH_KEEP) {
+    if (now <= s.t + splashLife(s)) out.push(s);
+    s = s.prev;
+  }
+  for (i = 0; i < out.length; i++) out[i].prev = out[i + 1] || null;
+  G.splash = out.length ? out[0] : null;
+  return out;
+}
+
 /* -------------------------------------------------------------- shake
    Knocking the view about for a moment.  The offset is worked out from
    the age rather than stepped and kept, like everything else that moves
@@ -12297,17 +12425,49 @@ function hsSubmit(list, entry, cb) {
    It is on the world's clock, so a box on the screen holds it still
    along with everything else - a blast frozen mid-shake stays frozen
    rather than rattling behind the dialog you opened. */
+/* A SHAKE ON TOP OF A SHAKE IS ANOTHER KICK, NOT A REPLACEMENT.
+
+   There was one shake and each bang overwrote it.  A row of barrels going
+   up together in one round is several bangs a beat or two apart - and the
+   last of them, stamped furthest into the future, replaced all the rest
+   BEFORE any of them had started.  So the first barrels of a chain went
+   off with the view perfectly still and only the last one moved it.
+
+   So a bang that lands while the view is still being knocked about (or is
+   about to be) is another KICK in the same shake: the shake runs from the
+   first to the end of the last, and at every moment it is as hard as the
+   freshest kick makes it.  One bang on its own is exactly what it always
+   was - one kick at the start, `ms` long. */
 function shakeScreen(ms, amp, seed) {
-  G.shake = { t: beatNow(), ms: ms || SHAKE_MS, amp: amp || SHAKE_AMP,
-              seed: (seed || 1) >>> 0 };
+  var at = beatNow(), one = ms || SHAKE_MS, a = amp || SHAKE_AMP;
+  var s = G.shake;
+  if (s && at < s.t + s.ms) {
+    var start = Math.min(s.t, at), kicks = [], i;
+    var had = s.kicks || [0];
+    for (i = 0; i < had.length; i++) kicks.push(had[i] + s.t - start);
+    kicks.push(at - start);
+    var end = Math.max(s.t + s.ms, at + one);
+    G.shake = { t: start, ms: end - start, one: s.one || one,
+                amp: Math.max(s.amp, a), seed: s.seed, kicks: kicks };
+    return;
+  }
+  G.shake = { t: at, ms: one, one: one, amp: a, seed: (seed || 1) >>> 0, kicks: [0] };
 }
 function shakeOff() {
   if (!G || !G.shake) return [0, 0];
   var age = nowMs() - G.shake.t;
   if (age < 0) return [0, 0];              /* stamped a beat ahead, not yet */
   if (age >= G.shake.ms) { G.shake = null; return [0, 0]; }
-  /* hardest at the start and gone by the end */
-  var amp = G.shake.amp * (1 - age / G.shake.ms);
+  /* hardest at the start of each kick and gone by the end of it */
+  var one = G.shake.one || G.shake.ms, kicks = G.shake.kicks || [0], amp = 0, q;
+  for (q = 0; q < kicks.length; q++) {
+    var ka = age - kicks[q];
+    if (ka < 0 || ka >= one) continue;
+    var ampK = G.shake.amp * (1 - ka / one);
+    if (ampK > amp) amp = ampK;
+  }
+  /* between two kicks far enough apart that the first has died away */
+  if (!(amp > 0)) return [0, 0];
   var n = (age / SHAKE_STEP_MS) | 0;
   var h = (n * 2654435761 + G.shake.seed * 40507) >>> 0;
   var dx = Math.round(amp * (((h & 7) / 7) * 2 - 1));
@@ -14947,6 +15107,40 @@ function glowCap(g, x, y) {
       src, 1, capFall(d + 1));
   }
 }
+/* ---------------------------------------------- the light off holy water
+   Every square of a holy pool gives off a little light of its own:
+   strongest on the water, gone a square and a half out.  Steady, like a
+   cap, and in its own pale colour. */
+function holyCurve(d, out) {
+  if (d >= out) return 0;
+  return GLOW_FULL * HOLY_LIGHT_MUL * (1 - d / out);
+}
+function holyWash(d) { return holyCurve(d, HOLY_LIGHT_DIM + HOLY_RIM_FADE); }
+function glowHoly(g, x, y) {
+  var dx, dy, r = Math.ceil(HOLY_LIGHT_DIM + HOLY_RIM_FADE);
+  var src = { x: x, y: y, tx: x, ty: y, k: 'holy,' + x + ',' + y, phase: 0,
+              col: GLOW_HOLY_LIGHT, dim: HOLY_LIGHT_DIM, rim: HOLY_RIM_FADE,
+              wash: holyWash, steady: 1 };
+  for (dy = -r; dy <= r; dy++) for (dx = -r; dx <= r; dx++) {
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d > HOLY_LIGHT_DIM + HOLY_RIM_FADE + 0.001) continue;
+    glowPut(g, x + dx, y + dy, holyCurve(d, HOLY_LIGHT_DIM), GLOW_HOLY_LIGHT, 0, 0,
+      src, 1, holyCurve(d + 1, HOLY_LIGHT_DIM));
+  }
+}
+function holyLight(g) {
+  if (!L || !L.tiles) return 0;
+  var x0 = Math.max(0, P.x - TORCH_CULL), x1 = Math.min(MAP_W - 1, P.x + TORCH_CULL);
+  var y0 = Math.max(0, P.y - TORCH_CULL), y1 = Math.min(MAP_H - 1, P.y + TORCH_CULL);
+  var x, y, lit = 0;
+  for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
+    if (L.tiles[y * MAP_W + x] !== HOLY) continue;
+    if (!blazeSeen(x, y)) continue;          /* a pool round a corner lights nothing you see */
+    glowHoly(g, x, y);
+    lit++;
+  }
+  return lit > 0;
+}
 function capLight(g) {
   var i, lit = 0;
   if (!L || !L.items) return 0;
@@ -15096,15 +15290,21 @@ function lightMap(standing, steady) {
   torchLight(g);
   /* and the mushrooms, which are what lights a cave */
   capLight(g);
+  /* and holy water, faintly */
+  holyLight(g);
   if (standing) return glowShades(g, steady);
 
   /* ------------------------------------------------------- the flashes */
-  if (G.splash && G.splash.kind === 'blast' &&
-      nowMs() >= G.splash.t && nowMs() <= G.splash.t + BLAST_FLASH_MS)
-    for (i = 0; i < G.splash.cells.length; i++) {
-      if (G.splash.big) glowBoom(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
-      else glowBlast(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BLAST);
+  /* every bang still showing, not only the newest - see addSplash */
+  var bangs = liveSplashes(), bi;
+  for (bi = 0; bi < bangs.length; bi++) {
+    var bs = bangs[bi];
+    if (bs.kind !== 'blast' || nowMs() < bs.t || nowMs() > bs.t + BLAST_FLASH_MS) continue;
+    for (i = 0; i < bs.cells.length; i++) {
+      if (bs.big) glowBoom(g, bs.cells[i][0], bs.cells[i][1], GLOW_BLAST);
+      else glowBlast(g, bs.cells[i][0], bs.cells[i][1], GLOW_BLAST);
     }
+  }
   /* The beam of a wand, drawn rather than stamped: a current or a sheet
      of flame, either way half the light of a fire that is really
      burning, and gone the instant the beam is. */
@@ -15118,13 +15318,15 @@ function lightMap(standing, steady) {
      not reached yet is dark water, and a square blinked off this beat
      throws no light either.  Light that stayed on while the spark it
      came from was not there is a lamp with nothing in it. */
-  if (G.splash && G.splash.kind === 'zap' &&
-      nowMs() >= G.splash.t && nowMs() <= G.splash.t + shockLife(G.splash))
-    for (i = 0; i < G.splash.cells.length; i++) {
-      if (!shockLit(G.splash, i, nowMs())) continue;
-      glowFlame(g, G.splash.cells[i][0], G.splash.cells[i][1], GLOW_BOLT, GLOW_BEAM,
-        GLOW_VARY_BEAM, ((nowMs() - G.splash.t) / GLOW_BEAM_MS) | 0);
+  for (bi = 0; bi < bangs.length; bi++) {
+    var zs = bangs[bi];
+    if (zs.kind !== 'zap' || nowMs() < zs.t || nowMs() > zs.t + shockLife(zs)) continue;
+    for (i = 0; i < zs.cells.length; i++) {
+      if (!shockLit(zs, i, nowMs())) continue;
+      glowFlame(g, zs.cells[i][0], zs.cells[i][1], GLOW_BOLT, GLOW_BEAM,
+        GLOW_VARY_BEAM, ((nowMs() - zs.t) / GLOW_BEAM_MS) | 0);
     }
+  }
   return glowShades(g, steady);
 }
 /* The two wands whose beam is drawn as one thing running down the row
@@ -15132,6 +15334,41 @@ function lightMap(standing, steady) {
 function beamDrawn(kind) { return kind === 'lightning' || kind === 'fire'; }
 function beamLife(kind) { return kind === 'lightning' ? BOLT_BEAM_LIFE : FIRE_BEAM_LIFE; }
 
+/* How far away a square can be and still be seen, by how much light is
+   on it - the whole of what computeVis asks of distance.  Kept apart so
+   the drawing can ask it too: a square hidden by being too far into the
+   dark is not a square a wall is hiding, and must not be drawn as one. */
+function sightReachOf(idx, blind, seeInDark, myLit, myRoom) {
+  var T = L.tiles;
+  var reach = L.litMap[idx] ? LIT_RADIUS : TORCH_RADIUS;
+  if (reach === TORCH_RADIUS && myLit && BLOCKS[T[idx]] && touchesRoom(idx, myRoom))
+    reach = LIT_RADIUS;
+  /* your own lit room, floor and outline both, at any distance */
+  if (myLit && (L.roomAt[idx] === myRoom || touchesRoom(idx, myRoom)))
+    reach = MAP_W + MAP_H;
+  /* Night eyes see through the dark - all of it.  A pitch dark room
+     and a room nobody left a lamp in are two different things to
+     everybody else, and to a Night stalker they are the same thing:
+     neither shortens his sight at all.  This used to skip the clamp
+     for the pitch dark and leave the unlit room at a torch's reach,
+     so in the commoner of the two darknesses the perk did nothing. */
+  if (seeInDark) { if (reach < LIT_RADIUS) reach = LIT_RADIUS; }
+  else if (blind || L.darkMap[idx]) reach = DARK_RADIUS;
+  return reach;
+}
+/* Is a square that far off (ax, ay squares, both positive) within that
+   reach?  YOUR OWN LIGHT IS ROUND.  What the lamp-less dark lets you see
+   was a square nine by nine, and it was drawn as one - the straight
+   shadows turned every wall's edge of sight into lines, and the light
+   running out stayed a box.  A square is in reach of your own light when
+   its middle is within half a square of the ring (reach + 1/2); for a
+   reach of one that is still all eight squares round you.  A lamp's
+   reach, and the whole of a lit room, stay as they were: nothing is
+   drawn running out there. */
+function inSightReach(ax, ay, reach) {
+  if (reach <= TORCH_RADIUS) return 4 * (ax * ax + ay * ay) <= (2 * reach + 1) * (2 * reach + 1);
+  return (ax > ay ? ax : ay) <= reach;
+}
 function computeVis() {
   var F = L.flags, T = L.tiles, W = MAP_W, LM = L.litMap;
   var px = P.x, py = P.y, i, x, y, dx, dy;
@@ -15174,23 +15411,8 @@ function computeVis() {
   for (y = y0; y <= y1; y++) for (x = x0; x <= x1; x++) {
     if (x === px && y === py) continue;
     var ax = x > px ? x - px : px - x, ay = y > py ? y - py : py - y;
-    var dist = ax > ay ? ax : ay;
     var idx = y * W + x;
-    var reach = LM[idx] ? LIT_RADIUS : TORCH_RADIUS;
-    if (reach === TORCH_RADIUS && myLit && BLOCKS[T[idx]] && touchesRoom(idx, myRoom))
-      reach = LIT_RADIUS;
-    /* your own lit room, floor and outline both, at any distance */
-    if (myLit && (L.roomAt[idx] === myRoom || touchesRoom(idx, myRoom)))
-      reach = MAP_W + MAP_H;
-    /* Night eyes see through the dark - all of it.  A pitch dark room
-       and a room nobody left a lamp in are two different things to
-       everybody else, and to a Night stalker they are the same thing:
-       neither shortens his sight at all.  This used to skip the clamp
-       for the pitch dark and leave the unlit room at a torch's reach,
-       so in the commoner of the two darknesses the perk did nothing. */
-    if (seeInDark) { if (reach < LIT_RADIUS) reach = LIT_RADIUS; }
-    else if (blind || L.darkMap[idx]) reach = DARK_RADIUS;
-    if (dist > reach) continue;
+    if (!inSightReach(ax, ay, sightReachOf(idx, blind, seeInDark, myLit, myRoom))) continue;
     if (sightClear(px, py, x, y)) F[idx] = (F[idx] | F_VIS | F_SEEN) & ~F_MAP;
   }
   /* ------------------------------------------------------ by firelight
@@ -16573,7 +16795,7 @@ function shockCells(x, y) {
 }
 function shockSquares(cells, src, sx, sy) {
   var i, hit = 0;
-  G.splash = shockSplash(cells, sx, sy);
+  addSplash(shockSplash(cells, sx, sy));
   sound('lightning');
   for (i = 0; i < cells.length; i++) {
     var cx2 = cells[i][0], cy2 = cells[i][1];
@@ -16601,7 +16823,7 @@ function thunderDischarge(gear) {
   var cells = thunderCells(), i, hit = 0;
   var wet = tileAt(P.x, P.y) === WATER;
   /* thunder goes off where you stand, so that is where it runs out from */
-  G.splash = shockSplash(cells, P.x, P.y);
+  addSplash(shockSplash(cells, P.x, P.y));
   sound('lightning');
   for (i = 0; i < cells.length; i++) {
     var m2 = monAt(L, cells[i][0], cells[i][1]);
@@ -16649,6 +16871,53 @@ function knockBack(m, fromx, fromy) {
    square each, played in order - which for the ordinary one-square case
    is exactly what it was before. */
 var STEP_ANIM_MS = 90;
+
+/* ----------------------------------------------------- leaning on a barrel
+
+   "The barrel should move along with the player so he is moving and the
+   barrel moves with him.  The player should be two pixels into the barrel
+   square when the barrel starts moving and as soon as the barrel starts
+   moving, the movement speed of both player and barrel should drop to 50%
+   speed."
+
+   So a push is three stretches, measured in pixels along the push:
+
+     1. the man walks up to it at his ordinary pace until he is
+        PUSH_TOUCH_PX into the barrel's square - that is him leaning on it;
+     2. then the two of them go together at PUSH_SPEED of that pace, the
+        man PUSH_TOUCH_PX into the barrel the whole way, until he is
+        standing on the square it started on;
+     3. and the barrel finishes the last PUSH_TOUCH_PX on its own at the
+        same slow pace - it was going, and a barrel does not stop the
+        instant the hand comes off it.
+
+   Pixel-exact rather than the two-position walk: the whole of what was
+   asked is where each of them is, a pixel at a time.  pushPhase is the
+   one place it is worked out, and it lives here rather than beside the
+   drawing so the rules suite can check the arithmetic without a screen. */
+var PUSH_TOUCH_PX = 2, PUSH_SPEED = 0.5;
+function pushTimes() {
+  var v = TS / STEP_ANIM_MS;                         /* pixels a ms, walking */
+  var slow = v * PUSH_SPEED;
+  var t1 = PUSH_TOUCH_PX / v;
+  var t2 = (TS - PUSH_TOUCH_PX) / slow;
+  var t3 = PUSH_TOUCH_PX / slow;
+  return { touch: t1, man: t1 + t2, barrel: t1 + t2 + t3 };
+}
+/* how many whole pixels along the push each of them has gone, `age` in */
+function pushPhase(age) {
+  var T = pushTimes(), v = TS / STEP_ANIM_MS, slow = v * PUSH_SPEED;
+  if (!(age > 0)) return { man: 0, barrel: 0 };
+  var man = age < T.touch ? age * v : PUSH_TOUCH_PX + (age - T.touch) * slow;
+  var bar = age < T.touch ? 0 : (age - T.touch) * slow;
+  return { man: Math.min(TS, Math.floor(man + 1e-6)),
+           barrel: Math.min(TS, Math.floor(bar + 1e-6)) };
+}
+/* Is a push still being played out?  The barrel's part is the longer. */
+function pushPlaying() {
+  var sa = (typeof P !== 'undefined' && P) ? P.stepAnim : null;
+  return !!(sa && sa.push && nowMs() - sa.t < pushTimes().barrel);
+}
 /* `at` is the moment the step should START - beatNow() for a step set
    going in the middle of a turn that is still being played back, such
    as a man thrown by a blast that has not finished going off.  Left
@@ -21054,7 +21323,7 @@ function spawnFire(fx, fy) {
       open.push([nx, ny]);
     }
   }
-  G.splash = { cells: [[fx, fy]], t: beatNow(), kind: 'blast' };
+  addSplash({ cells: [[fx, fy]], t: beatNow(), kind: 'blast' });
   sound('boom');
   return made;
 }
@@ -21903,11 +22172,11 @@ function lightFireShield() {
   fireShieldBurn();                /* whatever is already beside you */
   msgGain('A ring of fire shields you!', 'O', FIRE_SHIELD_TURNS + ' turns', 'O');
   sound('boom');
-  G.splash = { cells: (function () {
+  addSplash({ cells: (function () {
     var c = [], d;
     for (d = 0; d < 8; d++) c.push([P.x + DIR8[d][0], P.y + DIR8[d][1]]);
     return c;
-  })(), t: beatNow(), kind: 'blast' };
+  })(), t: beatNow(), kind: 'blast' });
   if (!lit) msg('There is nowhere for it to burn.', '6');
   return true;
 }
@@ -22117,9 +22386,14 @@ function barrelCanRest(x, y) {
   if (P.x === x && P.y === y) return false;
   return barrelRolls(L.decor[y * MAP_W + x]);
 }
-/* Lean on it.  Returns true if the barrel moved, and the step that shoved
-   it is spent on the shove - you stay where you are, the way you would
-   pushing a real one. */
+/* Lean on it and walk it along.  Returns true if the barrel moved.
+
+   YOU GO WITH IT.  This used to spend the step on the shove and leave you
+   where you were, so pushing a barrel down a corridor was a barrel that
+   hopped a square away from a man standing still, and then a man walking
+   up to it again.  Now the step is a step: the barrel rolls a square on
+   and you walk into the square it has just left, the two of you moving
+   together - see PUSH_TOUCH_PX and PUSH_SPEED for how that is drawn. */
 function pushBarrel(bx, by, dx, dy) {
   if (!barrelAt(bx, by)) return false;
   var tx = bx + dx, ty = by + dy;
@@ -22138,7 +22412,11 @@ function pushBarrel(bx, by, dx, dy) {
   msg('You shove the barrel along.', 'y');
   /* and the weight of it on a trap does what any weight does */
   if (typeof trapUnderItem === 'function') trapUnderItem(tx, ty);
-  computeVis();
+  /* and the man walks in behind it - a real step, onto whatever the square
+     it left has on it, drawn as a push rather than as a walk */
+  var ox = P.x, oy = P.y;
+  landPlayer(bx, by);
+  if (P.stepAnim) P.stepAnim.push = { fx: ox, fy: oy, dx: dx, dy: dy, bx: bx, by: by };
   return true;
 }
 /* Fire has reached a barrel.  It does not go up on the spot: the powder
@@ -22202,12 +22480,19 @@ function tickDynamite() {
     L.dyn[k]--;
     if (L.dyn[k] <= 0) due.push(k | 0);
   }
+  var last = null;
   for (i = 0; i < due.length; i++) {
     delete L.dyn[due[i]];
     var x = due[i] % MAP_W, y = (due[i] / MAP_W) | 0;
-    /* the stick itself is spent whether or not it took anything with it */
+    /* one after another, not all at once - see BARREL_CHAIN_MS */
+    last = chainBeat(last);
+    /* the stick itself is spent whether or not it took anything with it -
+       and it is still lying there, on the screen, until its own bang */
     var it = dynamiteOnFloor(x, y);
-    if (it) L.items.splice(L.items.indexOf(it), 1);
+    if (it) {
+      leaveGhost(x, y, 'item', itemSprite(it), beatNow(), 0);
+      L.items.splice(L.items.indexOf(it), 1);
+    }
     dynamiteAt(x, y);
   }
   return due.length;
@@ -22222,17 +22507,44 @@ function tickFuses() {
     L.fuses[k]--;
     if (L.fuses[k] <= 0) due.push(k | 0);
   }
+  var last = null;
   for (var i = 0; i < due.length; i++) {
     delete L.fuses[due[i]];
+    last = chainBeat(last);
     blowBarrel(due[i] % MAP_W, (due[i] / MAP_W) | 0);
   }
   return due.length;
+}
+/* A ROUND OF BANGS IS A ROW OF BANGS.  Everything whose fuse ran out this
+   round goes up in turn, and each at least BARREL_CHAIN_MS after the one
+   before.  Today the blast's own hold (BLAST_HOLD_MS) already spaces them
+   that far and this adds nothing - it is here so the rhythm of a chain
+   is a thing somebody decided rather than a side effect of how long a
+   blast waits before it throws what it caught. */
+function chainBeat(last) {
+  if (last !== null) {
+    var gap = last + BARREL_CHAIN_MS - beatNow();
+    if (gap > 0) beatWait(gap);
+  }
+  return beatNow();
 }
 /* One barrel, going up.  Two squares in every direction: creatures,
    walls, and any barrel it reaches, which lights and follows a turn
    later. */
 function blowBarrel(bx, by) {
   var k = by * MAP_W + bx;
+  /* THE MOMENT OF THE BANG, taken once.  beatNow() is the wall clock plus
+     the beat, and the wall clock goes on running while the turn is being
+     worked out - so two calls a few lines apart are two milliseconds apart,
+     and a picture held "until the bang" let go of the wall a frame before
+     the flash appeared.  One number for all of it. */
+  var bangAt = beatNow();
+  /* still standing there, fuse burning, until the moment it goes up - a
+     barrel that is not the first of its round goes up a beat or two into
+     the playback, and without this it vanished at the start of it */
+  if (L.decor[k]) leaveGhost(bx, by, 'decor', L.decor[k], bangAt, 1);
+  /* and the walls it takes out stand until it goes - see holdPicture */
+  holdPicture(bangAt);
   delete L.barrels[k];
   delete L.decor[k];
   /* A disc, not a box.  Two squares straight out and one on the
@@ -22243,7 +22555,7 @@ function blowBarrel(bx, by) {
   /* `big` marks it as a barrel rather than a flask: the flash is drawn
      out of two sprites rather than one, and it throws light a good deal
      further than anything else down here. */
-  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
+  addSplash({ cells: cells.slice(), t: bangAt, kind: 'blast', big: 1 });
   /* and the room itself takes the blow.  Seeded off the square it went
      up on rather than off the dice, so two barrels in one turn shake
      differently and nothing about the floor changes for having watched
@@ -22322,6 +22634,10 @@ function dynamiteAt(bx, by) {
      a cross of five and set light to a square of nine, so the same bang
      was a diamond while it flashed and a box a moment later. */
   var cells = blastDisc(bx, by, DYNAMITE_BLAST), i;
+  /* the wall stands, and the room behind it stays unseen, until the bang -
+     one moment for all of it, see blowBarrel */
+  var bangAt = beatNow();
+  holdPicture(bangAt);
 
   var broke = 0, hit = [], barred = 0;
   for (i = 0; i < cells.length; i++) {
@@ -22358,10 +22674,12 @@ function dynamiteAt(bx, by) {
   var lit = 0;
   for (i = 0; i < cells.length; i++) lit += lightBarrel(cells[i][0], cells[i][1]);
   /* and it leaves the squares burning, so what is standing there burns
-     with it - a stick thrown onto a table should not leave the table */
-  scorch(cells);
+     with it - a stick thrown onto a table should not leave the table.  At
+     the moment of the bang: with no moment given the fire was burning on
+     the floor while the stick that lit it was still in the air. */
+  scorch(cells, 0, bangAt);
 
-  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
+  addSplash({ cells: cells.slice(), t: bangAt, kind: 'blast', big: 1 });
   sound('boom');
   /* Say what actually happened.  It announced that it had torn the stone
      open whether or not there was any stone in reach of it. */
@@ -22657,7 +22975,7 @@ function conductPools(seeds, kind) {
 
   var cells = [];
   for (i = 0; i < bodies.length; i++) cells = cells.concat(bodies[i]);
-  G.splash = { cells: cells, kind: kind, t: beatNow() };
+  addSplash({ cells: cells, kind: kind, t: beatNow() });
   msg(kind === 'cold' ? 'The water freezes over!' : 'The water crackles with lightning!',
     kind === 'cold' ? 'c' : 'y');
 
@@ -22786,7 +23104,7 @@ function iceVial(tx, ty) {
     var life = VIAL_ICE_TURNS[0] + rnd(VIAL_ICE_TURNS[1] - VIAL_ICE_TURNS[0] + 1);
     made += freezeSquare(cells[i][0], cells[i][1], life);
   }
-  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'cold' };
+  addSplash({ cells: cells.slice(), t: beatNow(), kind: 'cold' });
   sound('cast');
   return made;
 }
@@ -22840,7 +23158,11 @@ function crumbleSquare(x, y) {
 }
 function nitroVial(bx, by) {
   var cells = blastDisc(bx, by, BARREL_BLAST), i;
-  G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast', big: 1 };
+  /* the walls it takes out stand until it goes - see holdPicture - one
+     moment for all of it, see blowBarrel */
+  var bangAt = beatNow();
+  holdPicture(bangAt);
+  addSplash({ cells: cells.slice(), t: bangAt, kind: 'blast', big: 1 });
   shakeScreen(SHAKE_MS, SHAKE_AMP, bx * 73856093 + by * 19349663);
   sound('boom');
   msgTrap('The vial goes off like a powder keg!', 'R', 'blast', 'R');
@@ -22851,6 +23173,9 @@ function nitroVial(bx, by) {
   /* and everything still standing in it is thrown clear of it, before
      the floor it was standing on stops being there */
   blastKnock(bx, by, cells);
+  /* and the floor is still there until it gives way, which is after the
+     blast has thrown everything off it - a second hold, a beat later */
+  holdPicture(beatNow());
   /* And then the floor gives way.  Grown a square at a time out from
      where the glass broke rather than stamped as a disc: a hole blown in
      a floor is a ragged thing, and the ones the dungeon digs for itself
@@ -23762,7 +24087,7 @@ function stoneRune(rune, target, am, flight) {
         var m2 = monAt(L, bx, by);
         if (m2 && hit.indexOf(m2) < 0) hit.push(m2);
       }
-      G.splash = { cells: cells.slice(), t: beatNow(), kind: 'blast' };
+      addSplash({ cells: cells.slice(), t: beatNow(), kind: 'blast' });
       sound('boom');
       /* and it leaves the squares it filled burning, which takes the
          furniture and sets off any powder standing in them */
@@ -25770,6 +26095,9 @@ function frameFade(x, y, w, h, col, a) {
 function beginAction() {
   settleLog();
   G.msgq = []; G.msgIdx = 0; G.beat = 0;
+  /* an order cuts the last turn's playback short, and a picture of the
+     world from before one of its bangs would now simply be wrong */
+  dropHeldPictures();
   /* Last turn is over and everything in it has been played.  A shove the
      dungeon was told to leave alone (see keepShoveAnims) is cleared here
      rather than there, so it survives into the same turn's answer. */
@@ -25785,6 +26113,9 @@ function beginAction() {
    than repeating what they do. */
 /* The button going down starts either a click or a drag; which of the
    two it was is only known when it comes back up. */
+/* The rows of a menu: things to press, one line of words each.  A press
+   on one is never the start of selecting its words. */
+var MENU_ROWS = { ctx: 1, pause: 1, slot: 1, ask: 1, choice: 1, title: 1, perk: 1, menu: 1 };
 function onMouseDown(e) {
   if (!ready) return;
   if (typeof soundWake === 'function') soundWake();
@@ -25795,7 +26126,13 @@ function onMouseDown(e) {
   /* A press inside a dialog's box is the start of a selection through
      its words rather than a hand on the map.  The box is remembered, so
      the drag cannot wander out of the dialog it began in. */
-  var inBox = (!e.button || e.button === 0) && dialogUp() ? boxAt(m.x, m.y) : null;
+  /* A press ON something to press is a press, not the start of a
+     selection through the words on it: a hand that moved three pixels on
+     the way down turned a click on a menu row into selecting its text,
+     and the row was never taken. */
+  var onRow = hitAt(m.x, m.y);
+  onRow = onRow && MENU_ROWS[onRow.what] ? onRow : null;
+  var inBox = (!e.button || e.button === 0) && dialogUp() && !onRow ? boxAt(m.x, m.y) : null;
   selClear();
   var panelGrab = false;
   if ((!e.button || e.button === 0) && canGrabPanel()) {
@@ -25834,8 +26171,11 @@ function onMouseUp(e) {
      hand put it, up to half a square off the grid; the frame loop eases
      it onto the grid over the next few frames, so it settles rather than
      snapping and nothing is left drawn between two pixels. */
-  if (held.drag) return;
   var m = mousePos(e);
+  /* With a dialog up a drag moves nothing, so a hand that wandered while
+     it pressed a button in one still means the button it let go on. */
+  var hd = held.drag && dialogUp() && !held.sel ? hitAt(held.x, held.y) : null, hu = hd ? hitAt(m.x, m.y) : null;
+  if (held.drag && !(hd && hu && MENU_ROWS[hd.what] && hu.what === hd.what)) return;
   MOUSE.x = m.x; MOUSE.y = m.y; MOUSE.on = 1;
   clickAt(m.x, m.y, held.right);
 }
@@ -25933,7 +26273,9 @@ function clickAt(mx, my, right) {
       if (h && h.what === 'ask') { G.ask.i = h.i; askKey('Enter'); }
       else if (!h) askKey('Escape');
       return;
-    case 'choice':
+    /* The mode is 'choose'; this case was written as 'choice', the name
+       of its rows, so a click on "ENTER means" never reached it at all. */
+    case 'choose':
       if (h && h.what === 'choice') { G.choice.i = h.i; chooseKey('Enter'); }
       else if (!h) chooseKey('Escape');
       return;
@@ -26079,8 +26421,17 @@ function mapOrder(mx2, my2) {
   /* A staircase is a thing to use, not just a square to stand on.  With
      no keyboard there was no way off the floor at all: walking onto one
      left you standing on it, and ENTER was the only thing that took it. */
+  /* ON THE STAIRS ALREADY, it asks.  A click on yourself standing on a
+     staircase used to take it on the spot - and a click on yourself is
+     also how the pack is reached, so reaching for the pack on a
+     staircase carried you down a floor.  The menu comes up with the way
+     down (or up) first in it, so taking the stairs is still one more
+     press away, and the pack is still there beside it. */
+  if (m.x === P.x && m.y === P.y && stairsHere()) {
+    openCtxMenu(m.x, m.y);
+    return;
+  }
   if (tileAt(m.x, m.y) === STAIR || tileAt(m.x, m.y) === STAIR_UP) {
-    if (m.x === P.x && m.y === P.y) { beginAction(); tick(useStairs()); return; }
     walkTo(m.x, m.y, { stairs: 1 });
     return;
   }
@@ -26156,10 +26507,26 @@ function mapOrder(mx2, my2) {
 /* ------------------------------------------------- the right-click menu
    What is on the square decides what it offers.  Look is always there;
    the rest depend on what you are pointing at and what you are holding. */
+/* What the ground under you offers as a way off this floor, as the menu
+   words it - or null when there is none. */
+function stairsHere() {
+  var t = tileAt(P.x, P.y);
+  if (t === STAIR) return inCellar() ? null : 'Go down';
+  if (t === STAIR_UP) return 'Climb up';
+  if (t === TRAPDOOR && !trapdoorHidden(P.x, P.y) && !inCellar()) return 'Climb down';
+  return null;
+}
 function openCtxMenu(x, y) {
   var opts = [], foe = monAt(L, x, y), it = itemAt(L, x, y);
   var mine = (x === P.x && y === P.y);
-  opts.push(['look', 'Look']);
+  /* the way off the floor first, where it is the thing you came to the
+     square for */
+  var way = mine ? stairsHere() : null;
+  if (way) opts.push(['stairs', way]);
+  /* Look at every square but your own.  On your own square it only ever
+     opened the pack, which Inventory beside it already does - two rows
+     for one thing is one row too many. */
+  if (!mine) opts.push(['look', 'Look']);
   if (foe && canSeeMon(foe) && !foe.ally && !mine && (canShoot() || launcher()))
     opts.push(['shoot', 'Shoot']);
   /* And from your own square it means what ENTER means out in the
@@ -26180,7 +26547,11 @@ function openCtxMenu(x, y) {
      anchored to the square by working the camera out from the player
      alone, which ignores however far the map has been pushed - so once
      you had dragged the view the menu opened somewhere else entirely. */
-  G.ctx = { x: x, y: y, i: 0, opts: opts, px: MOUSE.x, py: MOUSE.y };
+  G.ctx = { x: x, y: y, i: 0, opts: opts, px: MOUSE.x, py: MOUSE.y,
+            /* where the pointer was last seen, so only a pointer that
+               MOVES picks a row - one resting on the menu does not undo
+               the arrow keys every frame */
+            hx: MOUSE.x, hy: MOUSE.y };
   G.mode = 'ctx';
 }
 function ctxKey(k) {
@@ -26206,6 +26577,7 @@ function ctxKey(k) {
     return;
   }
   if (job === 'inv') { openInv(); return; }
+  if (job === 'stairs') { beginAction(); tick(useStairs()); return; }
   if (job === 'disarm') { beginAction(); tick(disarmTrap(x, y)); return; }
   if (job === 'aim') { beginAction(); beginShooting(); return; }
   if (job === 'shoot') {
@@ -26244,6 +26616,18 @@ function ctxKey(k) {
     return;
   }
 }
+/* A menu's rows, n of them rowH tall from (x, y), w wide: a pointer that
+   has MOVED since the last frame onto one of them picks it.  One resting
+   there does not, or it would put the pick back under itself every frame
+   and the arrow keys could never move it.  m keeps where it last was. */
+function menuHover(m, x, y, w, rowH, n) {
+  if (!m || !usingMouse() || !MOUSE.on) return;
+  if (MOUSE.x === m.hx && MOUSE.y === m.hy) return;
+  m.hx = MOUSE.x; m.hy = MOUSE.y;
+  if (MOUSE.x < x || MOUSE.x >= x + w) return;
+  var r = Math.floor((MOUSE.y - y) / rowH);
+  if (r >= 0 && r < n) m.i = r;
+}
 function drawCtxMenu() {
   var m = G.ctx, i, wide = 0;
   for (i = 0; i < m.opts.length; i++)
@@ -26260,6 +26644,12 @@ function drawCtxMenu() {
   var ay = clamp(aty + 3, 2, SH - 2 - h);
   rect(ax, ay, w, h, '#0b0d1c');
   frame(ax, ay, w, h, '#fad039');
+  /* THE ROW UNDER THE POINTER IS THE ONE LIT.  There was no sign of
+     which row a click would take until it had taken it.  Only a pointer
+     that has moved since the last frame: one left resting on the menu
+     would otherwise put the highlight back under itself every frame and
+     the arrow keys could never move it. */
+  menuHover(m, ax, ay + 1, w, LH, m.opts.length);
   for (i = 0; i < m.opts.length; i++) {
     var ty = ay + 2 + i * LH;
     hit(ax, ty - 1, w, LH, 'ctx', i);
@@ -27334,6 +27724,32 @@ function camWalkTo() {
     }
   }
 }
+/* The step you asked for while a push was still going.  Taken the moment
+   it has finished, and only then - one step, however many times the key
+   repeated while you waited. */
+function pushTick() {
+  if (!G.pushNext) return;
+  if (G.mode !== 'play' || G.dead) { G.pushNext = null; return; }
+  if (pushPlaying()) return;
+  var k = G.pushNext;
+  G.pushNext = null;
+  playKey(k);
+}
+/* The barrel a push is still carrying along: the square it came from, how
+   far along it has got, and the square the rules have already put it on.
+   Null when nothing is being pushed, or the push has finished. */
+function rollingBarrel() {
+  if (typeof pushPlaying !== 'function' || !pushPlaying()) return null;
+  var pu = P.stepAnim.push, ph = pushPhase(nowMs() - P.stepAnim.t);
+  return { x: pu.bx, y: pu.by, px: pu.dx * ph.barrel, py: pu.dy * ph.barrel,
+           to: (pu.by + pu.dy) * MAP_W + (pu.bx + pu.dx) };
+}
+/* is this the square a rolling barrel is on its way to?  It is not drawn
+   there until it arrives */
+function rollingInto(idx) {
+  var rb = rollingBarrel();
+  return !!(rb && rb.to === idx);
+}
 /* how far behind you the view is, in tiles */
 function walkLag() {
   if (!WALK_AT || typeof P === 'undefined' || !P) return { x: 0, y: 0 };
@@ -27961,6 +28377,15 @@ function playKey(k) {
   /* nothing at all while you are in mid-jump: you are not standing
      anywhere to act from */
   if (warping()) return;
+  /* A PUSH IS SLOW ON PURPOSE.  A step of your own normally cuts the last
+     one's drawing short - that is how a held key runs - but a barrel
+     leaned on goes at half pace, and a held key would otherwise snatch it
+     out of the push thirty times a second and put it down where it was
+     going.  So the next step waits for the push to finish (pushTick). */
+  if (keyDir(k) && typeof pushPlaying === 'function' && pushPlaying()) {
+    G.pushNext = k;
+    return;
+  }
   /* the chest is open only while you are standing on it */
   if (G.box && !(G.box.x === P.x && G.box.y === P.y &&
       L.items.indexOf(G.box) >= 0)) G.box = null;
@@ -27968,6 +28393,7 @@ function playKey(k) {
      order, rather than letting this turn overtake the last one */
   settleLog();
   G.msgq = []; G.msgIdx = 0; G.beat = 0;
+  dropHeldPictures();
   var d = keyDir(k);
   if (d) {
     if (P && P.stepAnim) P.stepAnim = null;
@@ -28011,7 +28437,8 @@ function playKey(k) {
                     (laid ? 'take' : (wearable ? 'wear' :
                     (shelf ? 'shelf' : null))));
     if (underfoot && shootableNow()) {
-      G.choice = { what: underfoot, box: box, wear: wearable, i: 0 };
+      G.choice = { what: underfoot, box: box, wear: wearable, laid: laid, i: 0,
+                   hx: MOUSE.x, hy: MOUSE.y };
       G.mode = 'choose';
       return;
     }
@@ -28217,13 +28644,26 @@ function chooseKey(k) {
     return;
   }
   if (k !== 'Enter' && k !== ' ') return;
-  var pick = opts[G.choice.i][0], box = G.choice.box, worn = G.choice.wear;
+  var pick = opts[G.choice.i][0], box = G.choice.box, worn = G.choice.wear, laid = G.choice.laid;
   G.choice = null; G.mode = 'play';
   if (pick === 'shoot') { beginShooting(); return; }
   if (pick === 'look') { G.openBox = openChest(box); finishMsgs(); return; }
   if (pick === 'wear') {
     G.msgq = [];
     if (equipFromFloor(worn)) { tick(true); return; }
+    finishMsgs(); return;
+  }
+  /* PICKING IT UP, and the shelf.  Both fell through to the stairs below,
+     which refused - so "Pick it up" was offered and did nothing. */
+  if (pick === 'take') {
+    G.msgq = [];
+    var it = laid || takeableHere();
+    if (it && takeLaid(it)) { tick(true); return; }
+    finishMsgs(); return;
+  }
+  if (pick === 'shelf') {
+    G.msgq = [];
+    if (searchShelf()) { tick(true); return; }
     finishMsgs(); return;
   }
   /* the stairs, either way */
@@ -28943,8 +29383,8 @@ function roomKey(k) {
 
    It remembers what it interrupted, so a bag that is full says so over
    the pack and hands the pack back afterwards. */
-function openNote(line, title) {
-  G.note = { line: String(line), title: title || '', back: G.mode };
+function openNote(line, title, icon) {
+  G.note = { line: String(line), title: title || '', back: G.mode, icon: icon || null };
   G.mode = 'note';
   G.msgq = [];
 }
@@ -28954,22 +29394,51 @@ function noteKey(k) {
   G.note = null;
   G.mode = (back && back !== 'note') ? back : 'play';
 }
+/* A notice with a picture has the picture down its left side, drawn
+   double like a room's, and the words beside it. */
+function noteTextX() { return G.note && G.note.icon ? 6 + TS * 2 + 6 : 6; }
 function noteLines() {
-  return G.note ? wrap(G.note.line, ROOM_BOX_W - 12) : [];
+  return G.note ? wrap(G.note.line, ROOM_BOX_W - noteTextX() - 6) : [];
 }
 function drawNote() {
   if (!G.note) return;
-  var lines = noteLines(), i;
+  var lines = noteLines(), i, tx = noteTextX();
   var w = ROOM_BOX_W;
   var head = G.note.title ? LH + 4 : 0;
-  var h = 6 + head + lines.length * 9 + 6;
+  var body = Math.max(lines.length * 9, G.note.icon ? TS * 2 - head : 0);
+  var h = 6 + head + body + 6;
   var x = boxX(w);
   var y = VIEW_PY + ((VIEW_H * TS - h) >> 1);
   rect(x, y, w, h, '#0b0d1c');
   frame(x, y, w, h, '#636d85');
-  if (G.note.title) text(G.note.title, x + 6, y + 5, 'y');
-  for (i = 0; i < lines.length; i++) text(lines[i], x + 6, y + 6 + head + i * 9, 'w');
+  if (G.note.icon) sprS(G.note.icon, x + 6, y + 6, 2);
+  if (G.note.title) text(G.note.title, x + tx, y + 5, 'y');
+  for (i = 0; i < lines.length; i++) text(lines[i], x + tx, y + 6 + head + i * 9, 'w');
   hit(x, y, w, h, 'note', 0);
+}
+/* THE FIRST BOW OF A RUN is held up and explained.  Asked by the loop
+   rather than by each way a thing reaches your hands - picked up, taken
+   out of a chest, put on off the floor, handed over on the bench - so
+   none of them can be the one that forgets.  Once a run (G.bowFound). */
+function bowInHand() {
+  var list = carriedItems(), i;
+  for (i = 0; i < list.length; i++) {
+    var it = list[i];
+    if (it && it.t === 'weapon' && WEAPONS[it.k] && WEAPONS[it.k].launch) return it;
+  }
+  return null;
+}
+function bowFoundTick() {
+  if (typeof G === 'undefined' || !G || G.bowFound || G.dead) return;
+  if (G.mode !== 'play') return;
+  if (G.msgq && G.msgq.length) return;
+  if (G.walk || G.waiting || G.ask || G.note || G.menu || G.box || G.story) return;
+  if (typeof P === 'undefined' || !P || !P.slots) return;
+  var bow = bowInHand();
+  if (!bow) return;
+  G.bowFound = 1;
+  var what = WEAPONS[bow.k].n === 'crossbow' ? 'a crossbow' : 'a bow';
+  openNote('You found ' + what + '! Shoot enemies by pressing ENTER - if you have ammo.', '', itemSprite(bow));
 }
 function drawRoomBox() {
   if (!G.roomBox) return;
@@ -30014,7 +30483,7 @@ function loop() {
   if (dt > 100) dt = 100;
   CAM_DT_SCALE = dt / (1000 / 60);
   try {
-    walkTick(); touchHold(); levelBoxTick();
+    walkTick(); touchHold(); levelBoxTick(); bowFoundTick(); pushTick();
     camRoom(); camGlance(); camEase(); camWalkTo(); camWaiting(); render();
   } catch (e) {
     FRAME_ERRS++;
@@ -30044,7 +30513,32 @@ function drawFrameErr() {
    anything worked out once per frame and kept - a torch's gradient, say
    - knows when what it kept has gone stale. */
 var FRAME_N = 0;
+/* THE PICTURE THE WORLD HAD before the next bang still to come, if one is
+   still to come - see holdPicture.  The whole frame is drawn from it: the
+   walls, what you can see through them, the light, the panel's map.  Put
+   back afterwards whatever happens, so nothing outside the drawing ever
+   sees the held copy. */
+function heldPicture() {
+  if (!L || !L.held || !L.held.length) return null;
+  var now = nowMs(), keep = [], best = null, i;
+  for (i = 0; i < L.held.length; i++) {
+    var h = L.held[i];
+    if (h.at <= now) continue;                    /* its bang has happened */
+    keep.push(h);
+    if (!best || h.at < best.at) best = h;
+  }
+  L.held = keep;
+  return best;
+}
 function render() {
+  var held = heldPicture();
+  if (!held) return renderNow();
+  var live = {}, i, k;
+  for (i = 0; i < HELD_KEYS.length; i++) { k = HELD_KEYS[i]; live[k] = L[k]; L[k] = held[k]; }
+  try { renderNow(); }
+  finally { for (i = 0; i < HELD_KEYS.length; i++) { k = HELD_KEYS[i]; L[k] = live[k]; } }
+}
+function renderNow() {
   FRAME_N++;
   /* The hit list is rebuilt every frame by the things that draw
      themselves, so a click can never act on a button that is no longer
@@ -30683,18 +31177,449 @@ function cornerNib(name, px, py, corner, a) {
       sx + pts[k][0], sy + pts[k][1], 1, 1, px + pts[k][0], py + pts[k][1], 1, 1);
 }
 
+/* ============================================= a shadow is straight
+
+   What you can see is decided a square at a time, by computeVis, and it
+   stays so: a creature is drawn or not by that rule and nothing else.  The
+   edge of it is DRAWN as a real shadow would fall - and a shadow cannot
+   bend.  Every one is a wedge between two straight rays from the middle of
+   your square, through two corners of whatever is blocking the view.
+
+   Two of them, from every blocker, one inside the other (prepareSight):
+
+   - THE DARKER SHADE (SIGHT_DARK) is the shadow of the blocker's box
+     taken in by SIGHT_UMBRA pixels - the darkness of a square you only
+     remember.  Taken in only on a side that is open: a side against
+     another blocker stays where it is, or a wall would leak light
+     through the joints between its own stones.
+   - THE BRIGHTER SHADE (SIGHT_LINE) is the shadow of the whole box, and it
+     is what is left of that between the darker one and the light.
+
+   How wide the inner one is was MEASURED, not chosen: over 13,673 open
+   squares near the man on 40 floors, the square rule hides a square
+   almost exactly when the middle of it lies in the straight shadow of a
+   blocker's box taken in by a pixel (0.5% disagree; the whole box, 1.0%).
+   So the rule already IS a straight shadow, near enough, and at
+   SIGHT_UMBRA = 2 the darker shade sits just inside what the rule hides,
+   with the brighter shade round it as a band that widens with distance -
+   which is how a shadow looks with any size of light at all.
+
+   And so the three things said about it hold: a square you cannot see
+   with part of it in the brighter band still shows nothing; a square you
+   CAN see with part of it in the darker shade still shows what stands on
+   it; and no edge anywhere runs along a square.
+
+   Nothing inside a shadow is lit: the darker shade is DIM_A exactly, the
+   brighter SIGHT_BRIGHT of the way from there to the square's own light
+   WITHOUT the torchlight in it (SQ_A0), and the torchlight is taken off
+   both (shadeSightWash) - torchlight comes a square at a time, and a
+   square of it left in a shadow is a lit square inside the shadow.
+
+   Rasterised a pixel at a time rather than filled as a path: a canvas
+   path is antialiased and there is no switch for it, so every edge would
+   be a smear of half-dark pixels on a screen made of square ones. */
+var SQ_SHADE = null, SQ_A0 = null, SIGHT_LINE = null, SIGHT_DARK = null, SIGHT_LIGHT = null, SIGHT_REACH = null;
+/* the reach of your own light on each square, where that is what limits
+   what you see of it (0 where a lamp or the room does) - see drawSightFalloff */
+var SIGHT_OWN = null, SQ_LO = null;
+var SIGHT = null;
+/* how far the brighter shade comes back up from a remembered square
+   towards the square's own light: 0 is as dark as memory, 1 is lit */
+var SIGHT_BRIGHT = 0.5;
+/* how far in, in pixels, a blocker's box is taken for the darker shade */
+var SIGHT_UMBRA = 2;
+function sightOpen(mx, my) {
+  if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) return false;
+  var j = my * MAP_W + mx;
+  return !!(L.flags[j] & F_VIS) && !BLOCKS[L.tiles[j]];
+}
+function blocksAt(mx, my) {
+  if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) return true;
+  return !!BLOCKS[L.tiles[my * MAP_W + mx]];
+}
+/* A box's shadow, into a mask: the quadrilateral between the two corners
+   of it seen first and last from the eye, and the same two pushed out
+   along their rays until they are well off the glass.  Returns the two
+   rays' angles, which are the whole of what an edge of it can be. */
+function castSightShadow(mask, x0, y0, x1, y1, ex, ey, W, H) {
+  var cs = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]];
+  var dx = (x0 + x1) / 2 - ex, dy = (y0 + y1) / 2 - ey, i;
+  var lo = null, hi = null, alo = 0, ahi = 0;
+  for (i = 0; i < 4; i++) {
+    var vx = cs[i][0] - ex, vy = cs[i][1] - ey;
+    /* the angle of the corner off the line to the box's middle, so the
+       two ends of what it hides never wrap round the back */
+    var ang = Math.atan2(dx * vy - dy * vx, dx * vx + dy * vy);
+    if (lo === null || ang < alo) { lo = cs[i]; alo = ang; }
+    if (hi === null || ang > ahi) { hi = cs[i]; ahi = ang; }
+  }
+  var far = function (c) {
+    var vx = c[0] - ex, vy = c[1] - ey, d = Math.sqrt(vx * vx + vy * vy) || 1;
+    var k = 2 * (W + H) / d;
+    return [c[0] + vx * k, c[1] + vy * k];
+  };
+  var poly = [lo, far(lo), far(hi), hi];
+  var yMin = Infinity, yMax = -Infinity;
+  for (i = 0; i < 4; i++) { if (poly[i][1] < yMin) yMin = poly[i][1]; if (poly[i][1] > yMax) yMax = poly[i][1]; }
+  var ya = Math.max(0, Math.ceil(yMin - 0.5)), yb = Math.min(H - 1, Math.floor(yMax - 0.5)), y;
+  for (y = ya; y <= yb; y++) {
+    var yc = y + 0.5, xl = Infinity, xr = -Infinity;
+    for (i = 0; i < 4; i++) {
+      var p = poly[i], q = poly[(i + 1) & 3];
+      if ((p[1] <= yc && q[1] > yc) || (q[1] <= yc && p[1] > yc)) {
+        var x = p[0] + (yc - p[1]) * (q[0] - p[0]) / (q[1] - p[1]);
+        if (x < xl) xl = x;
+        if (x > xr) xr = x;
+      }
+    }
+    if (xl > xr) continue;
+    var xa = Math.max(0, Math.ceil(xl - 0.5)), xb = Math.min(W - 1, Math.floor(xr - 0.5));
+    if (xa <= xb) mask.fill(1, y * W + xa, y * W + xb + 1);
+  }
+  return [Math.atan2(lo[1] - ey, lo[0] - ex), Math.atan2(hi[1] - ey, hi[0] - ex)];
+}
+/* Worked out once a frame, before the ground is drawn - the tile loop has
+   to know which unseen squares have part of them out of the darker shade,
+   to draw them at their own light (SIGHT_LIGHT). */
+function prepareSight(camx, camy, pcols, overX, overY) {
+  SIGHT = null;
+  if (!LINEAR_SIGHT || !L || !P || P.blind) return;
+  var c0 = -pcols - overX, c1 = VIEW_W + overX, r0 = -overY, r1 = VIEW_H + overY;
+  var cols = c1 - c0, rows = r1 - r0, W = cols * TS, H = rows * TS;
+  if (!SIGHT_LINE || SIGHT_LINE.length < W * H) { SIGHT_LINE = new Uint8Array(W * H); SIGHT_DARK = new Uint8Array(W * H); }
+  else { SIGHT_LINE.fill(0, 0, W * H); SIGHT_DARK.fill(0, 0, W * H); }
+  if (!SIGHT_LIGHT || SIGHT_LIGHT.length !== L.tiles.length) {
+    SIGHT_LIGHT = new Uint8Array(L.tiles.length); SIGHT_REACH = new Uint8Array(L.tiles.length);
+    SIGHT_OWN = new Uint8Array(L.tiles.length);
+  } else { SIGHT_LIGHT.fill(0); SIGHT_REACH.fill(0); SIGHT_OWN.fill(0); }
+  var bx0 = camx + c0, by0 = camy + r0;          /* the map square at mask (0,0) */
+  /* from the middle of the square you stand on: the square the rule
+     worked out what you can see from */
+  var ex = (P.x - bx0) * TS + TS / 2, ey = (P.y - by0) * TS + TS / 2;
+  var vx, vy, mx, my, rays = [], m = SIGHT_UMBRA;
+  for (vy = 0; vy < rows; vy++) for (vx = 0; vx < cols; vx++) {
+    mx = bx0 + vx; my = by0 + vy;
+    if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
+    if (!BLOCKS[L.tiles[my * MAP_W + mx]]) continue;
+    if (mx === P.x && my === P.y) continue;          /* standing in a doorway */
+    var bl = blocksAt(mx - 1, my), br = blocksAt(mx + 1, my);
+    var bt = blocksAt(mx, my - 1), bb = blocksAt(mx, my + 1);
+    /* inside a mass of rock: its outline hides everything it does (but a
+       block with open ground at a corner is on the outline, too) */
+    if (bl && br && bt && bb && blocksAt(mx - 1, my - 1) && blocksAt(mx + 1, my - 1) &&
+        blocksAt(mx - 1, my + 1) && blocksAt(mx + 1, my + 1)) continue;
+    var x0 = vx * TS, y0 = vy * TS;
+    /* EVERY WALL HIDES WHAT IS BEHIND IT - not only the ones at the edge
+       of what he sees.  Only those had cast, so the wall beside him threw
+       its half-shade on through the wall of the next room and lit a band
+       of ground round its corner that nobody could see.  A wall that
+       stands out of sight still hides: its darker shadow is cast too.
+       The brighter one only from the edge of sight, where it is laid over
+       ground he is looking at. */
+    var edge = sightOpen(mx + 1, my) || sightOpen(mx - 1, my) || sightOpen(mx, my + 1) || sightOpen(mx, my - 1);
+    if (edge) castSightShadow(SIGHT_LINE, x0, y0, x0 + TS, y0 + TS, ex, ey, W, H);
+    /* the darker shade: the box taken in on its open sides only */
+    var l = bl ? 0 : m, r = br ? 0 : m, t = bt ? 0 : m, b = bb ? 0 : m;
+    var ra = castSightShadow(SIGHT_DARK, x0 + l, y0 + t, x0 + TS - r, y0 + TS - b, ex, ey, W, H);
+    if (edge) rays.push(ra[0], ra[1]);
+    /* AND NO SEEING BETWEEN TWO WALLS THAT MEET AT A CORNER: taken in on
+       their open sides, two blocks touching corner to corner leave a gap
+       at the point they touch, and a sliver of half-shade ran out through
+       it.  The point they meet at is closed. */
+    for (var dd = 0; dd < 2; dd++) {
+      var ddx = dd ? -1 : 1;
+      if (!blocksAt(mx + ddx, my + 1) || !(ddx > 0 ? !br : !bl) || bb) continue;
+      var qx = x0 + (ddx > 0 ? TS : 0), qy = y0 + TS;
+      castSightShadow(SIGHT_DARK, qx - m, qy - m, qx + m, qy + m, ex, ey, W, H);
+    }
+  }
+  /* Which unseen squares have to be drawn at their own light: any part of
+     them out of the darker shade - and, in the room you are standing in,
+     any square at all.  A square of that room you have never seen was a
+     black square in the middle of a shadow, which is a square edge in the
+     one place there must not be one; it is drawn as the ground in shadow
+     it is, when a shadow falls across it - and so is its own outline of wall, or the wall had a black
+     square knocked out of it wherever the shadow fell on a stone you had
+     never seen.  Only the ground: nothing lying or standing on it is
+     drawn, and nothing outside your own room is shown at all. */
+  var myRoom = roomIndexAt(P.x, P.y);
+  var myLit = myRoom >= 0 && L.rooms[myRoom] && L.rooms[myRoom].lit && !L.rooms[myRoom].dark;
+  /* what computeVis asks of the dark, asked once */
+  var dkBlind = inTheDark(), dkEyes = nightEyes(), dkRoom = myRoom, dkLit = !!myLit;
+  /* THE ROOMS HE SEES INTO: any room with a square of open ground in
+     view - his own, or one through a doorway.  Not a cave, which winds
+     round its own rock and is no box to be inside of. */
+  var seenRooms = {};
+  for (vy = 0; vy < rows; vy++) for (vx = 0; vx < cols; vx++) {
+    mx = bx0 + vx; my = by0 + vy;
+    if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
+    var jj = my * MAP_W + mx, rj = L.roomAt[jj];
+    if (rj >= 0 && sightOpen(mx, my) && L.rooms[rj] && !L.rooms[rj].cave) seenRooms[rj] = 1;
+  }
+  for (vy = 0; vy < rows; vy++) for (vx = 0; vx < cols; vx++) {
+    mx = bx0 + vx; my = by0 + vy;
+    if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
+    var j = my * MAP_W + mx;
+    var own = sightReachOf(j, dkBlind, dkEyes, dkLit, dkRoom);
+    if (own <= TORCH_RADIUS && !(L.shade && L.shade[j])) SIGHT_OWN[j] = own + 1;
+    if (L.flags[j] & F_VIS) { SIGHT_REACH[j] = 1; continue; }
+    /* NO SHADOW BEHIND A WALL.  A wedge runs on for ever, through every
+       wall behind whatever cast it, and on ground he remembers beyond a
+       closed door or round the corner of a room it drew its straight edge
+       - a line through the door, a lit band past the corner.  A square
+       he cannot see is shaded only when it is within reach of what he
+       can: beside a square he sees (a corner only with a way round it,
+       never between two walls), in a room he sees into, or that room's
+       own wall.  Anywhere else it is drawn as it always was. */
+    /* AND NONE WHERE THE DARK HIDES IT.  A square too far into the dark
+       for your light to reach is not hidden by the wall in front of it,
+       and a wedge falling on it drew it at its own light, a square at a
+       time - a lighter shade with square edges, running off down the
+       side of a pillar where nothing could be seen at all.  Only a square
+       your light WOULD reach, were the wall not there, is in a shadow. */
+    var ddx = mx > P.x ? mx - P.x : P.x - mx, ddy = my > P.y ? my - P.y : P.y - my;
+    /* BUT A SQUARE THE RING OF YOUR OWN LIGHT CUTS ACROSS is not out of
+       it: its middle is past the ring, so the rule does not show it and
+       nothing on it is drawn - and the part of it inside the ring is lit,
+       or the ring has square notches in it wherever it crosses a square
+       it does not cover the middle of.  It is drawn at its own light and
+       the falloff takes the rest of it down (drawSightFalloff). */
+    var ringR = own <= TORCH_RADIUS ? (own + 0.5) * TS : 0, inRing = 0;
+    if (!inSightReach(ddx, ddy, own)) {
+      if (!ringR) continue;
+      var nx0 = Math.max(0, (ddx - 0.5) * TS), ny0 = Math.max(0, (ddy - 0.5) * TS);
+      if (nx0 * nx0 + ny0 * ny0 >= ringR * ringR) continue;
+      inRing = 1;
+    }
+    var reach = sightReach(mx, my, j, seenRooms);
+    SIGHT_REACH[j] = reach;
+    if (!reach) continue;
+    var px = vx * TS, py = vy * TS, lit = 0, shaded = 0, rr, k;
+    for (rr = 0; rr < TS; rr++) for (k = 0; k < TS; k++) {
+      var q = (py + rr) * W + px + k;
+      if (SIGHT_LINE[q]) shaded = 1;
+      if (SIGHT_DARK[q]) continue;
+      if (!inRing) { lit = 1; continue; }
+      var qx = px + k + 0.5 - ex, qy = py + rr + 0.5 - ey;
+      if (qx * qx + qy * qy < ringR * ringR) lit = 1;
+    }
+    /* No shadow on it at all: it is hidden for the ordinary reason - too
+       dark, too far - and is drawn exactly as it always was.  The ring is
+       the one exception. */
+    if (!shaded && !inRing) lit = 0;
+    /* Ground he has never seen is shown only at the very edge of what he
+       sees, or in his own room: through a doorway, a penumbra far off is
+       wide enough to sketch out a whole room he has not been shown. */
+    var mine = myRoom >= 0 && (L.roomAt[j] === myRoom || touchesRoom(j, myRoom));
+    if (!(L.flags[j] & F_SEEN) && reach !== 2 && !mine) lit = 0;
+    /* A lit room's own ground that a shadow falls across - never a dark
+       room's, where not seeing past arm's length is the room. */
+    if (!lit && shaded && myLit && mine) lit = 1;
+    SIGHT_LIGHT[j] = lit;
+  }
+  SIGHT = { W: W, H: H, cols: cols, rows: rows, bx0: bx0, by0: by0, ex: ex, ey: ey, rays: rays,
+            ox: VIEW_PX + c0 * TS, oy: VIEW_PY + r0 * TS };
+}
+/* Is this square he cannot see within reach of what he can?  0 no, 2 right
+   beside a square he sees, 1 in a room he sees into or its wall. */
+function sightReach(mx, my, j, seenRooms) {
+  /* 2: right beside what he sees */
+  if (sightOpen(mx - 1, my) || sightOpen(mx + 1, my) || sightOpen(mx, my - 1) || sightOpen(mx, my + 1)) return 2;
+  for (var d = 0; d < 4; d++) {
+    var dx = d & 1 ? 1 : -1, dy = d & 2 ? 1 : -1;
+    if (sightOpen(mx + dx, my + dy) && (!blocksAt(mx + dx, my) || !blocksAt(mx, my + dy))) return 2;
+  }
+  /* 1: in a room he sees into, or its wall */
+  if (seenRooms[L.roomAt[j]]) return 1;
+  if (BLOCKS[L.tiles[j]])
+    for (var sy = -1; sy <= 1; sy++) for (var sx = -1; sx <= 1; sx++) {
+      var x = mx + sx, y = my + sy;
+      if (x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && seenRooms[L.roomAt[y * MAP_W + x]]) return 1;
+    }
+  return 0;
+}
+/* Does this square you cannot see have part of it out of the darker shade,
+   so that the tile loop draws it at its own light for the shade to bring
+   down? */
+function sightLitCorner(idx) { return !!(SIGHT && SIGHT_LIGHT && SIGHT_LIGHT[idx]); }
+/* Every run of shadow over the ground, as (x, y, w, h, shade, square):
+   one walk that both the shadow itself and the light taken off the shadow
+   are laid by, so the two can never disagree about where it is. */
+function sightRuns(each) {
+  if (!SIGHT || !SQ_SHADE || !SQ_A0) return 0;
+  var S = SIGHT, W = S.W, laid = 0, vx, vy, r, k;
+  for (vy = 0; vy < S.rows; vy++) for (vx = 0; vx < S.cols; vx++) {
+    var mx = S.bx0 + vx, my = S.by0 + vy;
+    if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
+    var j = my * MAP_W + mx, f = L.flags[j];
+    if (!(f & F_SEEN) && !(f & F_VIS) && !SIGHT_LIGHT[j]) continue;   /* never drawn at all */
+    if (!SIGHT_REACH[j]) continue;                        /* behind a wall: as it always was */
+    if (mx === P.x && my === P.y) continue;
+    if ((f & F_VIS) && BLOCKS[L.tiles[j]]) continue;      /* a wall you can see is lit */
+    var px = vx * TS, py = vy * TS;
+    /* Which shade each pixel takes: 0 none, 1 brighter, 2 darker - asked
+       of the two shadows only, never of the square.  What the square
+       rule decides is what is DRAWN on the square, and that was settled
+       before any of this ran. */
+    var cls = function (rr, kk) {
+      var q = (py + rr) * W + px + kk;
+      return SIGHT_DARK[q] ? 2 : SIGHT_LINE[q] ? 1 : 0;
+    };
+    var first = cls(0, 0), same = true;
+    for (r = 0; r < TS && same; r++) for (k = 0; k < TS; k++) if (cls(r, k) !== first) { same = false; break; }
+    if (same) {
+      if (first) { each(S.ox + px, S.oy + py, TS, TS, first, j); laid++; }
+      continue;
+    }
+    for (r = 0; r < TS; r++) {
+      var run = -1, rc = 0;
+      for (k = 0; k <= TS; k++) {
+        var c2 = k < TS ? cls(r, k) : -1;
+        if (c2 === rc && run >= 0) continue;
+        if (run >= 0 && rc) each(S.ox + px + run, S.oy + py + r, k - run, 1, rc, j);
+        run = k; rc = c2;
+      }
+    }
+    laid++;
+  }
+  return laid;
+}
+/* what each shade brings a square down to: the darker to DIM_A, a square
+   remembered; the brighter SIGHT_BRIGHT of the way from there to the
+   square's own light without the torchlight in it.  Neither depends on the
+   torch beside it, so neither has a square edge in it. */
+function sightTarget(c, j) {
+  if (c === 2) return DIM_A;
+  var a0 = SQ_A0[j] > DIM_A ? SQ_A0[j] : DIM_A;
+  return DIM_A + (a0 - DIM_A) * SIGHT_BRIGHT;
+}
+function drawSightShadows() {
+  var laid = sightRuns(function (x, y, w, h, c, j) {
+    var a = SQ_SHADE[j], t = sightTarget(c, j);
+    if (!(a > t + 0.001)) return;               /* nothing to take off */
+    cx.globalAlpha = ALPHA * (1 - t / a);
+    rect(x, y, w, h, BG_COL);
+  });
+  cx.globalAlpha = ALPHA;
+  return laid;
+}
+/* YOUR OWN LIGHT RUNS OUT IN A RING, NOT A BOX.  Where it is your own
+   light that limits what you see - no lamp, no lit room - the ground
+   used to go from lit to "the edge of sight" (LIGHT_EDGE) to remembered
+   a square at a time, and that is a staircase of squares round you in
+   every unlit room.  Instead it is laid as one falloff from the middle of
+   your square: full to a square short of your reach, down to the
+   remembered look at the ring half a square past it (inSightReach puts
+   a square in sight when its middle is inside that ring).  Over
+   everything on the ground, creatures too, like the shadows; a pixel in
+   the darker shadow is already as dark as it goes, and one in the
+   brighter one fades from where the shadow left it.  The fade is exact:
+   a square drawn at a is brought to DIM_A + (a - DIM_A) x f, f falling
+   straight from 1 to 0 across the band. */
+function drawSightFalloff() {
+  if (!SIGHT || !SIGHT_OWN || !SQ_SHADE) return 0;
+  var S = SIGHT, W = S.W, laid = 0, vx, vy, r, k;
+  var ex = S.ox + S.ex, ey = S.oy + S.ey, grads = {};
+  var gradFor = function (R) {
+    if (grads[R]) return grads[R];
+    var r0 = Math.max(0.5, R - 1) * TS, r1 = (R + 0.5) * TS;
+    var g = cx.createRadialGradient(ex, ey, r0, ex, ey, r1);
+    g.addColorStop(0, rgba(BG_COL, 0));
+    g.addColorStop(1, rgba(BG_COL, 1));
+    return (grads[R] = { g: g, r0: r0 });
+  };
+  for (vy = 0; vy < S.rows; vy++) for (vx = 0; vx < S.cols; vx++) {
+    var mx = S.bx0 + vx, my = S.by0 + vy;
+    if (mx < 0 || my < 0 || mx >= MAP_W || my >= MAP_H) continue;
+    var j = my * MAP_W + mx, f = L.flags[j], R = SIGHT_OWN[j] - 1;
+    if (R < 0) continue;
+    if (!(f & F_VIS) && !SIGHT_LIGHT[j]) continue;       /* remembered: already dark */
+    if (mx === P.x && my === P.y && R >= 1) continue;
+    var a = SQ_SHADE[j];
+    /* A FIRE AT THE END OF A BLACK HALL IS STILL A FIRE.  The ring is
+       YOUR light running out; what a flame, a lamp or a holy pool lights
+       stays lit past it, so the fade stops at the square's own light
+       from those (lo) rather than at the remembered look. */
+    var lo = SQ_LO ? Math.max(DIM_A, SQ_LO[j]) : DIM_A;
+    if (!(a > lo + 0.001)) continue;
+    var px = vx * TS, py = vy * TS, sx = S.ox + px, sy = S.oy + py;
+    var G0 = gradFor(R);
+    /* nothing to do on a square wholly inside the full light */
+    var fx = Math.max(Math.abs(sx - ex), Math.abs(sx + TS - ex)), fy = Math.max(Math.abs(sy - ey), Math.abs(sy + TS - ey));
+    if (fx * fx + fy * fy <= G0.r0 * G0.r0) continue;
+    cx.fillStyle = G0.g;
+    var shadeOf = function (c) { return c === 2 ? DIM_A : c === 1 ? sightTarget(1, j) : a; };
+    /* A wall you can see had no shadow laid on it (sightRuns leaves it
+       lit), so the whole of it fades with the ground - reading its pixels
+       as "already in the dark" left a lit wall standing far out past the
+       ring of your light. */
+    var wallSeen = (f & F_VIS) && BLOCKS[L.tiles[j]];
+    var cls = function (rr, kk) {
+      if (wallSeen) return 0;
+      var q = (py + rr) * W + px + kk; return SIGHT_DARK[q] ? 2 : SIGHT_LINE[q] ? 1 : 0;
+    };
+    var first = cls(0, 0), same = true;
+    for (r = 0; r < TS && same; r++) for (k = 0; k < TS; k++) if (cls(r, k) !== first) { same = false; break; }
+    var lay = function (x, y, w, h, c) {
+      var v = shadeOf(c);
+      if (c === 1 && !(a > v)) v = a;              /* a shade that took nothing off */
+      if (!(v > lo + 0.001)) return;
+      cx.globalAlpha = ALPHA * (v - lo) / v;
+      cx.fillRect(x, y, w, h);
+    };
+    if (same) lay(sx, sy, TS, TS, first);
+    else for (r = 0; r < TS; r++) {
+      var run = -1, rc = 0;
+      for (k = 0; k <= TS; k++) {
+        var c2 = k < TS ? cls(r, k) : -1;
+        if (c2 === rc && run >= 0) continue;
+        if (run >= 0) lay(sx + run, sy + r, k - run, 1, rc);
+        run = k; rc = c2;
+      }
+    }
+    laid++;
+  }
+  cx.globalAlpha = ALPHA;
+  return laid;
+}
+/* AND THE TORCHLIGHT IS TAKEN OFF IT.  The light of the torches is laid
+   over the whole dungeon afterwards, added to what is there - so a shadow
+   put down before it had the light added straight back on top, a square
+   at a time, and every square edge came back as a band of grey round the
+   dark.  Into the sheet of light before it goes on, then: none of it in
+   either shade.  Torchlight comes a square at a time, and any of it left
+   in a shadow is a lit square inside the shadow. */
+function shadeSightWash() {
+  if (!SIGHT || !WCX) return 0;
+  WCX.globalCompositeOperation = 'source-over';
+  WCX.fillStyle = '#000000';
+  var n = sightRuns(function (x, y, w, h) {
+    WCX.globalAlpha = 1;
+    WCX.fillRect(x + WASH_PAD, y + WASH_PAD, w, h);
+  });
+  WCX.globalAlpha = 1;
+  WCX.globalCompositeOperation = 'lighten';
+  return n;
+}
+
 /* the sprite a square would show if it were plain floor */
 /* Three flagstones, scattered evenly over the floor by a cheap hash so
    the same square always draws the same one.  Two of the three used to
    turn up once in eight squares each, which read as one flagstone with
    the odd blemish rather than three kinds of stone. */
-function floorSprite(mx, my) {
+/* `rx, ry` is the square to ask which ROOM it is, when that is not the
+   square being drawn - see groundAtCorner: a pillar is not part of the
+   room it stands in, so its own square answers "no room" and gets the
+   ordinary dungeon's flagstone.  The pattern (the herringbone's parity,
+   the scatter of the flagstones) is still dealt by the square drawn. */
+function floorSprite(mx, my, rx, ry) {
+  if (rx === undefined) { rx = mx; ry = my; }
   if (L) {
     /* THE ROOM FIRST.  A room somebody lived in is boarded, and boards are
        a property of that room rather than of the level - see layBoards -
        so a shrine is wooden on a marble floor and on a plain one alike. */
-    if (L.roomAt && mx >= 0 && my >= 0 && mx < MAP_W && my < MAP_H) {
-      var ri = L.roomAt[my * MAP_W + mx];
+    if (L.roomAt && rx >= 0 && ry >= 0 && rx < MAP_W && ry < MAP_H) {
+      var ri = L.roomAt[ry * MAP_W + rx];
       var boards = (ri >= 0 && L.rooms) ? floorOfRoom(L.rooms[ri]) : null;
       /* A HERRINGBONE IS NOT A SCATTER.  The two cells make the pattern
          only if they ALTERNATE - so the same board is never laid beside
@@ -30747,6 +31672,13 @@ function liquidSprite(t, mx, my) {
    pool has its corners taken off, and the bite taken out of it has to be
    filled with the water that is lying there - filling it with dry floor
    left a little grey collar round every pillar in the water. */
+/* And a pillar standing on a BOARDED floor has the same problem the other
+   way: the bite was filled with the ground of the pillar's own square, and
+   a pillar is not part of the room it stands in - so its square answered
+   "no room" and the corners came out grey flagstone in a wooden room.  The
+   ground at a corner is the ground of the room beside it: asked of the
+   neighbour on that side, with the pattern still dealt by this square so
+   the bite carries on the boards it is cut against. */
 function groundAtCorner(mx, my, corner) {
   var sx = mx + ((corner & 1) ? 1 : -1), sy = my + ((corner > 1) ? 1 : -1);
   var a = tileAt(sx, my), b = tileAt(mx, sy), t;
@@ -30754,7 +31686,15 @@ function groundAtCorner(mx, my, corner) {
   else if (b === WATER || b === HOLY || b === HOLE) t = b;
   else if (a === BRIDGE) t = L.under[my * MAP_W + sx];
   else if (b === BRIDGE) t = L.under[sy * MAP_W + mx];
-  return t ? liquidSprite(t, mx, my) : floorSprite(mx, my);
+  if (t) return liquidSprite(t, mx, my);
+  var room = function (x, y) {
+    return L.roomAt && x >= 0 && y >= 0 && x < MAP_W && y < MAP_H &&
+           L.roomAt[y * MAP_W + x] >= 0 && walkable(x, y);
+  };
+  if (room(sx, my)) return floorSprite(mx, my, sx, my);
+  if (room(mx, sy)) return floorSprite(mx, my, mx, sy);
+  if (room(sx, sy)) return floorSprite(mx, my, sx, sy);
+  return floorSprite(mx, my);
 }
 
 /* Stone corners, rounded the same way: an outside corner of a wall gets
@@ -30896,8 +31836,13 @@ function groundLight(mx, my) {
   var cv = caveLight(mx, my);
   if (cv >= 0) return cv;
   if (L.litMap && L.litMap[my * MAP_W + mx]) return 1;
+  /* with the straight shadows the edge of sight is drawn by them and by
+     the ring your own light runs out in (drawSightFalloff), not by a
+     dimmer square */
+  if (LINEAR_SIGHT && sightFalloffOn()) return 1;
   return atEdgeOfSight(mx, my) ? LIGHT_EDGE : 1;
 }
+function sightFalloffOn() { return typeof P !== 'undefined' && P && !P.blind; }
 function tileLight(mx, my) {
   if (litGround(mx, my)) return groundLight(mx, my);
   /* a wall has no light of its own: it takes the best of the ground it
@@ -30917,7 +31862,8 @@ function tileLight(mx, my) {
     if (gl >= 1) return 1;
     if (L.shade && gl > best) best = gl;
   }
-  return (L.shade && best > 0) ? best : LIGHT_EDGE;
+  if (L.shade && best > 0) return best;
+  return (LINEAR_SIGHT && sightFalloffOn()) ? 1 : LIGHT_EDGE;
 }
 
 function atEdgeOfSight(mx, my) {
@@ -31827,6 +32773,9 @@ function drawMapAt(overX, overY) {
   /* what is burning or crackling this instant, worked out once and read
      twice: to brighten each square, and to wash it with its colour */
   var glow = lightMap();
+  /* the two straight edges of what you can see, worked out before the
+     ground is drawn - see prepareSight */
+  prepareSight(camx, camy, pcols, overX, overY);
 
   for (vy = -overY; vy < VIEW_H + overY; vy++) {
     for (vx = -pcols - overX; vx < VIEW_W + overX; vx++) {
@@ -31838,7 +32787,12 @@ function drawMapAt(overX, overY) {
          walked shows you the hall for as long as it lasts.  It is drawn
          because it is lit, not because it is remembered - and when the
          flash goes it is gone again, with nothing left on your map. */
-      if (!(f & F_SEEN) && !glow[idx]) continue;
+      /* ...and a square never seen at all whose corner the straight edge of
+         sight cuts off onto the near side: that corner has to be drawn,
+         or the staircase is still there in the black.  Only the ground -
+         nothing lying or standing on it, which the square rule still
+         keeps back.  See prepareSight. */
+      if (!(f & F_SEEN) && !glow[idx] && !sightLitCorner(idx)) continue;
       /* Seen with night eyes, everything in a dark room is there to be
          read - but it is still a dark room, and it is drawn like one.
          Without the shade there is no way to tell you are standing in
@@ -31846,7 +32800,18 @@ function drawMapAt(overX, overY) {
       /* Three stages: bright near you, dimmer at the edge of what you
          can see, and dimmer still for what you only remember. */
       var a;
-      if (!(f & F_VIS)) {
+      /* what the square would be drawn at if it were only remembered -
+         the darker of the two shades of the straight edge of sight */
+      var mem = ((f & F_SEEN) || glow[idx]) ? glowLift(glow, DIM_A, idx) : 0;
+      if (!(f & F_VIS) && sightLitCorner(idx)) {
+        /* Unseen, but with a corner on the near side of the straight edge
+           of what you can see: drawn at its own light, for the shade to
+           bring down to the brighter of its two shades there and the
+           darker everywhere else - see drawSightShadows. */
+        a = (L.darkMap && L.darkMap[idx]) ? NIGHT_SHADE : tileLight(mx, my);
+        a = glowLift(glow, a, idx);
+        if (a < mem) a = mem;
+      } else if (!(f & F_VIS)) {
         /* Remembered, not seen - unless something is lighting it this
            instant, in which case you are looking straight at it.
 
@@ -31867,6 +32832,21 @@ function drawMapAt(overX, overY) {
         a = glowLift(glow, a, idx);
       }
       var px = VIEW_PX + vx * TS, py = VIEW_PY + vy * TS;
+      /* what this square was drawn at, for the shadow pass - see
+         drawSightShadows, which has to bring it down to exactly what a
+         square you only remember is drawn at */
+      if (!SQ_SHADE || SQ_SHADE.length !== L.tiles.length) {
+        SQ_SHADE = new Float32Array(L.tiles.length); SQ_A0 = new Float32Array(L.tiles.length);
+        SQ_LO = new Float32Array(L.tiles.length);
+      }
+      SQ_SHADE[idx] = a;
+      /* and what it would be with nobody's light on it but the lamps,
+         fires and pools - where the ring of your own light takes it down
+         to, not further (see drawSightFalloff) */
+      SQ_LO[idx] = glowLift(glow, DIM_A, idx);
+      /* and its light with no torch in it, for the brighter shade to come
+         back up to - see sightTarget */
+      SQ_A0[idx] = SIGHT ? ((L.darkMap && L.darkMap[idx]) ? NIGHT_SHADE : tileLight(mx, my)) : 0;
       switch (L.tiles[idx]) {
         case WALL: case SDOOR:
           spr(wallVariant(mx, my), px, py, a);
@@ -31887,7 +32867,8 @@ function drawMapAt(overX, overY) {
           spr(floorSprite(mx, my), px, py, a);
           drawWallEdging(mx, my, px, py, a);
           drawEdging(mx, my, px, py, a);
-          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx])) {
+          if (L.decor[idx] && !rollingInto(idx) &&
+              !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx])) {
             shadeOn(a); drawDecor(L.decor[idx], mx, my, px, py, a); shadeOff();
           }
           break;
@@ -31904,7 +32885,16 @@ function drawMapAt(overX, overY) {
           drawHole(mx, my, px, py, a);
           drawHoleCorners(mx, my, px, py, a);
           break;
-        case CORR: spr('corr', px, py, a); break;
+        /* A hallway has no decor of its own to draw - but a barrel can be
+           shoved into one, and until now it vanished there: nothing in
+           this case drew anything but the flagstone.  Only the barrel is
+           drawn, so nothing laid in a hallway that was never meant to be
+           seen starts turning up. */
+        case CORR: spr('corr', px, py, a);
+          if (L.decor[idx] === 'barrel' && !rollingInto(idx)) {
+            shadeOn(a); drawDecor('barrel', mx, my, px, py, a); shadeOff();
+          }
+          break;
         case BRIDGE: drawBridge(mx, my, px, py, a); break;
         /* the floor shows between the bars */
         case BARS: spr(floorSprite(mx, my), px, py, a);
@@ -31938,7 +32928,8 @@ function drawMapAt(overX, overY) {
              flagstone in the middle of the pattern - which is the one
              thing a rug over a trapdoor must not look like, since hiding
              it is the whole point of laying it there. */
-          if (L.decor[idx] && !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx])) {
+          if (L.decor[idx] && !rollingInto(idx) &&
+              !(L.showAt && L.showAt[idx] && nowMs() < L.showAt[idx])) {
             shadeOn(a); drawDecor(L.decor[idx], mx, my, px, py, a); shadeOff();
           }
           break;
@@ -32061,6 +33052,44 @@ function drawMapAt(overX, overY) {
         dynLit(it.x, it.y) === 1 && ((nowMs() / DYN_BLINK_MS) | 0) % 2)
       sprFrom(whiteSheet, itemSprite(it), VIEW_PX + ivx * TS, VIEW_PY + ivy * TS, ia);
   }
+  /* A BARREL BEING WALKED ALONG, drawn where it has got to rather than on
+     the square the rules have already put it on - see pushPhase.  Its
+     fuse goes with it if it has one. */
+  var rb = rollingBarrel();
+  if (rb) {
+    var rvx = rb.x - camx, rvy = rb.y - camy;
+    var rfl = L.flags[rb.y * MAP_W + rb.x];
+    var ra = (rfl & F_VIS) ? shadeAt(rb.x, rb.y) : 0.45;
+    var rpx = VIEW_PX + rvx * TS + rb.px, rpy = VIEW_PY + rvy * TS + rb.py;
+    shadeOn(ra); drawDecor('barrel', rb.x, rb.y, rpx, rpy, ra); shadeOff();
+    if (L.fuses && L.fuses[rb.to] && blazeSeen(rb.x, rb.y))
+      spr(fireSprite(rb.x, rb.y), rpx, rpy, 1);
+  }
+  /* WHAT THE RULES HAVE TAKEN AWAY AND THE PICTURE HAS NOT YET.  A barrel
+     that is not the first of its round is gone from the floor when the
+     round is worked out and goes up a beat or two into the playback; it
+     stands there, fuse burning, until then.  See leaveGhost. */
+  if (L.goneAt && L.goneAt.length) {
+    var ghosts = [];
+    for (i = 0; i < L.goneAt.length; i++) {
+      var gh = L.goneAt[i];
+      if (nowMs() >= gh.at) continue;            /* its moment has come */
+      ghosts.push(gh);
+      var ghx = gh.x - camx, ghy = gh.y - camy;
+      if (ghx < -pcols - overX || ghy < -overY ||
+          ghx >= VIEW_W + overX || ghy >= VIEW_H + overY) continue;
+      var gfl = L.flags[gh.y * MAP_W + gh.x];
+      if (!(gfl & F_SEEN)) continue;
+      var gha = (gfl & F_VIS) ? shadeAt(gh.x, gh.y) : 0.45;
+      var ghpx = VIEW_PX + ghx * TS, ghpy = VIEW_PY + ghy * TS;
+      shadeOn(gha);
+      if (gh.what === 'decor') drawDecor(gh.name, gh.x, gh.y, ghpx, ghpy, gha);
+      else spr(gh.name, ghpx, ghpy, gha);
+      shadeOff();
+      if (gh.fuse && blazeSeen(gh.x, gh.y)) spr(fireSprite(gh.x, gh.y), ghpx, ghpy, 1);
+    }
+    L.goneAt = ghosts;
+  }
   /* the dead linger for a moment, blinking, so you see what you hit */
   for (i = L.corpses.length - 1; i >= 0; i--) {
     var co = L.corpses[i];
@@ -32176,6 +33205,11 @@ function drawMapAt(overX, overY) {
         bp[0] > VIEW_PX + VIEW_W * TS || bp[1] > VIEW_PY + VIEW_H * TS) continue;
     spr(fireSprite(bm.x, bm.y), bp[0], bp[1], 0.85);
   }
+  /* The straight edge of what you can see, laid over the ground and over
+     whatever is standing on it - under the marks over their heads, the
+     fires and the man himself, none of which a shadow hides. */
+  drawSightShadows();
+  drawSightFalloff();
   /* drawn last so they sit on top of whatever is behind them */
   for (i = 0; i < markers.length; i++)
     spr(markers[i][0], markers[i][1], Math.max(VIEW_PY, markers[i][2]), 1);
@@ -32219,6 +33253,7 @@ function drawMapAt(overX, overY) {
      to be visible that it is burning, not only said once in the log. */
   for (var fk in (L.fuses || {})) {
     var fj = fk | 0, fbx = fj % MAP_W, fby = (fj / MAP_W) | 0;
+    if (rollingInto(fj)) continue;           /* drawn with the barrel, above */
     var fcx = fbx - camx, fcy = fby - camy;
     if (fcx < -pcols - overX || fcy < -overY ||
         fcx >= VIEW_W + overX || fcy >= VIEW_H + overY) continue;
@@ -32268,41 +33303,43 @@ function drawMapAt(overX, overY) {
     }
   }
 
-  /* water that has just been frozen or electrified */
-  if (G.splash) {
-    /* a current outlives the flash by however long it takes to cross the
-       water it was let loose in - see shockLife */
-    var splashLife = G.splash.kind === 'zap' ? shockLife(G.splash) : BLAST_FLASH_MS;
-    var splashAge = nowMs() - G.splash.t;
-    if (splashAge > splashLife) G.splash = null;
+  /* Water that has just been frozen or electrified, and every bang still
+     showing - EVERY one of them, not the newest.  A row of barrels goes
+     up a beat apart in one round, and drawing only G.splash drew only the
+     last of them.  See addSplash.  Oldest first, so a later bang is drawn
+     over an earlier one where the two overlap. */
+  var splashList = liveSplashes().slice().reverse(), spi;
+  for (spi = 0; spi < splashList.length; spi++) {
+    var SP = splashList[spi];
+    var splashAge = nowMs() - SP.t;
     /* Scheduled for a beat still to come - the stone or the bolt that
        causes it has not landed yet, so there is nothing to show.  Every
        other thing timed off a beat (G.bolt, G.shot, G.ret, a lunge, a
        hurt flash) waits the same way; this one used to jump straight to
        drawing the blast the instant it was set, which put the fire down
        before the stone that was still in the air had reached it. */
-    else if (splashAge < 0) { /* not yet */ }
+    if (splashAge < 0) { /* not yet */ }
     else {
-      var sn = G.splash.kind === 'cold' ? 'frost' :
-        G.splash.kind === 'blast' ? 'flame' : 'bolt';
-      for (i = 0; i < G.splash.cells.length; i++) {
-        var scx = G.splash.cells[i][0], scy = G.splash.cells[i][1];
+      var sn = SP.kind === 'cold' ? 'frost' :
+        SP.kind === 'blast' ? 'flame' : 'bolt';
+      for (i = 0; i < SP.cells.length; i++) {
+        var scx = SP.cells[i][0], scy = SP.cells[i][1];
         var sx2 = scx - camx, sy2 = scy - camy;
         if (sx2 < 0 || sy2 < 0 || sx2 >= VIEW_W || sy2 >= VIEW_H) continue;
         /* the same rule: a blast and a current are their own light and
            are seen the length of the hall, ice on water is not */
-        if (G.splash.kind === 'cold' ? !(L.flags[scy * MAP_W + scx] & F_VIS)
-                                     : !blazeSeen(scx, scy)) continue;
+        if (SP.kind === 'cold' ? !(L.flags[scy * MAP_W + scx] & F_VIS)
+                               : !blazeSeen(scx, scy)) continue;
         /* the front of the current has to have got here, and this has to
            be one of the squares lit on this beat of the blink */
-        if (sn === 'bolt' && !shockLit(G.splash, i, nowMs())) continue;
+        if (sn === 'bolt' && !shockLit(SP, i, nowMs())) continue;
         /* A barrel is not a flask: the same picture stamped over twenty
            squares reads as a pattern, not as an explosion.  Two sprites
            dealt by the square's own hash, so it is a different mix every
            time and the same one every frame while it lasts. */
         var use = sn;
-        if (G.splash.big) {
-          var mix = (scx * 7 + scy * 13 + ((nowMs() - G.splash.t) / 110 | 0) * 5) % 4;
+        if (SP.big) {
+          var mix = (scx * 7 + scy * 13 + ((nowMs() - SP.t) / 110 | 0) * 5) % 4;
           use = mix === 3 ? 'flash2' : FIRE_TILES[mix];
         }
         /* A current running through a pool covers a great many squares at
@@ -32312,7 +33349,7 @@ function drawMapAt(overX, overY) {
            it is the same every frame while it lasts and different from
            its neighbour's. */
         if (use === 'bolt')
-          sprSpin(shockSprite(scx, scy, nowMs() - G.splash.t),
+          sprSpin(shockSprite(scx, scy, nowMs() - SP.t),
             VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1,
             ((scx * 5 + scy * 11) & 3) * (Math.PI / 4));
         else spr(use, VIEW_PX + sx2 * TS, VIEW_PY + sy2 * TS, 1);
@@ -32374,6 +33411,14 @@ function drawMapAt(overX, overY) {
      first and then slid there from a square he had already left.  The
      creatures' side of this is monPixel, which has always had it. */
   var stepWaiting = !!(stepLegs && stepAge < 0);
+  /* A PUSH is drawn its own way, a pixel at a time - see pushPhase.  The
+     man walks up until he is leaning on the barrel, and then the two of
+     them go on together at half his pace. */
+  var pushA = (P.stepAnim && P.stepAnim.push) ? P.stepAnim.push : null;
+  var pushAge = pushA ? nowMs() - P.stepAnim.t : 0;
+  var pushing = !!(pushA && pushAge >= 0 && pushAge < pushTimes().man);
+  var pushPx = pushing ? pushPhase(pushAge).man : 0;
+  if (pushA) { stepActive = false; stepWaiting = false; }
   var stepLeg = null, stepHalf = false;
   if (stepActive) {
     var li = Math.min(stepLegs.length - 1, Math.floor(stepAge / P.stepAnim.dur));
@@ -32384,13 +33429,17 @@ function drawMapAt(overX, overY) {
     if (!stepHalf && li < stepLegs.length - 1) stepHalf = true;
   }
   var frame = stepActive && stepHalf ? (P.stepAnim.fromFrame || 0) : (P.stepFrame || 0);
+  if (pushing && pushPx < TS / 2) frame = P.stepAnim.fromFrame || 0;
   /* Off centre the map is held still and the glide is his, so he is
      drawn where the walk has got to rather than on the square the rules
      have already put him on. */
   var mlag = manLag();
   var dashRun = dashPhase();
   var hpx, hpy;
-  if (stepActive && stepHalf) {
+  if (pushing) {
+    hpx = VIEW_PX + (pushA.fx - camx) * TS + pushA.dx * pushPx - Math.round(mlag.x * TS);
+    hpy = VIEW_PY + (pushA.fy - camy) * TS + pushA.dy * pushPx - Math.round(mlag.y * TS);
+  } else if (stepActive && stepHalf) {
     var hfx = stepLeg[0] + (stepLeg[2] - stepLeg[0]) * 0.5;
     var hfy = stepLeg[1] + (stepLeg[3] - stepLeg[1]) * 0.5;
     hpx = VIEW_PX + Math.round((hfx - camx) * TS) - Math.round(mlag.x * TS);
@@ -32611,6 +33660,8 @@ function drawMapAt(overX, overY) {
         drawBeamWash(gmx, gmy, VIEW_PX + vx * TS, VIEW_PY + vy * TS);
     }
   }
+  /* no torchlight on what is in the shadow - see shadeSightWash */
+  shadeSightWash();
   washClose();
 
   /* The square being looked at is a square of the map, so it is drawn
@@ -33637,6 +34688,8 @@ function drawChoice() {
   rect(x, y, w, h, '#0b0d1c');
   frame(x, y, w, h, '#636d85');
   text('ENTER means:', x + 5, y + 3, 'y');
+  /* the row under a pointer that has moved is the one lit - see drawCtxMenu */
+  if (G.choice) menuHover(G.choice, x + 2, y + 11, w - 4, 9, opts.length);
   for (i = 0; i < opts.length; i++) {
     var cur = G.choice && G.choice.i === i;
     hit(x + 2, y + 11 + i * 9, w - 4, 9, 'choice', i);
